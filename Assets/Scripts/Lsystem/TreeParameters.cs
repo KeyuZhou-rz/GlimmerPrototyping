@@ -11,7 +11,7 @@ public class TreeParameters: ScriptableObject
     [Header("Geometry")]
     [Range(10f, 45f)] public float angle = 25f;
     [Range(0.1f, 2f)] public float stepLength = 0.5f;
-    [Range(0.01f, 0.2f)] public float initialWidth = 0.3f;
+    [Range(0.01f, 1f)] public float initialWidth = 1f;
     [Range(0.6f,0.95f)] public float widthDecay = 0.75f;
 
     [Header("Variation")]

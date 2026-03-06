@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
+using UnityEngine.SocialPlatforms.GameCenter;
 
 public static class TreeMeshBuilder
 {
@@ -9,7 +11,8 @@ public static class TreeMeshBuilder
         var normals = new List<Vector3>();
         var uvs = new List<Vector2>();      // Standard UV
         var uv2s = new List<Vector2>();     // Growth encoding
-        var triangles = new List<int>();
+        var wood_triangles = new List<int>();
+        var leaves_triangles = new List<int>();
 
         foreach (var segment in segments)
         {
@@ -17,13 +20,16 @@ public static class TreeMeshBuilder
             
             // Build a cylinder/cone for each segment
             AddCylinderSegment(
-                vertices, normals, uvs, uv2s, triangles,
+                vertices, normals, uvs, uv2s, wood_triangles,
                 segment.start, segment.end,
                 segment.startWidth, segment.endWidth,
                 segment.depth / 100f,  // Normalized depth for UV2
                 radialSegments,
                 baseIndex
             );
+            if (segment.leafJudge){
+                AddCrossedLeaf(vertices, normals, uvs, uv2s, leaves_triangles, segment.end, 0.5f);
+            }
         }
 
         var mesh = new Mesh();
@@ -37,14 +43,73 @@ public static class TreeMeshBuilder
         mesh.SetNormals(normals);
         mesh.SetUVs(0, uvs);
         mesh.SetUVs(1, uv2s);  // UV2 for growth shader
-        mesh.SetTriangles(triangles, 0);
+        mesh.SetTriangles(wood_triangles, 0);
         
         mesh.RecalculateBounds();
         mesh.RecalculateTangents();
 
+        mesh.subMeshCount = 2;
+        mesh.SetTriangles(wood_triangles,0); // material 0 in charge of trunck
+        mesh.SetTriangles(leaves_triangles, 1); // 1 in charge of leaves
+
         return mesh;
     }
 
+    private static void AddCrossedLeaf(
+        List<Vector3> vertices,
+        List<Vector3> normals,
+        List<Vector2> uvs,
+        List<Vector2>uv2s,
+        List<int>triangles,
+        Vector3 center,
+        float size
+    )
+    {
+        float halfSize = size*0.5f;
+        int baseIndex = vertices.Count;
+
+        vertices.Add(center + new Vector3(-halfSize, -halfSize,0));
+        vertices.Add(center + new  Vector3(halfSize, -halfSize,0));
+        vertices.Add(center + new Vector3(-halfSize, halfSize, 0));
+        vertices.Add(center + new Vector3(halfSize, halfSize,0));
+
+        for (int i = 0;i<4; i++)
+        {
+            normals.Add(Vector3.up);
+            uv2s.Add(new Vector2(1,1));
+        }
+        uvs.Add(new Vector2(0,0));uvs.Add(new Vector2(1,0));
+        uvs.Add(new Vector2(0,1)); uvs.Add(new Vector2(1,1));
+
+        triangles.Add(baseIndex + 0); triangles.Add(baseIndex + 2); triangles.Add(baseIndex + 1);
+        triangles.Add(baseIndex + 1); triangles.Add(baseIndex + 2); triangles.Add(baseIndex + 3);
+        
+        baseIndex += 4;
+        vertices.Add(center + new Vector3(0, -halfSize, -halfSize));
+        vertices.Add(center + new Vector3(0, -halfSize,  halfSize));
+        vertices.Add(center + new Vector3(0,  halfSize, -halfSize));
+        vertices.Add(center + new Vector3(0,  halfSize,  halfSize));
+
+        for(int i=0; i<4; i++) {
+        normals.Add(Vector3.up); 
+        uv2s.Add(new Vector2(1, 1));
+    }
+    
+        uvs.Add(new Vector2(0,0)); 
+        uvs.Add(new Vector2(1,0)); 
+        uvs.Add(new Vector2(0,1)); 
+        uvs.Add(new Vector2(1,1));
+
+        triangles.Add(baseIndex + 0); 
+        triangles.Add(baseIndex + 2); 
+        triangles.Add(baseIndex + 1);
+        
+        triangles.Add(baseIndex + 1); 
+        triangles.Add(baseIndex + 2); 
+        triangles.Add(baseIndex + 3);
+
+
+    }
     private static void AddCylinderSegment(
         List<Vector3> vertices,
         List<Vector3> normals,

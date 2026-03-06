@@ -55,7 +55,7 @@ public class TreeController : MonoBehaviour
         string lSystemString = LSystemGenerator.GenerateStochastic(
             parameters.axiom,
             mappedParams.iterations,
-            parameters.angleVariance,
+            mappedParams.angleVariance,
             randomSeed
         );
         

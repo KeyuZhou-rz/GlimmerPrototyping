@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.VisualScripting;
 using UnityEngine;
 
 public class TurtleInterpreter
@@ -10,6 +11,7 @@ public class TurtleInterpreter
         public float startWidth;
         public float endWidth;
         public int depth;  // For UV encoding (growth animation)
+        public bool leafJudge; // to judge whether the leaves should be attached or not
     }
 
     private struct TurtleState
@@ -54,6 +56,7 @@ public class TurtleInterpreter
 
                     Vector3 direction = state.rotation * Vector3.up;
                     Vector3 endPos = state.position + direction * currentLength;
+                    bool DepthJudge = state.depth >= 5;
 
                     segments.Add(new BranchSegment
                     {
@@ -61,13 +64,15 @@ public class TurtleInterpreter
                         end = endPos,
                         startWidth = state.width,
                         endWidth = endWidth,
-                        depth = state.depth
+                        depth = state.depth,
+                        leafJudge = DepthJudge
                     });
 
                     state.position = endPos;
                     state.width = endWidth;
                     state.depth++;
                     maxDepth = Mathf.Max(maxDepth, state.depth);
+                    
                     break;
 
                 case '+':  // Rotate right (around Z axis for 2D tree)

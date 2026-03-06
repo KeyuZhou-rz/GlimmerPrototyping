@@ -48,7 +48,8 @@ public static class LSystemGenerator
                 "F-[[X]+X]+F[+FX]-X",    // Mirrored
                 "F[+X][-X]FX"            // Simpler
             }},
-            { 'F', new[] { "FF" } }
+            { 'F', new[] { "FF" } 
+            }
         };
         
         string current = axiom;
