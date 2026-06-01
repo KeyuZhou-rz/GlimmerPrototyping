@@ -1,6 +1,7 @@
 using UnityEngine;
 using GlimmerDiary.Core;
 using GlimmerDiary.Data;
+using GlimmerDiary.Utils;
 
 // 在场景里新建一个空 GameObject，命名为 "WorldManager"
 // 把这个脚本拖到那个 GameObject 上
@@ -20,8 +21,15 @@ public class WorldManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
 
         EmotionInertia = new EmotionInertiaSystem();
-        NaturalRhythm = new NaturalRhythmSystem();
-        Environment = new WorldEnvironmentSystem();
+        NaturalRhythm  = new NaturalRhythmSystem();
+        Environment    = new WorldEnvironmentSystem();
+
+        // 有存档则恢复 E_env 和历史
+        var saved = SaveSystem.LoadWorldState();
+        if (saved != null)
+            EmotionInertia.Restore(saved.currentEEnv, saved.envHistory);
+
+        Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
     }
 
     void Start()
@@ -32,12 +40,15 @@ public class WorldManager : MonoBehaviour
     }
 
     // 玩家提交日记时调用这个方法（由 UI 层调用，不由视觉层调用）
-    public void OnJournalSubmitted(EmotionVector emotion)
+    public void OnJournalSubmitted(JournalEntry entry)
     {
-        EmotionInertia.Update(emotion);
+        EmotionInertia.Update(entry.emotion);
         NaturalRhythm.Tick();
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv,
-                                    NaturalRhythm.State);
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+
+        // 持久化：世界状态覆盖写，日记只追加
+        SaveSystem.SaveWorldState(EmotionInertia.CurrentEEnv, EmotionInertia.History);
+        SaveSystem.AppendJournalEntry(entry);
 
         // TODO: 通知叙事规则层检查触发条件（Week 4）
         // TODO: 通知视觉层播放仪式时刻（视觉阶段）

@@ -16,6 +16,13 @@ namespace GlimmerDiary.Core
             History = new List<EnvEmotionSnapshot>();
         }
 
+        // 从存档恢复状态（Awake 时调用）
+        public void Restore(EmotionVector savedEEnv, List<EnvEmotionSnapshot> savedHistory)
+        {
+            CurrentEEnv = savedEEnv ?? EmotionVector.Neutral();
+            History     = savedHistory ?? new List<EnvEmotionSnapshot>();
+        }
+
         // alpha由C维度动态决定：C越高响应越快
         public void Update(EmotionVector eCurrent)
         {
