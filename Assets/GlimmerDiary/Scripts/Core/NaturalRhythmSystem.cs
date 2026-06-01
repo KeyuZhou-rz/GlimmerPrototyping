@@ -13,12 +13,16 @@ namespace GlimmerDiary.Core
         public float WeekProgress { get; private set; }    // 0.0 ~ 1.0 (周一=0, 周日≈1)
         public float LightIntensity { get; private set; }  // 0=夜晚, 1=正午
         public NaturalRhythmState CurrentState { get; private set; }
+        public NaturalRhythmState State => CurrentState;   // WorldManager 使用的简写
         public RhythmSnapshot LastSnapshot { get; private set; }
 
         public NaturalRhythmSystem()
         {
             Tick(DateTime.Now);
         }
+
+        // 无参重载：使用当前真实时刻（WorldManager 调用点）
+        public void Tick() => Tick(DateTime.Now);
 
         // 更新节律状态，供 WorldSimulator 每次进入时调用
         public void Tick(DateTime now)
