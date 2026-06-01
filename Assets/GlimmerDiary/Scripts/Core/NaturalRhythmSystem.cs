@@ -9,8 +9,10 @@ namespace GlimmerDiary.Core
     public class NaturalRhythmSystem
     {
         public Season CurrentSeason { get; private set; }
-        public float YearProgress { get; private set; }   // 0.0 ~ 1.0
-        public float WeekProgress { get; private set; }   // 0.0 ~ 1.0 (周一=0, 周日≈1)
+        public float YearProgress { get; private set; }    // 0.0 ~ 1.0
+        public float WeekProgress { get; private set; }    // 0.0 ~ 1.0 (周一=0, 周日≈1)
+        public float LightIntensity { get; private set; }  // 0=夜晚, 1=正午
+        public NaturalRhythmState CurrentState { get; private set; }
         public RhythmSnapshot LastSnapshot { get; private set; }
 
         public NaturalRhythmSystem()
@@ -25,8 +27,20 @@ namespace GlimmerDiary.Core
             YearProgress = (now.DayOfYear - 1f) / (DateTime.IsLeapYear(now.Year) ? 366f : 365f);
 
             // 周一=0, 周日=6 → 归一化到 0~1
-            int dow = ((int)now.DayOfWeek + 6) % 7; // 0=Mon, 6=Sun
+            int dow = ((int)now.DayOfWeek + 6) % 7;
             WeekProgress = dow / 6f;
+
+            // 光照强度：正午=1, 6am/6pm=0, 夜间=0（正弦曲线）
+            float hour = now.Hour + now.Minute / 60f;
+            LightIntensity = Mathf.Clamp01(Mathf.Sin((hour - 6f) / 12f * Mathf.PI));
+
+            CurrentState = new NaturalRhythmState
+            {
+                season = CurrentSeason,
+                yearProgress = YearProgress,
+                weekProgress = WeekProgress,
+                lightIntensity = LightIntensity
+            };
 
             LastSnapshot = new RhythmSnapshot
             {

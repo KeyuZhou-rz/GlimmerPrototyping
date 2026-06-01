@@ -9,8 +9,18 @@ namespace GlimmerDiary.Data
     {
         public string realDate;
         public Season season;
-        public float yearProgress;   // 0.0 ~ 1.0
-        public float weekProgress;   // 0.0 ~ 1.0
+        public float yearProgress;    // 0.0 ~ 1.0
+        public float weekProgress;    // 0.0 ~ 1.0
+    }
+
+    // 传给 WorldEnvironmentSystem 的实时节律状态
+    [Serializable]
+    public class NaturalRhythmState
+    {
+        public Season season;
+        public float yearProgress;    // 0.0 ~ 1.0
+        public float weekProgress;    // 0.0 ~ 1.0
+        public float lightIntensity;  // 0=夜晚, 1=正午，基于实际时刻
     }
 
     [Serializable]
