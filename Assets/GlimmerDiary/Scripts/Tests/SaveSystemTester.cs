@@ -55,14 +55,14 @@ public class SaveSystemTester : MonoBehaviour
             return;
         }
 
-        bool historyOk = data.envHistory != null && data.envHistory.Count == expectedHistoryCount;
+        bool historyOk = data.emotionHistory != null && data.emotionHistory.Count == expectedHistoryCount;
         string status  = historyOk ? "PASS" : "FAIL";
         Debug.Log(
             $"[SaveTest] {status}  world_state.json\n" +
-            $"  savedAt   = {data.savedAt}\n" +
+            $"  gameTime  = {data.gameTime?.ToKeyString()}\n" +
             $"  E_env     = V:{data.currentEEnv.V:F4}  A:{data.currentEEnv.A:F4}  " +
                             $"T:{data.currentEEnv.T:F4}  S:{data.currentEEnv.S:F4}  C:{data.currentEEnv.C:F4}\n" +
-            $"  history   = {data.envHistory?.Count} 条（预期 {expectedHistoryCount}）"
+            $"  history   = {data.emotionHistory?.Count} 条（预期 {expectedHistoryCount}）"
         );
     }
 
@@ -92,7 +92,7 @@ public class SaveSystemTester : MonoBehaviour
         if (saved == null) { Debug.LogError("[SaveTest] FAIL  LoadWorldState 返回 null"); return; }
 
         var tempSystem = new EmotionInertiaSystem();
-        tempSystem.Restore(saved.currentEEnv, saved.envHistory);
+        tempSystem.Restore(saved.currentEEnv, saved.emotionHistory);
 
         bool vMatch = Mathf.Abs(tempSystem.CurrentEEnv.V - saved.currentEEnv.V) < 0.0001f;
         Debug.Log(

@@ -17,17 +17,10 @@ namespace GlimmerDiary.Utils
         static string JournalLogPath =>
             Path.Combine(SaveDir, "journal_log.json");
 
-        // 覆盖写：E_env 当前值 + 历史快照
-        public static void SaveWorldState(EmotionVector currentEEnv,
-                                          List<EnvEmotionSnapshot> history)
+        // 覆盖写：整个世界存档根节点
+        public static void SaveWorldState(WorldSaveData data)
         {
             EnsureDir();
-            var data = new WorldSaveData
-            {
-                savedAt    = DateTime.Now.ToString("o"),
-                currentEEnv = currentEEnv,
-                envHistory  = history
-            };
             File.WriteAllText(WorldStatePath, JsonUtility.ToJson(data, prettyPrint: true));
             Debug.Log($"[SaveSystem] World state saved → {WorldStatePath}");
         }
@@ -37,7 +30,7 @@ namespace GlimmerDiary.Utils
             if (!File.Exists(WorldStatePath)) return null;
             var data = JsonUtility.FromJson<WorldSaveData>(
                            File.ReadAllText(WorldStatePath));
-            Debug.Log($"[SaveSystem] World state loaded (savedAt: {data.savedAt})");
+            Debug.Log($"[SaveSystem] World state loaded (gameTime: {data.gameTime?.ToKeyString()})");
             return data;
         }
 
