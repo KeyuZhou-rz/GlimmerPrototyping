@@ -22,6 +22,13 @@ namespace GlimmerDiary.Utils
                 case "isPresent":       entity.isPresent       = bool.Parse(toVal);  break;
                 case "primaryPath":     entity.primaryPath     = toVal;              break;
                 case "lastSeenDate":    entity.lastSeenDate    = toVal;              break;
+                case "activityRange":
+                    if (float.TryParse(toVal,
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out float ar))
+                        entity.activityRange = UnityEngine.Mathf.Clamp01(ar);
+                    break;
             }
 
             entity.history.Add(new StateChangeRecord
@@ -47,6 +54,35 @@ namespace GlimmerDiary.Utils
                 case "growthStage":   entity.growthStage   = float.Parse(toVal);  break;
                 case "location":      entity.location      = toVal;               break;
                 case "lastFlowerDate":entity.lastFlowerDate= toVal;               break;
+            }
+
+            entity.history.Add(new StateChangeRecord
+            {
+                date        = time.ToKeyString(),
+                field       = field,
+                fromValue   = fromVal,
+                toValue     = toVal,
+                triggeredBy = triggeredBy
+            });
+        }
+
+        // 变更地点实体的一个字段，并追加历史记录
+        public static void ChangeLocationState(
+            LocationEntity entity,
+            string field, string fromVal, string toVal,
+            string triggeredBy, GameDateTime time)
+        {
+            if (float.TryParse(toVal,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float fVal))
+            {
+                switch (field)
+                {
+                    case "waterLevel":        entity.waterLevel        = UnityEngine.Mathf.Clamp01(fVal); break;
+                    case "soilMoisture":      entity.soilMoisture      = UnityEngine.Mathf.Clamp01(fVal); break;
+                    case "vegetationDensity": entity.vegetationDensity = UnityEngine.Mathf.Clamp01(fVal); break;
+                }
             }
 
             entity.history.Add(new StateChangeRecord
