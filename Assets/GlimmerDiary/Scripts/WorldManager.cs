@@ -26,6 +26,7 @@ public class WorldManager : MonoBehaviour
     private List<EntityRelationSO> _allRelations;
     private AnimalDriveSystem      _driveSystem;
     private BehaviorNarrator       _narrator;
+    private AnimalDriveTuning      _driveTuning;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -58,9 +59,11 @@ public class WorldManager : MonoBehaviour
         _relationSystem = new EntityRelationSystem(Registry, _saveData);
         _allRelations   = new List<EntityRelationSO>(Resources.LoadAll<EntityRelationSO>("Relations"));
         _allRelations.RemoveAll(r => r != null && RetiredRelationIds.Contains(r.relationId));
-        _driveSystem    = new AnimalDriveSystem(Registry, _saveData);
+        _driveTuning    = Resources.Load<AnimalDriveTuning>("Tuning/AnimalDriveTuning");
+        _driveSystem    = new AnimalDriveSystem(Registry, _saveData, _driveTuning);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
-        Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})");
+        Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
+                  $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
     }
 
@@ -126,7 +129,7 @@ public class WorldManager : MonoBehaviour
         _ruleEngine.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem = new EntityRelationSystem(Registry, _saveData);
         _relationSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
-        _driveSystem    = new AnimalDriveSystem(Registry, _saveData);
+        _driveSystem    = new AnimalDriveSystem(Registry, _saveData, _driveTuning);
         _driveSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
         _narrator.SetEnvironment(Environment.State, NaturalRhythm.State);

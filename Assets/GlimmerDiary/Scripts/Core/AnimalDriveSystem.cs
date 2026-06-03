@@ -23,41 +23,15 @@ namespace GlimmerDiary.Core
     //   本系统只对其结果做反应（如 permanentDamages 增长 → 织巢鸟离场），绝不竞争。
     public class AnimalDriveSystem
     {
-        // ── 可调参数（文档附录 A，待 P5 外提为 SO） ──────────────
-        const float BASE_DRIVE      = 0.20f;
-        const float INCUMBENT_BONUS = 0.10f;
-        const float SOFT_BAND       = 0.10f;
-
-        const float DM_ANX_NO_BIRD   = 0.08f;
-        const float DM_ANX_CALM_BIRD = 0.06f;
-        const float DM_FOX_SPIKE     = 0.25f;
-        const float DM_RANGE_LERP    = 0.30f;
-        const float DM_RETREAT_RELIEF= 0.05f;
-
-        const float VOLE_FOOD_DECAY   = 0.05f;
-        const float VOLE_FOOD_REGEN   = 0.04f;
-        const float VOLE_FORAGE_RELIEF= 0.30f;
-        const float VOLE_EXPAND_RELIEF= 0.40f;
-        const float VOLE_EXPAND_FOOD  = 0.20f;
-        const float VOLE_DM_RANGE_FREE= 0.60f;
-
-        const float FOX_HUNGER_GAIN   = 0.06f;
-        const float FOX_FORAGE_RELIEF = 0.40f;
-        const float FOX_SAFETY_RECOVER= 0.03f;
-        const float FOX_TERR_RECOVER  = 0.02f;
-        const float FOX_PATROL_REASSERT = 0.15f;
-        const float FOX_TERR_ENCROACH = 0.15f;
-
-        const float BIRD_URGE_SEASON  = 0.05f;
-        const float BIRD_URGE_OFF      = 0.02f;
-        const float BIRD_URGE_BLEAK    = 0.03f;
-        const float BIRD_COMFORT_LERP  = 0.20f;
-        const float BIRD_FOX_DISCOMFORT= 0.10f;
-
-        const float TREE_VITALITY_ALPHA = 0.03f;
-        const float TREE_FLOWER_GAIN     = 0.05f;
-        const int   WEAVER_RETURN_TICKS  = 30;
-        const float INSECT_VEG_DECAY     = 0.003f;
+        // ── 可调参数（P5：外提为 AnimalDriveTuning SO；缺省回退默认值）──
+        // 名称沿用原常量，构造时从 tuning 注入，使用点零改动。
+        private readonly float BASE_DRIVE, INCUMBENT_BONUS, SOFT_BAND;
+        private readonly float DM_ANX_NO_BIRD, DM_ANX_CALM_BIRD, DM_FOX_SPIKE, DM_RANGE_LERP, DM_RETREAT_RELIEF;
+        private readonly float VOLE_FOOD_DECAY, VOLE_FOOD_REGEN, VOLE_FORAGE_RELIEF, VOLE_EXPAND_RELIEF, VOLE_EXPAND_FOOD, VOLE_DM_RANGE_FREE;
+        private readonly float FOX_HUNGER_GAIN, FOX_FORAGE_RELIEF, FOX_SAFETY_RECOVER, FOX_TERR_RECOVER, FOX_PATROL_REASSERT, FOX_TERR_ENCROACH;
+        private readonly float BIRD_URGE_SEASON, BIRD_URGE_OFF, BIRD_URGE_BLEAK, BIRD_COMFORT_LERP, BIRD_FOX_DISCOMFORT;
+        private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN, INSECT_VEG_DECAY;
+        private readonly int   WEAVER_RETURN_TICKS;
 
         static readonly HashSet<string> FOX_TERRITORY = new() { "highland_east", "center" };
 
@@ -66,10 +40,24 @@ namespace GlimmerDiary.Core
         private WorldEnvironmentState   _env;
         private NaturalRhythmState      _rhythm;
 
-        public AnimalDriveSystem(EntityRegistry registry, WorldSaveData save)
+        public AnimalDriveSystem(EntityRegistry registry, WorldSaveData save, AnimalDriveTuning tuning = null)
         {
             _registry = registry;
             _save     = save;
+
+            // 缺省（无资产 / 测试直接 new）→ CreateInstance 取字段默认值，与原常量一致
+            var t = tuning != null ? tuning : ScriptableObject.CreateInstance<AnimalDriveTuning>();
+            BASE_DRIVE = t.baseDrive; INCUMBENT_BONUS = t.incumbentBonus; SOFT_BAND = t.softBand;
+            DM_ANX_NO_BIRD = t.dmAnxNoBird; DM_ANX_CALM_BIRD = t.dmAnxCalmBird; DM_FOX_SPIKE = t.dmFoxSpike;
+            DM_RANGE_LERP = t.dmRangeLerp; DM_RETREAT_RELIEF = t.dmRetreatRelief;
+            VOLE_FOOD_DECAY = t.voleFoodDecay; VOLE_FOOD_REGEN = t.voleFoodRegen; VOLE_FORAGE_RELIEF = t.voleForageRelief;
+            VOLE_EXPAND_RELIEF = t.voleExpandRelief; VOLE_EXPAND_FOOD = t.voleExpandFood; VOLE_DM_RANGE_FREE = t.voleDmRangeFree;
+            FOX_HUNGER_GAIN = t.foxHungerGain; FOX_FORAGE_RELIEF = t.foxForageRelief; FOX_SAFETY_RECOVER = t.foxSafetyRecover;
+            FOX_TERR_RECOVER = t.foxTerrRecover; FOX_PATROL_REASSERT = t.foxPatrolReassert; FOX_TERR_ENCROACH = t.foxTerrEncroach;
+            BIRD_URGE_SEASON = t.birdUrgeSeason; BIRD_URGE_OFF = t.birdUrgeOff; BIRD_URGE_BLEAK = t.birdUrgeBleak;
+            BIRD_COMFORT_LERP = t.birdComfortLerp; BIRD_FOX_DISCOMFORT = t.birdFoxDiscomfort;
+            TREE_VITALITY_ALPHA = t.treeVitalityAlpha; TREE_FLOWER_GAIN = t.treeFlowerGain;
+            WEAVER_RETURN_TICKS = t.weaverReturnTicks; INSECT_VEG_DECAY = t.insectVegDecay;
         }
 
         public void SetEnvironment(WorldEnvironmentState env, NaturalRhythmState rhythm)
@@ -434,20 +422,20 @@ namespace GlimmerDiary.Core
 
         // ── 工具 ───────────────────────────────────────────────────
 
-        private static float Smooth(float x, float k) =>
+        private float Smooth(float x, float k) =>
             Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((x - (k - SOFT_BAND)) / (2f * SOFT_BAND)));
 
-        private static string Argmax(string incumbent,
+        private string Argmax(string incumbent,
             (string name, float p) a, (string name, float p) b, (string name, float p) c,
             out float winning)
             => Argmax(incumbent, out winning, a, b, c);
 
-        private static string Argmax(string incumbent,
+        private string Argmax(string incumbent,
             (string name, float p) a, (string name, float p) b, (string name, float p) c, (string name, float p) d,
             out float winning)
             => Argmax(incumbent, out winning, a, b, c, d);
 
-        private static string Argmax(string incumbent, out float winning,
+        private string Argmax(string incumbent, out float winning,
             params (string name, float p)[] drives)
         {
             string best = drives[0].name;

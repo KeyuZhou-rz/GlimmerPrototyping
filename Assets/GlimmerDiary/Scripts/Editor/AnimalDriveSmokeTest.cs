@@ -222,6 +222,85 @@ namespace GlimmerDiary.Editor
                 Debug.Log($"    世界志[{c.eventId}]: \"{c.text}\"");
         }
 
+        // 一个状态变量在长程仿真中的统计量
+        private class Stat
+        {
+            public readonly string name;
+            public float min = float.PositiveInfinity, max = float.NegativeInfinity, sum;
+            public int n, pinHi, pinLo; public bool anyBad;
+            public Stat(string n) { name = n; }
+            public void Add(float v)
+            {
+                if (float.IsNaN(v) || float.IsInfinity(v)) anyBad = true;
+                min = Mathf.Min(min, v); max = Mathf.Max(max, v); sum += v; n++;
+                if (v >= 0.99f) pinHi++; if (v <= 0.01f) pinLo++;
+            }
+            public float Range => max - min;
+            public float Mean  => n > 0 ? sum / n : 0f;
+            public float PinHi => n > 0 ? (float)pinHi / n : 0f;
+            public float PinLo => n > 0 ? (float)pinLo / n : 0f;
+        }
+
+        // P5：长程仿真 —— 120 游戏日、月度起伏的情绪，验证系统健康振荡、无饱和、无 NaN。
+        [MenuItem("GlimmerDiary/Test Long Run (Health)")]
+        public static void RunLongRunHealth()
+        {
+            var (save, reg, submit) = BuildPipeline();
+            var fox = reg.GetAnimal("fox");
+            var vole = reg.GetAnimal("vole");
+            var dm = reg.GetAnimal("deer_mouse");
+            var tree = reg.GetPlant("baobab_main");
+
+            var stats = new Dictionary<string, Stat>();
+            Stat S(string k) { if (!stats.TryGetValue(k, out var s)) stats[k] = s = new Stat(k); return s; }
+
+            Debug.Log("=== LongRun Health (EditMode, 120 天月度起伏) ===");
+            const int DAYS = 120;
+            for (int d = 1; d <= DAYS; d++)
+            {
+                float phase = 2f * Mathf.PI * d / 30f;          // 30 天一个月周期
+                float V = 0.6f * Mathf.Sin(phase);              // -0.6 .. +0.6
+                float A = 0.5f - 0.3f * Mathf.Sin(phase);       // 低效价时唤醒高（利于偶发断枝）
+                float C = 0.55f + 0.15f * Mathf.Sin(phase);     // 0.4 .. 0.7
+                submit(V, A, C);
+
+                S("fox.hunger").Add(fox.internalState.hunger);
+                S("fox.safety").Add(fox.internalState.safety);
+                S("fox.territory").Add(fox.internalState.territoryStability);
+                S("vole.food").Add(vole.internalState.foodStock);
+                S("vole.expand").Add(vole.internalState.expansionPressure);
+                S("vole.shelter").Add(vole.internalState.shelterSecurity);
+                S("dm.anxiety").Add(dm.internalState.anxiety);
+                S("dm.range").Add(dm.activityRange);
+                S("tree.vitality").Add(tree.internalState.vitality);
+                S("lowland.water").Add(reg.GetLocation("lowland").waterLevel);
+            }
+
+            Debug.Log($"{"变量",-16} {"min",6} {"max",6} {"mean",6} {"range",6} {"pinHi%",7} {"pinLo%",7}");
+            bool allFinite = true, allInRange = true; int alive = 0;
+            foreach (var s in stats.Values)
+            {
+                Debug.Log($"{s.name,-16} {s.min,6:F2} {s.max,6:F2} {s.Mean,6:F2} {s.Range,6:F2} {s.PinHi*100,6:F0}% {s.PinLo*100,6:F0}%");
+                if (s.anyBad) allFinite = false;
+                if (s.min < -0.001f || s.max > 1.001f) allInRange = false;
+                if (s.Range > 0.15f) alive++;
+            }
+
+            // 健康判据
+            bool a1 = allFinite && allInRange;
+            bool a2 = alive >= 4;                                  // 至少 4 个变量在起伏（系统未死板）
+            bool a3 = S("vole.expand").PinHi < 0.90f;              // 扩张压力未长期饱和（§8 阻尼生效）
+            bool a4 = S("fox.territory").PinLo < 0.90f;            // 领地稳定度未长期归零（Patrol 反馈生效）
+
+            int events = save.worldEvents.Count;
+            int chronicles = save.pendingChronicles.Count;
+            Debug.Log($"离散事件={events}  世界志={chronicles}  断枝={tree.permanentDamages.Count}");
+            Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] 全程无 NaN/越界（所有变量 ∈ [0,1]）");
+            Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 系统活跃：{alive} 个变量 range>0.15（健康振荡）");
+            Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] vole.expansionPressure 未长期饱和（pinHi {S("vole.expand").PinHi*100:F0}%）");
+            Debug.Log($"[{(a4 ? "PASS" : "FAIL")}] fox.territoryStability 未长期归零（pinLo {S("fox.territory").PinLo*100:F0}%）");
+        }
+
         [MenuItem("GlimmerDiary/Test Full Pipeline (Bird Arrival)")]
         public static void RunFullPipelineBird()
         {

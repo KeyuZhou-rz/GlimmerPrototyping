@@ -267,6 +267,29 @@ namespace GlimmerDiary.Editor
                 "未生成任何资产。详见 Docs/AnimalStateSystem.md。");
         }
 
+        // ── 动物状态系统调参资产（P5）────────────────
+        // 生成默认 AnimalDriveTuning 到 Resources/Tuning，WorldManager 启动时自动加载。
+        // 不存在时不覆盖；缺失该资产时 AnimalDriveSystem 回退到字段默认值。
+        [MenuItem("GlimmerDiary/Create Animal Drive Tuning")]
+        public static void CreateAnimalDriveTuning()
+        {
+            const string dir = "Assets/Resources/Tuning";
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            string path = $"{dir}/AnimalDriveTuning.asset";
+            if (File.Exists(path))
+            {
+                Debug.LogWarning($"[WorldRuleCreator] 已存在，未覆盖：{path}");
+                return;
+            }
+
+            var so = ScriptableObject.CreateInstance<AnimalDriveTuning>();
+            AssetDatabase.CreateAsset(so, path);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"[WorldRuleCreator] Created: {path}（在 Inspector 调参，运行时即时生效）");
+        }
+
         // ── 工具 ─────────────────────────────────────
         private static void Save(NarrativeRuleSO rule, string fileName)
         {

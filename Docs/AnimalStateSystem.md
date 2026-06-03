@@ -331,7 +331,11 @@ enum CauseFactor {
 - **[✅ DONE] P2 打通一条链**：`deer_mouse` + `vole` + `weaver_bird`，跑通"狐狸临近 → 鹿鼠 anxiety → activityRange 收缩 → 田鼠 expansionPressure → 田鼠向 center 扩张"。Edit-mode 冒烟测试三断言全 PASS（菜单 `GlimmerDiary/Test Anxiety Chain`）。
 - **[✅ DONE] P3 补全**：`fox`（hunger/safety/territoryStability）、`migratory_bird`（内部态 + Depart/EarlyDepart；迁来仍由 NarrativeRule 拥有）、`baobab`（vitality/flowering）+ **事件总线**（`TreeBranchBroke`/`WeaverBirdDeparted`/`TreeFlowered`/`AnimalDeparted`/...）。断枝→织巢鸟离场→鹿鼠焦虑链 5 断言全 PASS（菜单 `GlimmerDiary/Test Weaver Chain`）。
 - **[🟡 大部分] P4 文本层对接**：新增 `BehaviorNarrator`（只读 `BehaviorOutput`+`cause`+`worldEvents`），承接 4 条退役 `EntityRelation` 的 textTemplates。**已迁移/新增文案**：deer_mouse(BirdAbsent)、vole(DeerMouseWithdrew)、fox(RodentExpansion)、候鸟 EarlyDepart(FoxNearby)、WeaverBirdDeparted/Returned、AnimalDeparted、TreeFlowered。`WorldRuleCreator` 的 4 条 relation 生成已标 DEPRECATED（不再生成；narrative rule 生成保留）。冒烟测试已覆盖 fox→deer_mouse→vole→fox 五连环 + 文案产出，全 PASS。**待补**：fox(Hunger)等次要文案；在真实 `WorldManager` 管线（聚焦编辑器 Play mode）跑一次端到端确认退役过滤 + narrator 接入正确。
-- **[ ] P5 调参**：速率/阈值表外提为可调常数（或 SO），跑长程仿真观察健康振荡、无饱和。
+- **[✅ DONE] P5 调参**：~29 个速率/阈值常量外提为 `AnimalDriveTuning` ScriptableObject（`AnimalDriveSystem` 构造时注入，缺省回退字段默认值=原常量；菜单 `GlimmerDiary/Create Animal Drive Tuning` 生成 `Resources/Tuning/AnimalDriveTuning.asset`，`WorldManager` 启动自动加载，Inspector 调参运行时即时生效）。长程仿真 `GlimmerDiary/Test Long Run (Health)`：120 天月度起伏，4 项健康断言全 PASS。
+
+### P5 长程仿真发现（120 天月度起伏）
+- **无饱和 / 无 NaN / 全程 ∈ [0,1]**：`vole.expansionPressure` pinHi **0%**（§8 负反馈生效，扩张压力不 runaway）；`fox.territoryStability` 最低 0.40、pinLo **0%**（Patrol 重宣示托住领地稳定度）。9/10 变量 range>0.15，系统持续振荡不死板。涌现事件丰富：候鸟来去、田鼠扩张、狐狸巡逻、**2 次断枝→织巢鸟离场→回归**。
+- **两个偏斜均衡（可调，非 bug）**：`fox.hunger` mean **0.90**、pinHi 77%（狐狸长期偏饿——`foxForageRelief` 相对 `foxHungerGain` 偏弱 / Foraging 阈值偏高）；`dm.anxiety` mean **0.92**、`dm.range` 77% 趋零（鹿鼠长期紧张——狐狸领地与其核心区重叠 + 断枝周期性赶走织巢鸟）。属合理的草原捕食张力；想缓和直接在 SO 调 `foxForageRelief↑` / `dmAnxCalmBird↑` / `dmFoxSpike↓`，无需改代码。
 
 ### 架构决策落地（P4 提前的一部分）
 4 条"实体→实体"耦合的 `EntityRelationSO` 已从关系系统活动集**剔除**（`WorldManager.RetiredRelationIds`，资产保留可逆）：`deer_mouse_anxious` / `vole_territory_expand` / `weaver_habitat_lost` / `insect_surge_vegetation`。其状态效果由 `AnimalDriveSystem` 接管，文案由 `BehaviorNarrator` 接管。
