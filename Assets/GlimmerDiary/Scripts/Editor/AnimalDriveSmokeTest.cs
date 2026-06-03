@@ -135,8 +135,8 @@ namespace GlimmerDiary.Editor
         // 端到端：忠实复刻 WorldManager.OnJournalSubmitted 全管线
         // （EmotionInertia → 天气 → 水位传播 → 驱动系统 → 文本层 → 规则 → 关系[已退役过滤]）。
         // 验证洪水迁移由 NarrativeRule 拥有、驱动系统不再抢先移动田鼠，且世界志无死字符串。
-        [MenuItem("GlimmerDiary/Test Full Pipeline (Flood)")]
-        public static void RunFullPipelineFlood()
+        // 构建一条忠实复刻 WorldManager.OnJournalSubmitted 的全管线，返回 (save, reg, submit)。
+        private static (WorldSaveData save, EntityRegistry reg, System.Action<float, float, float> submit) BuildPipeline()
         {
             var save = WorldInitializer.CreateNewWorld();
             var reg  = new EntityRegistry();
@@ -169,7 +169,6 @@ namespace GlimmerDiary.Editor
                 save.gameTime.Advance(1);
                 rhythm.Tick();
                 env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
-                // PropagateEnvironmentToLocations 复刻
                 float rain = env.State.Rainfall;
                 foreach (var loc in save.locations)
                 {
@@ -196,12 +195,19 @@ namespace GlimmerDiary.Editor
                 relationSystem.Evaluate(allRelations, save.gameTime);
             }
 
+            Debug.Log($"[Pipeline] Rules={allRules.Count}  Relations={allRelations.Count} (retired 4)");
+            return (save, reg, Submit);
+        }
+
+        [MenuItem("GlimmerDiary/Test Full Pipeline (Flood)")]
+        public static void RunFullPipelineFlood()
+        {
+            var (save, reg, submit) = BuildPipeline();
             var vole = reg.GetAnimal("vole");
             Debug.Log("=== FullPipeline Flood (EditMode, 真实管线) ===");
-            Debug.Log($"Rules={allRules.Count}  Relations={allRelations.Count} (retired 4)");
             for (int i = 0; i < 6; i++)
             {
-                Submit(-0.8f, 0.7f, 0.4f);
+                submit(-0.8f, 0.7f, 0.4f);
                 Debug.Log($"Day {i + 1}: lowland.water={reg.GetLocation("lowland").waterLevel:F2} | " +
                           $"E_env V={save.currentEEnv.V:F2} A={save.currentEEnv.A:F2} | 田鼠 @{vole.location} ({vole.behavior.drive})");
             }
@@ -212,6 +218,32 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(atHigh   ? "PASS" : "FAIL")}] 田鼠迁往 highland_east (NarrativeRule 拥有)  实际 @{vole.location}");
             Debug.Log($"[{(hasFlood ? "PASS" : "FAIL")}] 世界志含 vole_relocate_flood");
             Debug.Log($"[{(noRaw    ? "PASS" : "FAIL")}] 世界志无未替换的 {{date}}/{{sky}} 死字符串");
+            foreach (var c in save.pendingChronicles)
+                Debug.Log($"    世界志[{c.eventId}]: \"{c.text}\"");
+        }
+
+        [MenuItem("GlimmerDiary/Test Full Pipeline (Bird Arrival)")]
+        public static void RunFullPipelineBird()
+        {
+            var (save, reg, submit) = BuildPipeline();
+            var bird = reg.GetAnimal("migratory_bird");
+            var vole = reg.GetAnimal("vole");
+            Debug.Log("=== FullPipeline BirdArrival (EditMode, 真实管线) ===");
+            Debug.Log($"初始: 候鸟 present={bird.isPresent} | 田鼠 @{vole.location} | 月份={save.gameTime.month}(秋)");
+
+            // 秋季 + 正效价：候鸟迁来由 NarrativeRule 拥有；驱动系统先于规则运行，不应干扰
+            for (int i = 0; i < 4; i++)
+            {
+                submit(0.6f, 0.4f, 0.7f);
+                Debug.Log($"Day {i + 1}: E_env V={save.currentEEnv.V:F2} | 候鸟 present={bird.isPresent} @{bird.location} ({bird.behavior.drive}) | 田鼠 @{vole.location}");
+            }
+
+            bool arrived  = bird.isPresent && bird.location == "riverbank";
+            bool hasArr   = save.pendingChronicles.Exists(c => c.eventId == "migratory_bird_arrival");
+            bool voleStay = vole.location == "lowland";   // 无洪水、未到扩张期 → 田鼠不应迁移（预期）
+            Debug.Log($"[{(arrived  ? "PASS" : "FAIL")}] 候鸟迁来 riverbank (NarrativeRule 拥有，驱动系统未干扰)");
+            Debug.Log($"[{(hasArr   ? "PASS" : "FAIL")}] 世界志含 migratory_bird_arrival");
+            Debug.Log($"[{(voleStay ? "PASS" : "FAIL")}] 田鼠留在 lowland（此情境本就不该迁移）实际 @{vole.location}");
             foreach (var c in save.pendingChronicles)
                 Debug.Log($"    世界志[{c.eventId}]: \"{c.text}\"");
         }
