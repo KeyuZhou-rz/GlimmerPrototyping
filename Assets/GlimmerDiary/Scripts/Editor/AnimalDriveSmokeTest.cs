@@ -17,7 +17,9 @@ namespace GlimmerDiary.Editor
             var reg   = new EntityRegistry();
             reg.Initialize(save);
             var drive = new AnimalDriveSystem(reg, save);
-            drive.SetEnvironment(null, null);   // P2 动力学不读 env/rhythm
+            drive.SetEnvironment(null, null);   // P2/P3 动力学不读 env/rhythm
+            var narrator = new BehaviorNarrator(reg, save);
+            narrator.SetEnvironment(null, null);
 
             var dm   = reg.GetAnimal("deer_mouse");
             var vole = reg.GetAnimal("vole");
@@ -31,15 +33,16 @@ namespace GlimmerDiary.Editor
             int    expandDay    = -1;
             string expandCause  = "";
 
-            for (int i = 0; i < 14; i++)
+            for (int i = 0; i < 24; i++)
             {
                 // 中性偏低确定性，直接设 E_env（绕过情绪惯性，结果确定）
                 save.currentEEnv = new EmotionVector { V = 0f, A = 0.3f, T = 1f, S = 0f, C = 0.45f };
                 save.gameTime.Advance(1);
                 drive.Tick(save.gameTime);
+                narrator.Narrate(save.gameTime);
 
-                Debug.Log($"Day {i + 1}: 鹿鼠[range={dm.activityRange:F2} {dm.behavior.drive}/{dm.behavior.cause}] " +
-                          $"田鼠[{vole.behavior.drive}/{vole.behavior.cause} @{vole.location}]");
+                Debug.Log($"Day {i + 1}: 鹿鼠[range={dm.activityRange:F2} {dm.behavior.drive}] " +
+                          $"田鼠[{vole.behavior.drive} @{vole.location}] 狐狸[{fox.behavior.drive}/{fox.behavior.cause} @{fox.location}]");
 
                 if (!voleExpanded && (vole.behavior.drive == "Expand" || vole.location == "center"))
                 {
@@ -52,11 +55,15 @@ namespace GlimmerDiary.Editor
             bool a1 = dm.activityRange < 0.5f;
             bool a2 = voleExpanded;
             bool a3 = expandCause == "DeerMouseWithdrew";
+            bool a4 = save.pendingChronicles.Exists(c => c.eventId == "behavior_vole:Expand:DeerMouseWithdrew");
+            bool a5 = save.pendingChronicles.Exists(c => c.eventId == "behavior_fox:Patrol:RodentExpansion");
             Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] 鹿鼠 activityRange < 0.5  (实际 {dm.activityRange:F2})");
             Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 田鼠发生扩张  (第 {expandDay} 天)");
             Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] 扩张成因为跨实体项 DeerMouseWithdrew  (实际 {expandCause})");
-            Debug.Log($"末态: 鹿鼠 range={dm.activityRange:F2} | 田鼠 @{vole.location} " +
-                      $"drive={vole.behavior.drive} cause={vole.behavior.cause}");
+            Debug.Log($"[{(a4 ? "PASS" : "FAIL")}] 文本层产出田鼠扩张文案 (cause=DeerMouseWithdrew)");
+            Debug.Log($"[{(a5 ? "PASS" : "FAIL")}] 文本层产出狐狸巡逻文案 (cause=RodentExpansion)");
+            foreach (var c in save.pendingChronicles)
+                Debug.Log($"    世界志: \"{c.text}\"");
         }
 
         // P3 链：断枝（NarrativeRule 拥有）→ 织巢鸟离场 → 鹿鼠焦虑 + 文本层产出文案。

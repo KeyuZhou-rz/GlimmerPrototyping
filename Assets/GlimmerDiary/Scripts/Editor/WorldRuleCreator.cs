@@ -246,153 +246,25 @@ namespace GlimmerDiary.Editor
         }
 
         // ──────────────────────────────────────────────
-        // 实体关系资产
+        // 实体关系资产（已废弃 — DEPRECATED）
+        //
+        // 这 4 条"实体 → 实体"耦合（weaver_habitat_lost / deer_mouse_anxious /
+        // insect_surge_vegetation / vole_territory_expand）已由 AnimalDriveSystem
+        // 的状态向量传导接管，其文案由 BehaviorNarrator 按 cause 产出。
+        // WorldManager.RetiredRelationIds 在加载时把它们从关系系统活动集剔除。
+        // 现有 .asset 仍保留在 Assets/Resources/Relations 供参考，但不应再重新生成。
+        // 详见 Docs/AnimalStateSystem.md §1.2 / §10。
+        //
+        // 注意：NarrativeRule（情绪/环境 → 离散事件，如断枝、候鸟迁来）未受影响，
+        //       仍由 CreateAllRules 生成、NarrativeRuleEngine 评估。
         // ──────────────────────────────────────────────
-        private const string RelationsPath = "Assets/Resources/Relations";
-
-        [MenuItem("GlimmerDiary/Create All Entity Relations")]
-        public static void CreateAllRelations()
+        [MenuItem("GlimmerDiary/Create All Entity Relations (DEPRECATED)")]
+        public static void CreateAllRelations_Deprecated()
         {
-            if (!Directory.Exists(RelationsPath))
-                Directory.CreateDirectory(RelationsPath);
-
-            CreateWeaverHabitatLost();
-            CreateDeerMouseAnxious();
-            CreateInsectSurgeVegetation();
-            CreateVoleTerritoryExpand();
-
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            Debug.Log("[WorldRuleCreator] 4 entity relations created in Assets/Resources/Relations/");
-        }
-
-        // ── R1. 猴面包树断枝 → 织巢鸟离开 (priority=100) ──
-        private static void CreateWeaverHabitatLost()
-        {
-            var rel = ScriptableObject.CreateInstance<EntityRelationSO>();
-            rel.relationId    = "weaver_habitat_lost";
-            rel.description   = "猴面包树有永久损伤且织巢鸟在场 → 织巢鸟离开";
-            rel.priority      = 100;
-            rel.cooldownDays  = 365;
-
-            rel.conditions = new List<RuleCondition>
-            {
-                new RuleCondition { targetType="plant",  targetId="baobab_main",
-                    field="permanentDamagesCount", op="gt", value="0" },
-                new RuleCondition { targetType="animal", targetId="weaver_bird",
-                    field="isPresent", op="eq", value="True" }
-            };
-
-            rel.effects = new List<StateChangeInstruction>
-            {
-                new StateChangeInstruction { targetType="animal", targetId="weaver_bird",
-                    field="isPresent", toValue="False" }
-            };
-
-            rel.textTemplates = new List<string>
-            {
-                "{date} {sky} 织巢鸟的巢随那根枝倒下了。它们围着树转了一圈，然后往东南飞走了。",
-                "{date} {sky} 断枝上那个球形的巢，昨天还在，今天不见了。织巢鸟走了。"
-            };
-
-            rel.variables = new List<TemplateVariable>();
-            SaveRelation(rel, "Relation_WeaverHabitatLost");
-        }
-
-        // ── R2. 织巢鸟离开 → 鹿鼠活动范围收缩 (priority=90) ──
-        private static void CreateDeerMouseAnxious()
-        {
-            var rel = ScriptableObject.CreateInstance<EntityRelationSO>();
-            rel.relationId    = "deer_mouse_anxious";
-            rel.description   = "织巢鸟不在场 → 鹿鼠失去安全信号，activityRange收缩";
-            rel.priority      = 90;
-            rel.cooldownDays  = 365;
-
-            rel.conditions = new List<RuleCondition>
-            {
-                new RuleCondition { targetType="animal", targetId="weaver_bird",
-                    field="isPresent", op="eq", value="False" },
-                new RuleCondition { targetType="animal", targetId="deer_mouse",
-                    field="activityRange", op="gt", value="0.4" }
-            };
-
-            rel.effects = new List<StateChangeInstruction>
-            {
-                new StateChangeInstruction { targetType="animal", targetId="deer_mouse",
-                    field="activityRange", toValue="0.3" }
-            };
-
-            rel.textTemplates = new List<string>
-            {
-                "{date} {sky} 东侧的鹿鼠比以前少见了。",
-                "{date} {sky} 鹿鼠只在洞口附近活动，不再往东走了。"
-            };
-
-            rel.variables = new List<TemplateVariable>();
-            SaveRelation(rel, "Relation_DeerMouseAnxious");
-        }
-
-        // ── R3. 织巢鸟离开 → 东侧高地植被密度缓慢下降 (priority=85) ──
-        // 静默效果，不生成世界志；cooldownDays=7 每周触发一次，持续衰退
-        private static void CreateInsectSurgeVegetation()
-        {
-            var rel = ScriptableObject.CreateInstance<EntityRelationSO>();
-            rel.relationId    = "insect_surge_vegetation";
-            rel.description   = "织巢鸟离场 → 虫害使东侧高地植被密度每周降 0.02（静默）";
-            rel.priority      = 85;
-            rel.cooldownDays  = 7;
-
-            rel.conditions = new List<RuleCondition>
-            {
-                new RuleCondition { targetType="animal",   targetId="weaver_bird",
-                    field="isPresent", op="eq", value="False" },
-                new RuleCondition { targetType="location", targetId="highland_east",
-                    field="vegetationDensity", op="gt", value="0.10" }
-            };
-
-            rel.effects = new List<StateChangeInstruction>
-            {
-                new StateChangeInstruction { targetType="location", targetId="highland_east",
-                    field="vegetationDensity", useDelta=true, deltaValue=-0.02f }
-            };
-
-            // 静默：textTemplates 留空，仅在植被跌至关键阈值时由叙事规则生成世界志
-            rel.textTemplates = new List<string>();
-            rel.variables     = new List<TemplateVariable>();
-            SaveRelation(rel, "Relation_InsectSurgeVegetation");
-        }
-
-        // ── R4. 鹿鼠退缩 → 田鼠向东试探领地 (priority=80) ──
-        private static void CreateVoleTerritoryExpand()
-        {
-            var rel = ScriptableObject.CreateInstance<EntityRelationSO>();
-            rel.relationId    = "vole_territory_expand";
-            rel.description   = "鹿鼠活动范围收缩 → 田鼠向东试探";
-            rel.priority      = 80;
-            rel.cooldownDays  = 365;
-
-            rel.conditions = new List<RuleCondition>
-            {
-                new RuleCondition { targetType="animal", targetId="deer_mouse",
-                    field="activityRange", op="lt", value="0.4" },
-                new RuleCondition { targetType="animal", targetId="vole",
-                    field="isPresent", op="eq", value="True" }
-            };
-
-            rel.effects = new List<StateChangeInstruction>
-            {
-                new StateChangeInstruction { targetType="animal", targetId="vole",
-                    field="facingDirection", toValue="E" }
-            };
-
-            rel.textTemplates = new List<string>
-            {
-                "{date} {sky} 低地那边出现了新的土堆，朝东。田鼠在试探。",
-                "{date} {sky} 田鼠往东多走了一段，停了一会儿，又回来了。"
-            };
-
-            rel.variables = new List<TemplateVariable>();
-            SaveRelation(rel, "Relation_VoleTerritoryExpand");
+            Debug.LogWarning(
+                "[WorldRuleCreator] “Create All Entity Relations” 已废弃：这 4 条实体耦合已迁移到 " +
+                "AnimalDriveSystem + BehaviorNarrator，并被 WorldManager.RetiredRelationIds 在运行时剔除。" +
+                "未生成任何资产。详见 Docs/AnimalStateSystem.md。");
         }
 
         // ── 工具 ─────────────────────────────────────
@@ -400,13 +272,6 @@ namespace GlimmerDiary.Editor
         {
             string path = $"{RulesPath}/{fileName}.asset";
             AssetDatabase.CreateAsset(rule, path);
-            Debug.Log($"[WorldRuleCreator] Created: {path}");
-        }
-
-        private static void SaveRelation(EntityRelationSO rel, string fileName)
-        {
-            string path = $"{RelationsPath}/{fileName}.asset";
-            AssetDatabase.CreateAsset(rel, path);
             Debug.Log($"[WorldRuleCreator] Created: {path}");
         }
     }

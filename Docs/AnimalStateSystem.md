@@ -329,7 +329,7 @@ enum CauseFactor {
 - **[✅ DONE] P1 骨架**：`ZoneTopology`（邻接表）+ 内部状态类（扁平 union）+ `BehaviorOutput`/`CauseFactor`/`WorldEvent` 数据结构 + `AnimalDriveSystem` 双缓冲框架。挂进 `WorldManager` 管线、编译通过。
 - **[✅ DONE] P2 打通一条链**：`deer_mouse` + `vole` + `weaver_bird`，跑通"狐狸临近 → 鹿鼠 anxiety → activityRange 收缩 → 田鼠 expansionPressure → 田鼠向 center 扩张"。Edit-mode 冒烟测试三断言全 PASS（菜单 `GlimmerDiary/Test Anxiety Chain`）。
 - **[✅ DONE] P3 补全**：`fox`（hunger/safety/territoryStability）、`migratory_bird`（内部态 + Depart/EarlyDepart；迁来仍由 NarrativeRule 拥有）、`baobab`（vitality/flowering）+ **事件总线**（`TreeBranchBroke`/`WeaverBirdDeparted`/`TreeFlowered`/`AnimalDeparted`/...）。断枝→织巢鸟离场→鹿鼠焦虑链 5 断言全 PASS（菜单 `GlimmerDiary/Test Weaver Chain`）。
-- **[🟡 部分] P4 文本层对接**：新增 `BehaviorNarrator`（只读 `BehaviorOutput`+`cause`+`worldEvents`），承接 4 条退役 `EntityRelation` 的 textTemplates。**已迁移**：deer_mouse(BirdAbsent)、vole(DeerMouseWithdrew)、WeaverBirdDeparted/Returned、AnimalDeparted、TreeFlowered。**待补**：fox(RodentExpansion/Hunger)、候鸟 EarlyDepart(FoxNearby) 的文案与更丰富的 cause→细节表；在真实 `WorldManager` 管线（Play mode）跑端到端。
+- **[🟡 大部分] P4 文本层对接**：新增 `BehaviorNarrator`（只读 `BehaviorOutput`+`cause`+`worldEvents`），承接 4 条退役 `EntityRelation` 的 textTemplates。**已迁移/新增文案**：deer_mouse(BirdAbsent)、vole(DeerMouseWithdrew)、fox(RodentExpansion)、候鸟 EarlyDepart(FoxNearby)、WeaverBirdDeparted/Returned、AnimalDeparted、TreeFlowered。`WorldRuleCreator` 的 4 条 relation 生成已标 DEPRECATED（不再生成；narrative rule 生成保留）。冒烟测试已覆盖 fox→deer_mouse→vole→fox 五连环 + 文案产出，全 PASS。**待补**：fox(Hunger)等次要文案；在真实 `WorldManager` 管线（聚焦编辑器 Play mode）跑一次端到端确认退役过滤 + narrator 接入正确。
 - **[ ] P5 调参**：速率/阈值表外提为可调常数（或 SO），跑长程仿真观察健康振荡、无饱和。
 
 ### 架构决策落地（P4 提前的一部分）

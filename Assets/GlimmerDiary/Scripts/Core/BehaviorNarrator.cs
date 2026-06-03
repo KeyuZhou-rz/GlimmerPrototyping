@@ -40,9 +40,11 @@ namespace GlimmerDiary.Core
 
         public void Narrate(GameDateTime time)
         {
-            // 1. 跨实体成因的持续行为（迁移自 Relation_DeerMouseAnxious / VoleTerritoryExpand）
-            NarrateBehavior("deer_mouse", "Retreat", CauseFactor.BirdAbsent, DeerMouseBirdAbsent, time);
-            NarrateBehavior("vole",       "Expand",  CauseFactor.DeerMouseWithdrew, VoleExpand, time);
+            // 1. 跨实体成因的持续行为（细节暗示行为背后的跨实体原因，永不点破）
+            NarrateBehavior("deer_mouse",     "Retreat",     CauseFactor.BirdAbsent,        DeerMouseBirdAbsent, time);
+            NarrateBehavior("vole",           "Expand",      CauseFactor.DeerMouseWithdrew, VoleExpand,          time);
+            NarrateBehavior("fox",            "Patrol",      CauseFactor.RodentExpansion,   FoxPatrolRodent,     time);
+            NarrateBehavior("migratory_bird", "EarlyDepart", CauseFactor.FoxNearby,         BirdEarlyDepartFox,  time);
 
             // 2. 离散世界事件（迁移自 Relation_WeaverHabitatLost + 新增）
             int count = _save.worldEvents?.Count ?? 0;
@@ -89,6 +91,18 @@ namespace GlimmerDiary.Core
         {
             "{date} {sky} 低地那边出现了新的土堆，朝东。田鼠在试探。",
             "{date} {sky} 田鼠往东多走了一段，停了一会儿，又回来了。",
+        };
+        // 狐狸巡逻：细节暗示"田鼠新洞口"这一跨实体成因
+        private static readonly string[] FoxPatrolRodent =
+        {
+            "{date} {sky} 田鼠新挖的洞口，土还是新的。狐狸在那一带多绕了几圈。",
+            "{date} {sky} 狐狸沿着东侧高地走了一遍，停在那堆新土前闻了闻。",
+        };
+        // 候鸟提前离去：细节暗示"狐狸常来河岸"这一跨实体成因
+        private static readonly string[] BirdEarlyDepartFox =
+        {
+            "{date} {sky} 候鸟走得比往年早。这阵子，狐狸常在河岸附近。",
+            "{date} {sky} 芦苇丛空了。它们没等到该走的时候——河岸边那个影子来得太勤了。",
         };
         private static readonly string[] WeaverDeparted =
         {
