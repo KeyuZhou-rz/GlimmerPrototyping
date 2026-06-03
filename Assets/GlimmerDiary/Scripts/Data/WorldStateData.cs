@@ -40,6 +40,9 @@ namespace GlimmerDiary.Data
         // 世界志（待显示 / 已显示）
         public List<WorldChronicleEntry> pendingChronicles = new();
         public List<WorldChronicleEntry> shownChronicles   = new();
+
+        // 世界事件日志（离散跃迁，append-only，永不删除）
+        public List<WorldEvent> worldEvents = new();
     }
 
     // 一条世界志条目

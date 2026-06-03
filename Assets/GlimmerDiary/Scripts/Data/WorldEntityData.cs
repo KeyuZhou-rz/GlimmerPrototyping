@@ -30,6 +30,12 @@ namespace GlimmerDiary.Data
         public string familyState;       // "family" / "solitary" / "unknown"
         public string lastSeenDate;      // 上次出现的游戏内日期
         public string primaryPath;       // 有路径的动物（如狐狸）：主路径 ID
+        public float  activityRange = 1.0f; // 0=完全退缩 1=正常活动范围（鹿鼠等使用）
+
+        // 动物状态系统（Layer 2）——内部状态向量 + 行为输出
+        // 文本层只读 behavior，不读 internalState（见 Docs/AnimalStateSystem.md）
+        public AnimalInternalState internalState;
+        public BehaviorOutput      behavior;
 
         public List<StateChangeRecord> history = new();
     }
@@ -47,6 +53,9 @@ namespace GlimmerDiary.Data
         public float  growthStage;       // 0.0 ~ 1.0
         public bool   isFlowering;
         public string lastFlowerDate;
+
+        // 植物内部状态（仅 baobab 使用：vitality / branches / floweringReadiness）
+        public PlantInternalState internalState;
 
         // 永久损伤记录（不可逆），每条记录一次折断/枯死事件
         public List<PermanentDamageRecord> permanentDamages = new();

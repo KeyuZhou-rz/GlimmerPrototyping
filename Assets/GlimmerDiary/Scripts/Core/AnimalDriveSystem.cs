@@ -1,0 +1,575 @@
+using System.Collections.Generic;
+using UnityEngine;
+using GlimmerDiary.Data;
+using GlimmerDiary.Utils;
+
+namespace GlimmerDiary.Core
+{
+    // 动物状态系统 —— 内部状态向量 → 行为输出（Layer 2 / WorldSimulator）
+    //
+    // 设计蓝本：Docs/AnimalStateSystem.md
+    //
+    // 每 tick（= 一次日记 = 一游戏日）：
+    //   1. 对所有动物互读字段 + 内部状态做快照（双缓冲）
+    //   2. 每个实体只读快照，计算 next 内部状态 + 主导行为（urgency argmax + 现任加成）
+    //   3. 写回行为输出字段（离散变更经 EntityStateHelper 记 history），边沿检测发事件
+    //
+    // 铁律：Step* / Resolve* 只读 snapshot，绝不读他者本 tick 新值，保证顺序无关；
+    //       因果链每 tick 推进一级，天然带 1 日相位滞后。
+    //
+    // 职责边界（见 Docs §1.2）：
+    //   本系统接管"实体 → 实体"连续耦合（替代 4 条 EntityRelation）。
+    //   "情绪/环境 → 离散事件"仍由 NarrativeRuleSO 拥有（断枝、候鸟迁来）；
+    //   本系统只对其结果做反应（如 permanentDamages 增长 → 织巢鸟离场），绝不竞争。
+    public class AnimalDriveSystem
+    {
+        // ── 可调参数（文档附录 A，待 P5 外提为 SO） ──────────────
+        const float BASE_DRIVE      = 0.20f;
+        const float INCUMBENT_BONUS = 0.10f;
+        const float SOFT_BAND       = 0.10f;
+
+        const float DM_ANX_NO_BIRD   = 0.08f;
+        const float DM_ANX_CALM_BIRD = 0.06f;
+        const float DM_FOX_SPIKE     = 0.25f;
+        const float DM_RANGE_LERP    = 0.30f;
+        const float DM_RETREAT_RELIEF= 0.05f;
+
+        const float VOLE_FOOD_DECAY   = 0.05f;
+        const float VOLE_FOOD_REGEN   = 0.04f;
+        const float VOLE_FORAGE_RELIEF= 0.30f;
+        const float VOLE_EXPAND_RELIEF= 0.40f;
+        const float VOLE_EXPAND_FOOD  = 0.20f;
+        const float VOLE_DM_RANGE_FREE= 0.60f;
+
+        const float FOX_HUNGER_GAIN   = 0.06f;
+        const float FOX_FORAGE_RELIEF = 0.40f;
+        const float FOX_SAFETY_RECOVER= 0.03f;
+        const float FOX_TERR_RECOVER  = 0.02f;
+        const float FOX_PATROL_REASSERT = 0.15f;
+        const float FOX_TERR_ENCROACH = 0.15f;
+
+        const float BIRD_URGE_SEASON  = 0.05f;
+        const float BIRD_URGE_OFF      = 0.02f;
+        const float BIRD_URGE_BLEAK    = 0.03f;
+        const float BIRD_COMFORT_LERP  = 0.20f;
+        const float BIRD_FOX_DISCOMFORT= 0.10f;
+
+        const float TREE_VITALITY_ALPHA = 0.03f;
+        const float TREE_FLOWER_GAIN     = 0.05f;
+        const int   WEAVER_RETURN_TICKS  = 30;
+        const float INSECT_VEG_DECAY     = 0.003f;
+
+        static readonly HashSet<string> FOX_TERRITORY = new() { "highland_east", "center" };
+
+        private readonly EntityRegistry _registry;
+        private readonly WorldSaveData  _save;
+        private WorldEnvironmentState   _env;
+        private NaturalRhythmState      _rhythm;
+
+        public AnimalDriveSystem(EntityRegistry registry, WorldSaveData save)
+        {
+            _registry = registry;
+            _save     = save;
+        }
+
+        public void SetEnvironment(WorldEnvironmentState env, NaturalRhythmState rhythm)
+        {
+            _env    = env;
+            _rhythm = rhythm;
+        }
+
+        private class Snap
+        {
+            public bool                isPresent;
+            public string              location;
+            public float               activityRange;
+            public AnimalInternalState st;
+        }
+
+        public void Tick(GameDateTime time)
+        {
+            EnsureInitialized();
+
+            // 1. 快照（双缓冲只读副本）
+            var snap = new Dictionary<string, Snap>(_save.animals.Count);
+            foreach (var a in _save.animals)
+            {
+                snap[a.speciesId] = new Snap
+                {
+                    isPresent     = a.isPresent,
+                    location      = a.location,
+                    activityRange = a.activityRange,
+                    st            = a.internalState.Clone()
+                };
+            }
+
+            // 2. 植物（猴面包树）先处理：vitality/开花 + 断枝边沿 → 织巢鸟离场
+            TickTree(snap, time);
+
+            // 3. 动物：从快照算 next + 行为，写回
+            foreach (var a in _save.animals)
+            {
+                switch (a.speciesId)
+                {
+                    case "deer_mouse":     TickDeerMouse(a, snap, time);     break;
+                    case "vole":           TickVole(a, snap, time);          break;
+                    case "fox":            TickFox(a, snap, time);           break;
+                    case "migratory_bird": TickMigratoryBird(a, snap, time); break;
+                    case "weaver_bird":    TickWeaver(a, snap, time);        break;
+                    default:               a.behavior.zone = a.location;     break;
+                }
+            }
+        }
+
+        // ── 鹿鼠：核心传导节点 ─────────────────────────────────────
+        private void TickDeerMouse(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            var cur = snap[a.speciesId].st;
+            string myZone = snap[a.speciesId].location;
+
+            bool weaverPresent = snap.TryGetValue("weaver_bird", out var w) && w.isPresent;
+            bool foxNear = snap.TryGetValue("fox", out var f) && f.isPresent &&
+                           ZoneTopology.AreSameOrAdjacent(f.location, myZone);
+            float certainty = _save.currentEEnv?.C ?? 0.5f;
+
+            float baseline = Mathf.Lerp(0.15f, 0.55f, 1f - certainty);
+            float anx = Mathf.Lerp(cur.anxiety, baseline, 0.10f);
+            anx += weaverPresent ? -DM_ANX_CALM_BIRD : DM_ANX_NO_BIRD;
+            if (foxNear) anx += DM_FOX_SPIKE;
+            anx = Mathf.Clamp01(anx);
+
+            float range = Mathf.Clamp01(Mathf.Lerp(a.activityRange, 1f - anx, DM_RANGE_LERP));
+            a.activityRange = range;
+
+            string drive = Argmax(cur.lastDrive,
+                ("Retreat", Smooth(anx, 0.6f)),
+                ("Explore", Smooth(1f - anx, 0.7f) * 0.8f),
+                ("Routine", BASE_DRIVE),
+                out float intensity);
+
+            string cause = CauseFactor.None, causeTarget = "";
+            if (drive == "Retreat")
+            {
+                if (foxNear)             { cause = CauseFactor.FoxNearby; causeTarget = "fox"; }
+                else if (!weaverPresent) { cause = CauseFactor.BirdAbsent; causeTarget = "weaver_bird"; }
+                else if (certainty < 0.4f) cause = CauseFactor.EmotionBleak;
+                anx = Mathf.Clamp01(anx - DM_RETREAT_RELIEF);
+            }
+
+            cur.anxiety   = anx;
+            cur.lastDrive = drive;
+            a.internalState.anxiety   = anx;
+            a.internalState.lastDrive = drive;
+            WriteBehavior(a, drive, cause, causeTarget, intensity);
+        }
+
+        // ── 田鼠：水位威胁 / 食物 / 扩张机会 ───────────────────────
+        private void TickVole(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            var cur = snap[a.speciesId].st;
+            string myZone = snap[a.speciesId].location;
+
+            var home = _registry.GetLocation("lowland");
+            float shelter = 1f - (home?.waterLevel ?? 0.4f);
+
+            var hereLoc = _registry.GetLocation(myZone);
+            float veg = hereLoc?.vegetationDensity ?? 0.5f;
+            float food = cur.foodStock - VOLE_FOOD_DECAY + veg * VOLE_FOOD_REGEN;
+
+            var tree = _registry.GetPlant("baobab_main");
+            if (tree != null && tree.isFlowering && myZone == "center") food += 0.05f;
+            food = Mathf.Clamp01(food);
+
+            float dmRange = snap.TryGetValue("deer_mouse", out var dm) ? dm.activityRange : 1f;
+            bool centerFree = dmRange < VOLE_DM_RANGE_FREE && myZone != "center";
+            float exp = cur.expansionPressure * 0.98f;
+            if (food < 0.4f) exp += 0.05f;
+            if (centerFree)  exp += 0.06f;
+            exp = Mathf.Clamp01(exp);
+
+            string drive = Argmax(cur.lastDrive,
+                ("Relocate", Smooth(1f - shelter, 0.7f)),
+                ("Expand",   centerFree ? Smooth(exp, 0.6f) : 0f),
+                ("Forage",   Smooth(1f - food, 0.6f)),
+                ("Burrow",   BASE_DRIVE),
+                out float intensity);
+
+            string cause = CauseFactor.None, causeTarget = "";
+            switch (drive)
+            {
+                case "Forage":
+                    food = Mathf.Clamp01(food + VOLE_FORAGE_RELIEF);
+                    cause = CauseFactor.Hunger;
+                    break;
+
+                case "Relocate":
+                {
+                    string target = LowestWaterNeighbor(myZone);
+                    if (target != null && target != myZone)
+                        MoveAnimal(a, target, "vole_relocate", time);
+                    cause = CauseFactor.WaterRising; causeTarget = "lowland";
+                    break;
+                }
+
+                case "Expand":
+                    MoveAnimal(a, "center", "vole_expansion", time);
+                    Emit(WorldEventType.VoleClaimedZone, "vole", "center", "E", time);
+                    exp  = Mathf.Clamp01(exp  - VOLE_EXPAND_RELIEF);
+                    food = Mathf.Clamp01(food + VOLE_EXPAND_FOOD);
+                    cause = CauseFactor.DeerMouseWithdrew; causeTarget = "deer_mouse";
+                    break;
+            }
+
+            cur.shelterSecurity   = shelter;
+            cur.foodStock         = food;
+            cur.expansionPressure = exp;
+            cur.lastDrive         = drive;
+            a.internalState.shelterSecurity   = shelter;
+            a.internalState.foodStock         = food;
+            a.internalState.expansionPressure = exp;
+            a.internalState.lastDrive         = drive;
+            WriteBehavior(a, drive, cause, causeTarget, intensity);
+        }
+
+        // ── 狐狸：饥饿 / 安全 / 领地稳定 ───────────────────────────
+        private void TickFox(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            var cur = snap[a.speciesId].st;
+            string myZone = snap[a.speciesId].location;
+            var eenv = _save.currentEEnv;
+            float A = eenv?.A ?? 0.3f;
+            float rain = _env?.Rainfall ?? 0f;
+
+            // hunger
+            float hunger = Mathf.Clamp01(cur.hunger + FOX_HUNGER_GAIN);
+
+            // safety
+            bool birdAtRiver = snap.TryGetValue("migratory_bird", out var b) && b.isPresent && b.location == "riverbank";
+            bool foxNearRiver = ZoneTopology.AreSameOrAdjacent(myZone, "riverbank");
+            float rbWater  = _registry.GetLocation("riverbank")?.waterLevel ?? 0.5f;
+            float lowWater = _registry.GetLocation("lowland")?.waterLevel ?? 0.4f;
+            bool waterAbnormal = rbWater > 0.7f || rbWater < 0.1f || lowWater > 0.7f || lowWater < 0.1f;
+
+            float safety = cur.safety;
+            if (birdAtRiver && foxNearRiver) safety -= 0.10f;
+            if (waterAbnormal)               safety -= 0.05f;
+            safety -= 0.10f * Mathf.Max(0f, A - 0.6f);
+            if (A < 0.4f && rain < 0.3f)     safety += FOX_SAFETY_RECOVER;
+            safety = Mathf.Clamp01(safety);
+
+            // territoryStability
+            bool voleInTerritory = snap.TryGetValue("vole", out var v) && v.isPresent && FOX_TERRITORY.Contains(v.location);
+            float terr = cur.territoryStability;
+            terr += voleInTerritory ? -FOX_TERR_ENCROACH : FOX_TERR_RECOVER;
+            terr = Mathf.Clamp01(terr);
+
+            string drive = Argmax(cur.lastDrive,
+                ("Foraging",  Smooth(hunger, 0.7f)),
+                ("Patrol",    Smooth(1f - terr, 0.6f)),
+                ("Avoidance", Smooth(1f - safety, 0.7f)),
+                ("Rest",      BASE_DRIVE),
+                out float intensity);
+
+            string cause = CauseFactor.None, causeTarget = "";
+            switch (drive)
+            {
+                case "Foraging":
+                {
+                    string target = HighestVegInReach(myZone);
+                    float tVeg = _registry.GetLocation(target)?.vegetationDensity ?? 0.5f;
+                    if (target != myZone) MoveAnimal(a, target, "fox_forage", time);
+                    hunger = Mathf.Clamp01(hunger - FOX_FORAGE_RELIEF * (0.5f + 0.5f * tVeg));
+                    cause = CauseFactor.Hunger;
+                    break;
+                }
+                case "Patrol":
+                    if (voleInTerritory && v != null && v.location != myZone && FOX_TERRITORY.Contains(v.location))
+                        MoveAnimal(a, v.location, "fox_patrol", time);
+                    terr = Mathf.Clamp01(terr + FOX_PATROL_REASSERT);
+                    if (voleInTerritory) { cause = CauseFactor.RodentExpansion; causeTarget = "vole"; }
+                    break;
+                case "Avoidance":
+                    if (myZone != "highland_east") MoveAnimal(a, "highland_east", "fox_avoid", time);
+                    if (waterAbnormal) { cause = CauseFactor.WaterRising; }
+                    break;
+            }
+
+            cur.hunger = hunger; cur.safety = safety; cur.territoryStability = terr; cur.lastDrive = drive;
+            a.internalState.hunger = hunger;
+            a.internalState.safety = safety;
+            a.internalState.territoryStability = terr;
+            a.internalState.lastDrive = drive;
+            WriteBehavior(a, drive, cause, causeTarget, intensity);
+        }
+
+        // ── 候鸟：迁徙冲动 + 栖息舒适度（迁来由 NarrativeRule 拥有，本系统管离去） ──
+        private void TickMigratoryBird(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            var cur = snap[a.speciesId].st;
+            int month = _save.gameTime.month;
+            bool autumn = month >= 9 && month <= 11;
+            bool spring = month >= 3 && month <= 5;
+            float V = _save.currentEEnv?.V ?? 0f;
+
+            // 迁来 → 离去边沿：刚迁来（rule 翻转 isPresent）时重置冲动
+            bool present = a.isPresent;
+
+            float urge = cur.migrationUrge;
+            urge += (autumn || spring) ? BIRD_URGE_SEASON : -BIRD_URGE_OFF;
+            if (V < -0.2f) urge += BIRD_URGE_BLEAK;
+            urge = Mathf.Clamp01(urge);
+
+            float rbWater = _registry.GetLocation("riverbank")?.waterLevel ?? 0.5f;
+            bool moderate = rbWater >= 0.4f && rbWater <= 0.6f;
+            float comfort = Mathf.Lerp(cur.settlementComfort, moderate ? 0.8f : 0.3f, BIRD_COMFORT_LERP);
+            bool foxAtRiver = snap.TryGetValue("fox", out var f) && f.isPresent && f.location == "riverbank";
+            if (foxAtRiver) comfort -= BIRD_FOX_DISCOMFORT;
+            comfort = Mathf.Clamp01(comfort);
+
+            string drive, cause = CauseFactor.None, causeTarget = "";
+            float intensity = BASE_DRIVE;
+
+            if (!present)
+            {
+                drive = "Away";   // 不在场：迁来交给 NarrativeRule，本系统不翻 isPresent
+            }
+            else if (urge > 0.8f)
+            {
+                drive = "Depart";
+                DepartBird(a, "migration_urge", time);
+            }
+            else if (comfort < 0.3f && urge > 0.4f)
+            {
+                drive = "EarlyDepart";
+                if (foxAtRiver) { cause = CauseFactor.FoxNearby; causeTarget = "fox"; }
+                DepartBird(a, "early_depart", time);
+            }
+            else
+            {
+                drive = "Settle";
+                comfort = Mathf.Clamp01(comfort + 0.03f);
+            }
+
+            cur.migrationUrge = urge; cur.settlementComfort = comfort; cur.lastDrive = drive;
+            a.internalState.migrationUrge = urge;
+            a.internalState.settlementComfort = comfort;
+            a.internalState.lastDrive = drive;
+            WriteBehavior(a, drive, cause, causeTarget, intensity);
+        }
+
+        private void DepartBird(AnimalEntity a, string reason, GameDateTime time)
+        {
+            string from = a.location;
+            EntityStateHelper.ChangeAnimalState(a, "isPresent", "True", "False", reason, time);
+            a.internalState.migrationUrge = 0.2f;
+            Emit(WorldEventType.AnimalDeparted, "migratory_bird", "", reason + ":" + from, time);
+        }
+
+        // ── 织巢鸟：事件驱动（断枝离场 / 树恢复归巢） ──────────────
+        private void TickWeaver(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            // 离场逻辑在 TickTree 里随断枝边沿触发；这里只处理归巢
+            if (!a.isPresent)
+            {
+                var tree = _registry.GetPlant("baobab_main");
+                var ts = tree?.internalState;
+                if (ts != null && ts.vitality > 0.5f && ts.ticksSinceBranchBreak > WEAVER_RETURN_TICKS)
+                {
+                    EntityStateHelper.ChangeAnimalState(a, "isPresent", "False", "True", "weaver_return", time);
+                    EntityStateHelper.ChangeAnimalState(a, "location", a.location, "center", "weaver_return", time);
+                    Emit(WorldEventType.WeaverBirdReturned, "weaver_bird", "baobab_main", "", time);
+                }
+            }
+            a.behavior.zone  = a.location;
+            a.behavior.drive = a.isPresent ? "Nest" : "Away";
+            a.behavior.cause = CauseFactor.None;
+        }
+
+        // ── 猴面包树：vitality / 开花 / 断枝边沿 → 织巢鸟离场 + 虫害植被衰减 ──
+        private void TickTree(Dictionary<string, Snap> snap, GameDateTime time)
+        {
+            var tree = _registry.GetPlant("baobab_main");
+            if (tree?.internalState == null) return;
+            var st = tree.internalState;
+            int month = _save.gameTime.month;
+            float V = _save.currentEEnv?.V ?? 0f;
+
+            // vitality：E_env.V 长期积分
+            float vNorm = (V + 1f) * 0.5f;
+            st.vitality = Mathf.Clamp01(st.vitality + TREE_VITALITY_ALPHA * (vNorm - st.vitality));
+
+            st.ticksSinceBranchBreak++;
+
+            // 断枝边沿：permanentDamages 由 NarrativeRule 增加，本系统检测增量
+            if (tree.permanentDamages.Count > st.knownDamageCount)
+            {
+                st.knownDamageCount = tree.permanentDamages.Count;
+                st.ticksSinceBranchBreak = 0;
+                Emit(WorldEventType.TreeBranchBroke, "baobab_main", "weaver_bird", "", time);
+
+                // 替代 Relation_WeaverHabitatLost：巢损毁 → 织巢鸟离场
+                var weaver = _registry.GetAnimal("weaver_bird");
+                if (weaver != null && weaver.isPresent)
+                {
+                    EntityStateHelper.ChangeAnimalState(weaver, "isPresent", "True", "False", "nest_destroyed", time);
+                    Emit(WorldEventType.WeaverBirdDeparted, "weaver_bird", "baobab_main", "", time);
+                }
+            }
+
+            // 开花：vitality 高且春季 → 累积；越阈触发
+            bool spring = month >= 3 && month <= 5;
+            if (st.vitality > 0.6f && spring)
+                st.floweringReadiness += TREE_FLOWER_GAIN;
+            if (st.floweringReadiness >= 1f && !tree.isFlowering)
+            {
+                EntityStateHelper.ChangePlantState(tree, "isFlowering", "False", "True", "flowering", time);
+                EntityStateHelper.ChangePlantState(tree, "lastFlowerDate", tree.lastFlowerDate, time.ToKeyString(), "flowering", time);
+                st.floweringReadiness = 0f;
+                Emit(WorldEventType.TreeFlowered, "baobab_main", "", "", time);
+            }
+
+            // 替代 Relation_InsectSurgeVegetation：织巢鸟不在 → 东侧高地虫害植被衰减
+            var weaverNow = _registry.GetAnimal("weaver_bird");
+            if (weaverNow != null && !weaverNow.isPresent)
+            {
+                var he = _registry.GetLocation("highland_east");
+                if (he != null && he.vegetationDensity > 0.10f)
+                    he.vegetationDensity = Mathf.Clamp01(he.vegetationDensity - INSECT_VEG_DECAY);
+            }
+        }
+
+        // ── 工具 ───────────────────────────────────────────────────
+
+        private static float Smooth(float x, float k) =>
+            Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((x - (k - SOFT_BAND)) / (2f * SOFT_BAND)));
+
+        private static string Argmax(string incumbent,
+            (string name, float p) a, (string name, float p) b, (string name, float p) c,
+            out float winning)
+            => Argmax(incumbent, out winning, a, b, c);
+
+        private static string Argmax(string incumbent,
+            (string name, float p) a, (string name, float p) b, (string name, float p) c, (string name, float p) d,
+            out float winning)
+            => Argmax(incumbent, out winning, a, b, c, d);
+
+        private static string Argmax(string incumbent, out float winning,
+            params (string name, float p)[] drives)
+        {
+            string best = drives[0].name;
+            float bestP = float.NegativeInfinity;
+            foreach (var (name, p) in drives)
+            {
+                float adj = p + (name == incumbent ? INCUMBENT_BONUS : 0f);
+                if (adj > bestP) { bestP = adj; best = name; }
+            }
+            winning = Mathf.Clamp01(bestP);
+            return best;
+        }
+
+        private string LowestWaterNeighbor(string zone)
+        {
+            string best = null; float bestW = float.PositiveInfinity;
+            foreach (var n in ZoneTopology.Neighbors(zone))
+            {
+                float w = _registry.GetLocation(n)?.waterLevel ?? 1f;
+                if (w < bestW) { bestW = w; best = n; }
+            }
+            return best;
+        }
+
+        // 当前 zone 及其邻居中植被最高者（狐狸觅食目标）
+        private string HighestVegInReach(string zone)
+        {
+            string best = zone; float bestV = _registry.GetLocation(zone)?.vegetationDensity ?? 0f;
+            foreach (var n in ZoneTopology.Neighbors(zone))
+            {
+                float v = _registry.GetLocation(n)?.vegetationDensity ?? 0f;
+                if (v > bestV) { bestV = v; best = n; }
+            }
+            return best;
+        }
+
+        private void MoveAnimal(AnimalEntity a, string toZone, string triggeredBy, GameDateTime time)
+        {
+            if (a.location == toZone) return;
+            string from = a.location;
+            EntityStateHelper.ChangeAnimalState(a, "location", from, toZone, triggeredBy, time);
+            a.lastSeenDate = time.ToKeyString();
+        }
+
+        private void Emit(string type, string sourceId, string targetId, string payload, GameDateTime time)
+        {
+            _save.worldEvents.Add(new WorldEvent
+            {
+                type = type, sourceId = sourceId, targetId = targetId,
+                gameDate = time.ToKeyString(), payload = payload
+            });
+            Debug.Log($"[WorldEvent] {type}  {sourceId}->{targetId}  {payload}");
+        }
+
+        private static void WriteBehavior(AnimalEntity a, string drive, string cause, string causeTarget, float intensity)
+        {
+            a.behavior.drive         = drive;
+            a.behavior.cause         = cause;
+            a.behavior.causeTargetId = causeTarget;
+            a.behavior.intensity     = intensity;
+            a.behavior.zone          = a.location;
+        }
+
+        // ── 惰性初始化（旧存档兼容） ───────────────────────────────
+        private void EnsureInitialized()
+        {
+            foreach (var a in _save.animals)
+            {
+                if (a.internalState == null || !a.internalState.initialized)
+                    a.internalState = InitFor(a.speciesId);
+                a.behavior ??= new BehaviorOutput { zone = a.location };
+            }
+
+            var tree = _registry.GetPlant("baobab_main");
+            if (tree != null && (tree.internalState == null || !tree.internalState.initialized))
+                tree.internalState = InitTree(tree.permanentDamages?.Count ?? 0);
+        }
+
+        private static AnimalInternalState InitFor(string speciesId)
+        {
+            var s = new AnimalInternalState { initialized = true };
+            switch (speciesId)
+            {
+                case "fox":
+                    s.hunger = 0.3f; s.safety = 0.8f; s.territoryStability = 0.8f;
+                    break;
+                case "vole":
+                    s.shelterSecurity = 0.6f; s.foodStock = 0.7f; s.expansionPressure = 0.1f;
+                    break;
+                case "deer_mouse":
+                    s.anxiety = 0.3f;
+                    break;
+                case "migratory_bird":
+                    s.migrationUrge = 0.2f; s.settlementComfort = 0.6f;
+                    break;
+            }
+            return s;
+        }
+
+        private static PlantInternalState InitTree(int existingDamage)
+        {
+            return new PlantInternalState
+            {
+                initialized           = true,
+                vitality              = 0.6f,
+                floweringReadiness    = 0f,
+                ticksSinceBranchBreak = 9999,
+                knownDamageCount      = existingDamage,
+                branches = new List<BranchState>
+                {
+                    new BranchState { id = "E-1", dir = "E", integrity = 1f },
+                    new BranchState { id = "E-2", dir = "E", integrity = 1f },
+                    new BranchState { id = "W-1", dir = "W", integrity = 1f },
+                    new BranchState { id = "N-1", dir = "N", integrity = 1f },
+                }
+            };
+        }
+    }
+}
