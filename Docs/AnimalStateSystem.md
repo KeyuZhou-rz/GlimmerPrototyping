@@ -184,13 +184,14 @@ rest   = BASE
 | `expansionPressure` 0-1 | `foodStock<0.4` → ↑；鹿鼠 `activityRange` 下降（相邻 zone 腾空，机会出现）→ ↑ |
 
 ```
-relocate = smooth(1 - shelterSecurity, 0.7)              // shelterSecurity<0.3
 expand   = smooth(expansionPressure, 0.6) * hasFreeAdjacentZone   // 无空 zone 则 0
 forage   = smooth(1 - foodStock, 0.6)
 burrow   = BASE
 ```
-枚举 `VoleDrive { Relocate, Expand, Forage, Burrow }`。
-输出：Relocate→迁向 `waterLevel` 最低的相邻 zone；Expand→认领相邻无主 zone（向 center=向东，更新 `location`/`facingDirection`），并 `expansionPressure -= 0.4`（压力释放，见 §8）。
+枚举 `VoleDrive { Expand, Forage, Burrow }`。
+输出：Expand→认领相邻无主 zone（向 center=向东，更新 `location`），并 `expansionPressure -= 0.4`（压力释放，见 §8）。
+
+> **洪水迁移归属（重要，源于实测冲突）**：田鼠因 `lowland` 水位升高迁往 `highland_east` 是**"环境→实体"**，按 §1.2 边界归 **NarrativeRule `vole_relocate_flood`** 拥有，**本驱动系统不再用 Relocate 移动田鼠**。原因：驱动系统在管线中先于规则运行，若它先把 `vole.location` 改掉，会使该规则前置条件 `location==lowland` 失效、规则不触发（实测 bug）。`shelterSecurity` 仍计入状态向量供叙事/未来用，但不驱动移动。注意 `highland_east` 与 `lowland` 不相邻（规则是跨区"迁徙"，与驱动系统的逐区移动模型不同），这也是两者应分属不同所有者的佐证。验证见 Edit-mode `GlimmerDiary/Test Full Pipeline (Flood)`。
 
 ### 5.3 鹿鼠 deer_mouse（核心传导节点，core = highland_east）
 

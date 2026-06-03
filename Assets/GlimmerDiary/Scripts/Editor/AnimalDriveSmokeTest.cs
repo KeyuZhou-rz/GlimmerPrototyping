@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using GlimmerDiary.Data;
@@ -129,6 +130,90 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(hasProse     ? "PASS" : "FAIL")}] 文本层产出织巢鸟离场文案");
             var prose = save.pendingChronicles.Find(c => c.eventId == "event_WeaverBirdDeparted");
             if (prose != null) Debug.Log($"    → \"{prose.text}\"");
+        }
+
+        // 端到端：忠实复刻 WorldManager.OnJournalSubmitted 全管线
+        // （EmotionInertia → 天气 → 水位传播 → 驱动系统 → 文本层 → 规则 → 关系[已退役过滤]）。
+        // 验证洪水迁移由 NarrativeRule 拥有、驱动系统不再抢先移动田鼠，且世界志无死字符串。
+        [MenuItem("GlimmerDiary/Test Full Pipeline (Flood)")]
+        public static void RunFullPipelineFlood()
+        {
+            var save = WorldInitializer.CreateNewWorld();
+            var reg  = new EntityRegistry();
+            reg.Initialize(save);
+
+            var inertia        = new EmotionInertiaSystem();
+            inertia.Restore(save.currentEEnv, save.emotionHistory);
+            var rhythm         = new NaturalRhythmSystem();
+            var env            = new WorldEnvironmentSystem();
+            var drive          = new AnimalDriveSystem(reg, save);
+            var narrator       = new BehaviorNarrator(reg, save);
+            var ruleEngine     = new NarrativeRuleEngine(reg, save);
+            var relationSystem = new EntityRelationSystem(reg, save);
+
+            var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
+            var retired  = new HashSet<string>
+            {
+                "deer_mouse_anxious", "vole_territory_expand",
+                "weaver_habitat_lost", "insect_surge_vegetation"
+            };
+            var allRelations = new List<EntityRelationSO>(Resources.LoadAll<EntityRelationSO>("Relations"));
+            allRelations.RemoveAll(r => r != null && retired.Contains(r.relationId));
+
+            env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
+
+            // 单日全管线（与 WorldManager.OnJournalSubmitted 顺序一致）
+            void Submit(float V, float A, float C)
+            {
+                inertia.Update(new EmotionVector { V = V, A = A, T = 1f, S = 0f, C = C });
+                save.gameTime.Advance(1);
+                rhythm.Tick();
+                env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
+                // PropagateEnvironmentToLocations 复刻
+                float rain = env.State.Rainfall;
+                foreach (var loc in save.locations)
+                {
+                    float accRate = loc.locationId switch
+                    {
+                        "lowland"       => 0.30f,
+                        "riverbank"     => 0.22f,
+                        "center"        => 0.15f,
+                        "highland_east" => 0.10f,
+                        "stone_area"    => 0.08f,
+                        _               => 0.15f
+                    };
+                    loc.waterLevel = Mathf.Clamp01(loc.waterLevel + rain * accRate - 0.03f);
+                }
+                save.currentEEnv    = inertia.CurrentEEnv;
+                save.emotionHistory = inertia.History;
+                drive.SetEnvironment(env.State, rhythm.State);
+                drive.Tick(save.gameTime);
+                narrator.SetEnvironment(env.State, rhythm.State);
+                narrator.Narrate(save.gameTime);
+                ruleEngine.SetEnvironment(env.State, rhythm.State);
+                ruleEngine.Evaluate(allRules, save.gameTime);
+                relationSystem.SetEnvironment(env.State, rhythm.State);
+                relationSystem.Evaluate(allRelations, save.gameTime);
+            }
+
+            var vole = reg.GetAnimal("vole");
+            Debug.Log("=== FullPipeline Flood (EditMode, 真实管线) ===");
+            Debug.Log($"Rules={allRules.Count}  Relations={allRelations.Count} (retired 4)");
+            for (int i = 0; i < 6; i++)
+            {
+                Submit(-0.8f, 0.7f, 0.4f);
+                Debug.Log($"Day {i + 1}: lowland.water={reg.GetLocation("lowland").waterLevel:F2} | " +
+                          $"E_env V={save.currentEEnv.V:F2} A={save.currentEEnv.A:F2} | 田鼠 @{vole.location} ({vole.behavior.drive})");
+            }
+
+            bool atHigh   = vole.location == "highland_east";
+            bool hasFlood = save.pendingChronicles.Exists(c => c.eventId == "vole_relocate_flood");
+            bool noRaw    = !save.pendingChronicles.Exists(c => c.text.Contains("{date}") || c.text.Contains("{sky}"));
+            Debug.Log($"[{(atHigh   ? "PASS" : "FAIL")}] 田鼠迁往 highland_east (NarrativeRule 拥有)  实际 @{vole.location}");
+            Debug.Log($"[{(hasFlood ? "PASS" : "FAIL")}] 世界志含 vole_relocate_flood");
+            Debug.Log($"[{(noRaw    ? "PASS" : "FAIL")}] 世界志无未替换的 {{date}}/{{sky}} 死字符串");
+            foreach (var c in save.pendingChronicles)
+                Debug.Log($"    世界志[{c.eventId}]: \"{c.text}\"");
         }
     }
 }

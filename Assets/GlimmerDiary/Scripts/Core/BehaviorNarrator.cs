@@ -124,17 +124,18 @@ namespace GlimmerDiary.Core
         };
 
         // ── 工具 ───────────────────────────────────────────────────
-        private void Emit(string eventId, string text, GameDateTime time)
+        private void Emit(string eventId, string template, GameDateTime time)
         {
+            string filled = FillTemplate(template, time);
             _save.pendingChronicles.Add(new WorldChronicleEntry
             {
                 entryId      = Guid.NewGuid().ToString(),
                 gameDate     = time.ToDisplayString(),
                 eventId      = eventId,
-                text         = FillTemplate(text, time),
+                text         = filled,
                 hasBeenShown = false
             });
-            Debug.Log($"[BehaviorNarrator] {eventId} → {text}");
+            Debug.Log($"[BehaviorNarrator] {eventId} → {filled}");
         }
 
         private string FillTemplate(string template, GameDateTime time)

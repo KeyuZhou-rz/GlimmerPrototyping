@@ -187,8 +187,11 @@ namespace GlimmerDiary.Core
             if (centerFree)  exp += 0.06f;
             exp = Mathf.Clamp01(exp);
 
+            // 注意：洪水迁移（lowland 水位高 → 田鼠迁往 highland_east）是"环境→实体"，
+            // 由 NarrativeRule `vole_relocate_flood` 拥有，本系统不再用 Relocate 移动田鼠，
+            // 否则会抢先改 vole.location、使该规则的前置条件 (location==lowland) 失效。
+            // shelterSecurity 仍计入状态向量（供叙事/未来用），但不驱动移动。
             string drive = Argmax(cur.lastDrive,
-                ("Relocate", Smooth(1f - shelter, 0.7f)),
                 ("Expand",   centerFree ? Smooth(exp, 0.6f) : 0f),
                 ("Forage",   Smooth(1f - food, 0.6f)),
                 ("Burrow",   BASE_DRIVE),
@@ -201,15 +204,6 @@ namespace GlimmerDiary.Core
                     food = Mathf.Clamp01(food + VOLE_FORAGE_RELIEF);
                     cause = CauseFactor.Hunger;
                     break;
-
-                case "Relocate":
-                {
-                    string target = LowestWaterNeighbor(myZone);
-                    if (target != null && target != myZone)
-                        MoveAnimal(a, target, "vole_relocate", time);
-                    cause = CauseFactor.WaterRising; causeTarget = "lowland";
-                    break;
-                }
 
                 case "Expand":
                     MoveAnimal(a, "center", "vole_expansion", time);
@@ -464,17 +458,6 @@ namespace GlimmerDiary.Core
                 if (adj > bestP) { bestP = adj; best = name; }
             }
             winning = Mathf.Clamp01(bestP);
-            return best;
-        }
-
-        private string LowestWaterNeighbor(string zone)
-        {
-            string best = null; float bestW = float.PositiveInfinity;
-            foreach (var n in ZoneTopology.Neighbors(zone))
-            {
-                float w = _registry.GetLocation(n)?.waterLevel ?? 1f;
-                if (w < bestW) { bestW = w; best = n; }
-            }
             return best;
         }
 
