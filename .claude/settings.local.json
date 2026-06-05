@@ -10,7 +10,13 @@
       "mcp__UnityMCP__manage_components",
       "mcp__UnityMCP__manage_gameobject",
       "mcp__UnityMCP__manage_prefabs",
-      "mcp__UnityMCP__script_apply_edits"
+      "mcp__UnityMCP__script_apply_edits",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git reset *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(xxd -p)",
+      "Bash(xxd)"
     ]
   }
 }
