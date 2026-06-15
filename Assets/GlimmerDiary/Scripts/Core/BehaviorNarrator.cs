@@ -215,7 +215,7 @@ namespace GlimmerDiary.Core
 
             "{date} {sky} 猴面包树哼起了歌 头顶上残破的鸟巢终于得到了修缮————织巢鸟回来了"
         };
-        
+
         private static readonly string[] BirdDeparted =
         {
             "{date} {sky} 河岸边的影子少了几个。候鸟动身了。",
