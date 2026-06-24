@@ -104,3 +104,12 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# ---------------------------------------------------------------------------
+# Re-importable third-party Asset Store packages — NOT version controlled.
+# These are downloaded from the Unity Asset Store and would otherwise bloat
+# the repo / blow past GitHub's free Git-LFS quota. Re-import via the Package
+# Manager / Asset Store on each machine instead of committing them.
+# ---------------------------------------------------------------------------
+/[Aa]ssets/PureNature/
+/[Aa]ssets/PureNature.meta
