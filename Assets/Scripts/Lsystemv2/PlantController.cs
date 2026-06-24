@@ -26,6 +26,10 @@ namespace GlimmerDiary.Flora
         [Range(0f, 1f)] public float growthProgress = 1f;
         public bool animateOnGenerate = true;
         
+        [Header("Wind")]
+        [Tooltip("Toggles the shader's vertex wind animation for this plant. Off = no sway (use to confirm the sway source).")]
+        public bool enableWind = false;
+
         [Header("Debug")]
         public bool showFoliagePoints = false;
         
@@ -170,6 +174,7 @@ namespace GlimmerDiary.Flora
             
             _trunkMaterial.SetColor("_BaseColor", plantDefinition.trunk.barkTintBase);
             _trunkMaterial.SetFloat("_EnableSSS", 0);  // No SSS for bark
+            _trunkMaterial.SetFloat("_EnableWind", enableWind ? 1 : 0);
             _trunkMaterial.SetFloat("_TrunkStiffness", plantDefinition.windResponse.trunkSwayAmount);
             
             _trunkRenderer.sharedMaterial = _trunkMaterial;
@@ -188,6 +193,7 @@ namespace GlimmerDiary.Flora
             
             _foliageMaterial.SetColor("_BaseColor", plantDefinition.foliage.leafColorBase);
             _foliageMaterial.SetFloat("_EnableSSS", plantDefinition.foliage.useSubsurfaceScattering ? 1 : 0);
+            _foliageMaterial.SetFloat("_EnableWind", enableWind ? 1 : 0);
             _foliageMaterial.SetColor("_SSSColor", plantDefinition.foliage.leafColorTip);
             _foliageMaterial.SetFloat("_Translucency", plantDefinition.foliage.translucency);
             _foliageMaterial.SetFloat("_TrunkStiffness", 0);  // Leaves are flexible
@@ -337,6 +343,11 @@ namespace GlimmerDiary.Flora
                 UpdateGrowth(plantDefinition?.growth.growthCurve.Evaluate(growthProgress) ?? growthProgress);
                 UpdateEmotionProperties();
             }
+
+            // Wind toggle applies live without regenerating
+            float windValue = enableWind ? 1 : 0;
+            if (_trunkMaterial != null) _trunkMaterial.SetFloat("_EnableWind", windValue);
+            if (_foliageMaterial != null) _foliageMaterial.SetFloat("_EnableWind", windValue);
         }
     }
 }

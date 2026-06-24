@@ -4,6 +4,7 @@ using UnityEngine;
 using GlimmerDiary.Core;
 using GlimmerDiary.Data;
 using GlimmerDiary.Utils;
+using System.Runtime.CompilerServices;
 
 // 场景里唯一挂在 GameObject 上的世界模拟脚本
 // GameObject 命名 "WorldManager"，跨场景不销毁
@@ -37,6 +38,7 @@ public class WorldManager : MonoBehaviour
         "weaver_habitat_lost",     // → 断枝边沿 → 织巢鸟离场
         "insect_surge_vegetation", // → 织巢鸟不在 → 东侧高地植被衰减
     };
+
 
     void Awake()
     {

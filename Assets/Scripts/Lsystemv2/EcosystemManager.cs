@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 
 namespace GlimmerDiary.Flora
@@ -13,6 +14,12 @@ namespace GlimmerDiary.Flora
         public BiomePreset biomePreset;
         public Vector2 areaSize = new Vector2(100f, 100f);
         public Transform groundPlane;
+
+        [Header("Terrain Alignment")]
+        [Tooltip("Auto-found if left empty. Placement is centered on this terrain.")]
+        public TerrainGenerator terrain;
+        [Tooltip("areaSize follows the terrain's world-space footprint (width*scale).")]
+        public bool matchTerrainSize = true;
         
         [Header("Plant Prefabs")]
         public PlantDefinition baobabDefinition;
@@ -20,7 +27,7 @@ namespace GlimmerDiary.Flora
         public PlantDefinition shrubDefinition;
         
         [Header("Density Settings")]
-        [Range(0, 5)] public int majorTreeCount = 1;      // Baobab - centerpiece
+        public int majorTreeCount = 1;      // Baobab - centerpiece
         [Range(0, 20)] public int mediumTreeCount = 8;    // Acacia scattered
         [Range(0, 50)] public int shrubCount = 20;        // Shrubs
         
@@ -42,15 +49,30 @@ namespace GlimmerDiary.Flora
         public bool animateGrowthOnGenerate = true;
         public float growthStaggerDelay = 0.5f;  // Delay between each plant starting growth
         
-        // Generated plants
-        private List<PlantController> _majorTrees = new();
-        private List<PlantController> _mediumTrees = new();
-        private List<PlantController> _shrubs = new();
+        // Active plant instances in the scene (runtime GameObjects)
+        private List<PlantController> _activePlants = new();
         private List<Vector3> _occupiedPositions = new();
-        
+
+        // Source of truth: data for every plant in the world. Append-only (trees are permanent).
+        private List<TreeConfigData> _TreeConfigs = new();
+
+        // definitionID -> generation rule. Used to resolve plantDefinition when spawning from data.
+        private Dictionary<string, PlantDefinition> _definitionsByID = new();
+
+        // True once the centerpiece (baobab) exists, so placement keeps the center clear.
+        private bool _centerpiecePlaced;
+
+        // World-space center of the placement area (terrain center, or this transform).
+        private Vector3 _areaCenter;
+
         // Wind system reference
         private WindSystem _windSystem;
-        
+
+        private void Awake()
+        {
+            BuildDefinitionRegistry();
+        }
+
         private void Start()
         {
             _windSystem = FindFirstObjectByType<WindSystem>();
@@ -62,136 +84,276 @@ namespace GlimmerDiary.Flora
                 _windSystem = windGO.AddComponent<WindSystem>();
             }
             
+            AlignToTerrain();
+
             if (generateOnStart)
             {
                 GenerateEcosystem();
             }
         }
+
+        // Center the placement area on the terrain so the gizmo, the baobab,
+        // and the actual spawn region all agree. Without this, placement used
+        // world origin while the gizmo drew around transform.position.
+        private void AlignToTerrain()
+        {
+            if (terrain == null) terrain = FindFirstObjectByType<TerrainGenerator>();
+
+            if (terrain != null)
+            {
+                Vector3 terrainCenter = terrain.transform.position;
+                if (!terrain.centerMesh)
+                {
+                    terrainCenter += new Vector3(
+                        terrain.width * terrain.scale * 0.5f, 0f,
+                        terrain.depth * terrain.scale * 0.5f);
+                }
+
+                transform.position = terrainCenter;   // keep gizmo + placement in sync
+
+                if (matchTerrainSize)
+                {
+                    areaSize = new Vector2(
+                        terrain.width * terrain.scale,
+                        terrain.depth * terrain.scale);
+                }
+            }
+
+            _areaCenter = transform.position;
+        }
         
+        // ── Entry point 1: first-time generation ──────────────────────────────
+        // Layer A decides placement/randomness and produces config data;
+        // Layer B (SpawnAll) turns that data into GameObjects.
         [ContextMenu("Generate Ecosystem")]
+
+
         public void GenerateEcosystem()
         {
             ClearEcosystem();
-            _occupiedPositions.Clear();
-            
+            AlignToTerrain();
             Debug.Log($"Generating ecosystem: {majorTreeCount} major, {mediumTreeCount} medium, {shrubCount} shrubs");
-            
-            // 1. Place centerpiece (Baobab) at or near center
-            PlaceMajorTrees();
-            
-            // 2. Scatter medium trees (Acacia)
-            PlaceMediumTrees();
-            
-            // 3. Fill with shrubs
-            PlaceShrubs();
-            
-            // 4. Setup grass
+            var configs = BuildInitialConfigs();
+            _TreeConfigs.AddRange(configs);
+            SpawnAll(configs);
+
             SetupGrass();
-            
-            // 5. Animate growth with staggered timing
+
+            if (animateGrowthOnGenerate) StartCoroutine(StaggeredGrowthAnimation());
+
+            Debug.Log($"The Ecosystem Generated: {_activePlants.Count} plants.");
+        }
+
+        // ── Entry point 2: load from saved data (no randomness, no placement) ──
+        // savedConfigs are already the source of truth, so they are not regenerated.
+        public void LoadEcosystem(List<TreeConfigData> savedConfigs)
+        {
+            if (savedConfigs == null) return;
+
+            ClearEcosystem();
+            _TreeConfigs.AddRange(savedConfigs);
+
+            foreach (TreeConfigData cfg in savedConfigs)
+            {
+                _occupiedPositions.Add(cfg.location);
+                if (baobabDefinition != null && cfg.definitionID == baobabDefinition.definitionID)
+                    _centerpiecePlaced = true;
+            }
+
+            SpawnAll(savedConfigs);
+            SetupGrass();
+
             if (animateGrowthOnGenerate)
             {
                 StartCoroutine(StaggeredGrowthAnimation());
             }
-            
-            Debug.Log($"Ecosystem generated: {_majorTrees.Count + _mediumTrees.Count + _shrubs.Count} plants");
+
+            Debug.Log($"Ecosystem loaded: {_activePlants.Count} plants from saved data");
         }
-        
-        private void PlaceMajorTrees()
+
+        // ── Layer A: placement — owns all randomness, produces data only ──────
+        // Reserves each chosen spot in _occupiedPositions so later picks avoid it.
+        private List<TreeConfigData> BuildInitialConfigs()
         {
-            if (baobabDefinition == null || majorTreeCount == 0) return;
-            
-            for (int i = 0; i < majorTreeCount; i++)
+            var configs = new List<TreeConfigData>();
+
+            var major = CreateMajorConfig();
+            if (major != null)
             {
-                // First baobab at center, others scattered
-                Vector3 position = i == 0 
-                    ? GetGroundPosition(Vector3.zero) 
-                    : FindValidPosition(15f, 10);
-                
-                if (position != Vector3.negativeInfinity)
-                {
-                    var plant = CreatePlant(baobabDefinition, position, $"Baobab_{i}");
-                    plant.transform.localScale = Vector3.one * Random.Range(1.5f, 2.5f);  // Baobabs are big
-                    _majorTrees.Add(plant);
-                    _occupiedPositions.Add(position);
-                }
+                configs.Add(major);
+                _occupiedPositions.Add(major.location);
+                _centerpiecePlaced = true;
             }
-        }
-        
-        private void PlaceMediumTrees()
-        {
-            if (acaciaDefinition == null) return;
-            
+
             for (int i = 0; i < mediumTreeCount; i++)
             {
-                Vector3 position = FindValidPosition(minDistanceBetweenTrees, 20);
-                
-                if (position != Vector3.negativeInfinity)
-                {
-                    var plant = CreatePlant(acaciaDefinition, position, $"Acacia_{i}");
-                    plant.transform.localScale = Vector3.one * Random.Range(0.8f, 1.3f);
-                    _mediumTrees.Add(plant);
-                    _occupiedPositions.Add(position);
-                }
+                var cfg = CreateAcaciaConfig();
+                if (cfg == null) continue;
+                configs.Add(cfg);
+                _occupiedPositions.Add(cfg.location);
             }
-        }
-        
-        private void PlaceShrubs()
-        {
-            if (shrubDefinition == null) return;
-            
+
             for (int i = 0; i < shrubCount; i++)
             {
-                Vector3 position = FindValidPosition(minDistanceBetweenTrees * 0.5f, 15);
-                
-                if (position != Vector3.negativeInfinity)
-                {
-                    var plant = CreatePlant(shrubDefinition, position, $"Shrub_{i}");
-                    plant.transform.localScale = Vector3.one * Random.Range(0.5f, 1.2f);
-                    _shrubs.Add(plant);
-                    _occupiedPositions.Add(position);
-                }
+                var cfg = CreateShrubConfig();
+                if (cfg == null) continue;
+                configs.Add(cfg);
+                _occupiedPositions.Add(cfg.location);
             }
+
+            return configs;
         }
-        
-        private PlantController CreatePlant(PlantDefinition definition, Vector3 position, string name)
+
+        private TreeConfigData CreateMajorConfig()
         {
-            var go = new GameObject(name);
+            if (baobabDefinition == null) return null;
+
+            Vector3 position = GetGroundPosition(_areaCenter);   // centerpiece sits at the middle
+            return new TreeConfigData(
+                position,
+                Random.Range(0f, 360f),                              // rotation
+                2f,                                                  // sizeScale — baobab is the big centerpiece
+                Random.Range(0, 100000),                             // seed
+                System.DateTimeOffset.UtcNow.ToUnixTimeSeconds(),    // birthTimestamp
+                baobabDefinition.definitionID,                       // definitionID
+                baobabDefinition);                                   // plantDefinition
+        }
+
+        private TreeConfigData CreateAcaciaConfig()
+        {
+            if (acaciaDefinition == null) return null;
+
+            Vector3 position = FindValidPosition(minDistanceBetweenTrees, 20);
+            if (position == Vector3.negativeInfinity) return null;   // no valid spot found
+
+            return new TreeConfigData(
+                position,
+                Random.Range(0f, 360f),
+                Random.Range(0.8f, 1.3f),                            // acacia size range
+                Random.Range(0, 100000),
+                System.DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                acaciaDefinition.definitionID,
+                acaciaDefinition);
+        }
+
+        private TreeConfigData CreateShrubConfig()
+        {
+            if (shrubDefinition == null) return null;
+
+            Vector3 position = FindValidPosition(minDistanceBetweenTrees * 0.5f, 15);
+            if (position == Vector3.negativeInfinity) return null;
+
+            return new TreeConfigData(
+                position,
+                Random.Range(0f, 360f),
+                Random.Range(0.5f, 1.2f),
+                Random.Range(0, 100000),
+                System.DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                shrubDefinition.definitionID,
+                shrubDefinition);
+        }
+
+        // ── Entry point 3: runtime growth — a new plant is born ───────────────
+        // Append to the source of truth, reserve its spot, then spawn it.
+        // This is the atomic "a tree arrived" operation (CLAUDE.md: append-only).
+        private PlantController AddPlant(TreeConfigData cfg)
+        {
+            if (cfg == null) return null;
+
+            _TreeConfigs.Add(cfg);
+            _occupiedPositions.Add(cfg.location);
+            return SpawnFromConfig(cfg);
+        }
+
+        [ContextMenu("Grow New Acacia")]
+        public void GrowNewAcacia() => AddPlant(CreateAcaciaConfig());
+
+        [ContextMenu("Grow New Shrub")]
+        public void GrowNewShrub() => AddPlant(CreateShrubConfig());
+
+        // ── Layer B: spawning — shared by every path, fully deterministic ─────
+        private void SpawnAll(List<TreeConfigData> configs)
+        {
+            foreach (var cfg in configs)
+                SpawnFromConfig(cfg);
+        }
+        // Pure, deterministic: builds one plant GameObject from its config.
+        // The single place where TreeConfigData becomes a live object — both
+        // fresh generation and loading converge here.
+        private PlantController SpawnFromConfig(TreeConfigData cfg)
+        {
+            PlantDefinition definition = ResolveDefinition(cfg);
+            if (definition == null)
+            {
+                Debug.LogError($"[EcosystemManager] Cannot spawn '{cfg.definitionID}': no matching PlantDefinition registered.");
+                return null;
+            }
+
+            var go = new GameObject(cfg.definitionID);
             go.transform.SetParent(transform);
-            go.transform.position = position;
-            go.transform.rotation = Quaternion.Euler(0, Random.Range(0f, 360f), 0);
-            
+            go.transform.position = cfg.location;
+            go.transform.rotation = Quaternion.Euler(0, cfg.rotation, 0);
+            go.transform.localScale = Vector3.one * cfg.sizeScale;
+
             // Add required components
             go.AddComponent<MeshFilter>();
-            var renderer = go.AddComponent<MeshRenderer>();
-            
+            go.AddComponent<MeshRenderer>();
+
             var controller = go.AddComponent<PlantController>();
             controller.plantDefinition = definition;
             controller.valence = globalValence;
             controller.arousal = globalArousal;
-            controller.randomSeed = Random.Range(0, 100000);
-            controller.autoGenerateOnStart = false;  // We'll trigger manually
+            controller.randomSeed = cfg.seed;
+            controller.autoGenerateOnStart = false;  // We trigger manually
             controller.animateOnGenerate = false;
-            
-            // Generate the plant
+
             controller.Generate();
-            
+
+            _activePlants.Add(controller);
             return controller;
+        }
+
+        // Fresh configs already carry their PlantDefinition; loaded configs only
+        // have a definitionID, which we resolve through the registry.
+        private PlantDefinition ResolveDefinition(TreeConfigData cfg)
+        {
+            if (cfg.plantDefinition != null) return cfg.plantDefinition;
+            return _definitionsByID.TryGetValue(cfg.definitionID, out var def) ? def : null;
+        }
+
+        private void BuildDefinitionRegistry()
+        {
+            _definitionsByID.Clear();
+            Register(baobabDefinition);
+            Register(acaciaDefinition);
+            Register(shrubDefinition);
+
+            void Register(PlantDefinition def)
+            {
+                if (def == null) return;
+                if (string.IsNullOrEmpty(def.definitionID))
+                {
+                    Debug.LogWarning($"[EcosystemManager] PlantDefinition '{def.plantName}' has no definitionID; it cannot be resolved when loading saved data.");
+                    return;
+                }
+                _definitionsByID[def.definitionID] = def;
+            }
         }
         
         private Vector3 FindValidPosition(float minDistance, int maxAttempts)
         {
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                // Random position within area
+                // Random position within area, centered on the terrain
                 float x = Random.Range(-areaSize.x / 2, areaSize.x / 2);
                 float z = Random.Range(-areaSize.y / 2, areaSize.y / 2);
-                Vector3 candidate = new Vector3(x, 0, z);
-                
-                // Check distance from center (keep baobab area clear)
-                if (_majorTrees.Count > 0 && candidate.magnitude < minDistanceFromCenter)
+                Vector3 candidate = _areaCenter + new Vector3(x, 0, z);
+
+                // Check distance from center (keep baobab area clear) — horizontal only
+                if (_centerpiecePlaced)
                 {
-                    continue;
+                    Vector2 fromCenter = new(candidate.x - _areaCenter.x, candidate.z - _areaCenter.z);
+                    if (fromCenter.magnitude < minDistanceFromCenter) continue;
                 }
                 
                 // Check distance from other plants
@@ -217,14 +379,20 @@ namespace GlimmerDiary.Flora
         private Vector3 GetGroundPosition(Vector3 xzPosition)
         {
             Vector3 rayStart = new Vector3(xzPosition.x, 100f, xzPosition.z);
-            
-            if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 200f, groundLayer))
+
+            // If no layer is configured, raycast against everything (mask 0 hits nothing).
+            int mask = groundLayer.value == 0 ? Physics.DefaultRaycastLayers : groundLayer.value;
+
+            if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 200f, mask))
             {
                 return hit.point;
             }
-            
-            // Fallback to y=0 if no ground found
-            return new Vector3(xzPosition.x, 0f, xzPosition.z);
+
+            // No ground hit: warn (a tree at y=0 would be buried under raised terrain)
+            // and fall back to the area center's height instead of world y=0.
+            Debug.LogWarning($"[EcosystemManager] No ground collider hit at ({xzPosition.x:F1}, {xzPosition.z:F1}). " +
+                             "Check that the terrain has a Collider and is on the Ground Layer.");
+            return new Vector3(xzPosition.x, _areaCenter.y, xzPosition.z);
         }
         
         private void SetupGrass()
@@ -246,12 +414,9 @@ namespace GlimmerDiary.Flora
         
         private System.Collections.IEnumerator StaggeredGrowthAnimation()
         {
-            // Combine all plants
-            var allPlants = new List<PlantController>();
-            allPlants.AddRange(_majorTrees);
-            allPlants.AddRange(_mediumTrees);
-            allPlants.AddRange(_shrubs);
-            
+            // Copy so the sort can't be disturbed by plants born mid-animation
+            var allPlants = new List<PlantController>(_activePlants);
+
             // Sort by distance from center (center grows first)
             allPlants.Sort((a, b) => 
                 a.transform.position.magnitude.CompareTo(b.transform.position.magnitude));
@@ -278,15 +443,9 @@ namespace GlimmerDiary.Flora
             }
             
             // Update all plants
-            foreach (var plant in _majorTrees)
-                plant.SetEmotion(globalValence, globalArousal);
-            
-            foreach (var plant in _mediumTrees)
-                plant.SetEmotion(globalValence, globalArousal);
-            
-            foreach (var plant in _shrubs)
-                plant.SetEmotion(globalValence, globalArousal);
-            
+            foreach (var plant in _activePlants)
+                if (plant != null) plant.SetEmotion(globalValence, globalArousal);
+
             // Update grass
             if (grassSystem != null)
             {
@@ -302,6 +461,7 @@ namespace GlimmerDiary.Flora
             StartCoroutine(EmotionTransitionCoroutine(targetValence, targetArousal, duration));
         }
         
+
         private System.Collections.IEnumerator EmotionTransitionCoroutine(
             float targetValence, float targetArousal, float duration)
         {
@@ -329,18 +489,13 @@ namespace GlimmerDiary.Flora
         [ContextMenu("Clear Ecosystem")]
         public void ClearEcosystem()
         {
-            foreach (var plant in _majorTrees)
+            foreach (var plant in _activePlants)
                 if (plant != null) DestroyImmediate(plant.gameObject);
-            
-            foreach (var plant in _mediumTrees)
-                if (plant != null) DestroyImmediate(plant.gameObject);
-            
-            foreach (var plant in _shrubs)
-                if (plant != null) DestroyImmediate(plant.gameObject);
-            
-            _majorTrees.Clear();
-            _mediumTrees.Clear();
-            _shrubs.Clear();
+
+            _activePlants.Clear();
+            _TreeConfigs.Clear();
+            _occupiedPositions.Clear();
+            _centerpiecePlaced = false;
         }
         
         private void OnValidate()

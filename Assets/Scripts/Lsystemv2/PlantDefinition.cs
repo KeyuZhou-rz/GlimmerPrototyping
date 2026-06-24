@@ -12,6 +12,8 @@ namespace GlimmerDiary.Flora
     public class PlantDefinition : ScriptableObject
     {
         [Header("Identity")]
+        [Tooltip("Stable unique ID used to resolve this definition when loading saved TreeConfigData (e.g. \"baobab\", \"acacia\", \"shrub\"). Must be unique per definition.")]
+        public string definitionID = "";
         public string plantName = "Unnamed Plant";
         public PlantCategory category = PlantCategory.Tree;
         public Sprite previewIcon;

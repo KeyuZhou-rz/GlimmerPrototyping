@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using GlimmerDiary.Data;
 using GlimmerDiary.Utils;
+using System;
 
 namespace GlimmerDiary.Core
 {
@@ -112,8 +113,8 @@ namespace GlimmerDiary.Core
         // ── 鹿鼠：核心传导节点 ─────────────────────────────────────
         private void TickDeerMouse(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
         {
-            var cur = snap[a.speciesId].st;
-            string myZone = snap[a.speciesId].location;
+            var cur = snap[a.speciesId].st; // 鹿鼠内部状态获取
+            string myZone = snap[a.speciesId].location; //区域获取
 
             bool weaverPresent = snap.TryGetValue("weaver_bird", out var w) && w.isPresent;
             bool foxNear = snap.TryGetValue("fox", out var f) && f.isPresent &&
@@ -438,15 +439,25 @@ namespace GlimmerDiary.Core
         private string Argmax(string incumbent, out float winning,
             params (string name, float p)[] drives)
         {
+            float bestP = Mathf.NegativeInfinity;
             string best = drives[0].name;
-            float bestP = float.NegativeInfinity;
-            foreach (var (name, p) in drives)
+
+            foreach(var(name, p) in drives)
             {
                 float adj = p + (name == incumbent ? INCUMBENT_BONUS : 0f);
-                if (adj > bestP) { bestP = adj; best = name; }
+
+                if (adj > bestP)
+                {
+                    bestP = adj;
+                    best = name;
+                }
+
+                
             }
             winning = Mathf.Clamp01(bestP);
             return best;
+
+            
         }
 
         // 当前 zone 及其邻居中植被最高者（狐狸觅食目标）

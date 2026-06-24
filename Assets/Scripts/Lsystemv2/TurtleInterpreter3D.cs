@@ -39,7 +39,10 @@ namespace GlimmerDiary.Flora
             public float startRadius;
             public float endRadius;
             public int depth;                    // Branch depth (0 = trunk)
-            public int branchIndex;              // Unique branch identifier
+            public int branchIndex;              // Per-generation counter (NOT stable across regen)
+            public string branchPath;            // Stable path id, e.g. "0/2/1". Survives regeneration
+                                                 // as long as the rule's branch structure is unchanged.
+                                                 // Use this to address a specific limb for growth/break events.
             public float normalizedPosition;     // 0 = root, 1 = tip (for UV2/growth)
             public float distanceFromRoot;       // Actual distance traveled from root
             public int parentSegmentIndex;       // Index of parent segment (-1 for root)
@@ -57,7 +60,9 @@ namespace GlimmerDiary.Flora
             public int segmentCount;
             public float distanceFromRoot;
             public int lastSegmentIndex;
-            
+            public string branchPath;    // Stable path id of the branch currently being drawn
+            public int childCount;       // How many child branches this branch has already spawned
+
             public TurtleState Clone()
             {
                 return new TurtleState
@@ -68,7 +73,9 @@ namespace GlimmerDiary.Flora
                     depth = depth,
                     segmentCount = segmentCount,
                     distanceFromRoot = distanceFromRoot,
-                    lastSegmentIndex = lastSegmentIndex
+                    lastSegmentIndex = lastSegmentIndex,
+                    branchPath = branchPath,
+                    childCount = childCount
                 };
             }
         }
@@ -158,7 +165,9 @@ namespace GlimmerDiary.Flora
                 depth = 0,
                 segmentCount = 0,
                 distanceFromRoot = 0f,
-                lastSegmentIndex = -1
+                lastSegmentIndex = -1,
+                branchPath = "0",   // trunk; children become "0/0", "0/1", grandchildren "0/0/0", ...
+                childCount = 0
             };
             
             // First pass: calculate total distance for normalization
@@ -234,11 +243,16 @@ namespace GlimmerDiary.Flora
                     
                     // === BRANCH STACK ===
                     case '[':
-                        stateStack.Push(state.Clone());
+                        // This new branch is the Nth child of the current branch.
+                        int childSlot = state.childCount;
+                        state.childCount++;                 // count it so the next sibling gets the next slot
+                        stateStack.Push(state.Clone());     // push parent (with updated childCount) for ']'
                         state.depth++;
+                        state.branchPath = state.branchPath + "/" + childSlot;
+                        state.childCount = 0;               // the child starts with no children of its own
                         branchIndex++;
                         break;
-                        
+
                     case ']':
                         if (stateStack.Count > 0)
                         {
@@ -307,11 +321,14 @@ namespace GlimmerDiary.Flora
                 
                 // Seed
                 seed = seed,
-                
-                // Width curve and Tropism are disabled since TrunkSettings doesn't have these fields
-                // If you add them later, you can enable them here
-                useWidthCurve = false,
-                useTropism = false
+
+                // Width curve (baobab trunk support) and tropism are wired from TrunkSettings.
+                // Both default to off on existing assets, so plants that don't opt in are unaffected.
+                useWidthCurve = trunk.useThicknessCurve,
+                widthCurve = trunk.thicknessCurve,
+                useTropism = trunk.useTropism,
+                tropismDirection = trunk.tropismDirection,
+                tropismStrength = trunk.tropismStrength
             };
             
             return config;
@@ -374,6 +391,7 @@ namespace GlimmerDiary.Flora
                 endRadius = endRadius,
                 depth = state.depth,
                 branchIndex = branchIndex,
+                branchPath = state.branchPath,
                 normalizedPosition = state.distanceFromRoot / Mathf.Max(0.001f, totalDistance),
                 distanceFromRoot = state.distanceFromRoot,
                 parentSegmentIndex = state.lastSegmentIndex

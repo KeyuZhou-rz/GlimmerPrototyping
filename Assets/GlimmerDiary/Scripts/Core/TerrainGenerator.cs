@@ -8,9 +8,14 @@ using UnityEngine.TerrainTools;
 ///   X axis  : 左侧低地(lowland) → 中间平原(plains) → 右侧高地(highland)
 ///   far Z   : 远处群山(distant mountain ridge)
 /// Flat shading: non-shared per-triangle vertices + RecalculateNormals.
-/// Cliff darkening: per-triangle face normal dot-up → multiply color by cliffDarkMin~1.
+/// Colour & cliff darkening live in the terrain shader (height bands + slope darken),
+/// driven by the region heights pushed below — C# no longer writes vertex colours.
 /// </summary>
+// Generate before consumers (e.g. EcosystemManager) so the collider exists
+// when they raycast for ground height in their own Start().
+[DefaultExecutionOrder(-100)]
 [RequireComponent(typeof(MeshFilter))]
+[RequireComponent(typeof(MeshCollider))]
 public class TerrainGenerator : MonoBehaviour
 {
     [Header("Grid")]
@@ -63,16 +68,6 @@ public class TerrainGenerator : MonoBehaviour
     public bool useTerrace = false;
     public float terraceStep = 0.9f;
     public float terraceSharpness = 6f;
-
-    [Header("Color Palette")]
-    [Tooltip("低地（近水）深林绿")]
-    public Color lowlandColor  = new Color(0.12f, 0.28f, 0.10f);
-    [Tooltip("平原（草地/稀树）暖草黄绿")]
-    public Color plainsColor   = new Color(0.52f, 0.47f, 0.18f);
-    [Tooltip("高地 + 山脉 冷岩灰蓝")]
-    public Color highlandColor = new Color(0.30f, 0.33f, 0.40f);
-    [Tooltip("最陡坡面的暗化系数（0.60~0.70），平坦面始终为 1.0")]
-    [Range(0.3f, 1f)] public float cliffDarkMin = 0.65f;
 
     void Start() { Generate(); }
 
@@ -170,29 +165,6 @@ public class TerrainGenerator : MonoBehaviour
         return floored + Mathf.Pow(frac, terraceSharpness) * step;
     }
 
-    // ---- colour ---------------------------------------------------------
-
-    // 三个高度区间：低地 / 平原 / 高地+山脉，断崖通过坡度暗化单独体现。
-    Color GetZoneColor(float height)
-    {
-        float tHighland = plainsHeight;
-        float tPlains   = (lowlandHeight + plainsHeight) * 0.5f;
-
-        if (height >= tHighland) return highlandColor;
-        if (height >= tPlains)   return plainsColor;
-        return lowlandColor;
-    }
-
-    // 面法线 Y 分量：1=水平，0=垂直断崖。映射到 [cliffDarkMin, 1] 作为乘数。
-    float SlopeDark(Vector3 a, Vector3 b, Vector3 c)
-    {
-        Vector3 n = Vector3.Cross(b - a, c - a);
-        float len = n.magnitude;
-        if (len < 1e-6f) return 1f;
-        float slopeY = Mathf.Abs(n.y / len);
-        return Mathf.Lerp(cliffDarkMin, 1f, slopeY);
-    }
-
     // ---- mesh build -----------------------------------------------------
 
     [ContextMenu("Regenerate")]
@@ -278,6 +250,9 @@ public class TerrainGenerator : MonoBehaviour
         mesh.RecalculateBounds();
         GetComponent<MeshFilter>().mesh = mesh;
 
+        // Collider so other systems (tree placement raycasts) can hit the ground.
+        GetComponent<MeshCollider>().sharedMesh = mesh;
+
         // 生成完毕后 把高度数据写入shader
         terrainMaterial.SetFloat("_lowlandHeight", lowlandHeight * scale);
         terrainMaterial.SetFloat("_plainHeight",   plainsHeight * scale);
@@ -285,6 +260,4 @@ public class TerrainGenerator : MonoBehaviour
 
 
     }
-
-    static Color ApplyAlpha(Color c) { c.a = 1f; return c; }
 }

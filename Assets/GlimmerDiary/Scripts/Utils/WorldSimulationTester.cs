@@ -243,13 +243,15 @@ namespace GlimmerDiary.Utils
             WorldManager.Instance.OnJournalSubmitted(
                 new EmotionVector { V = V, A = A, T = T, S = S, C = C });
         }
-
+        
         void ResetWorld()
         {
             WorldManager.Instance.ReinitializeWithSave(
                 WorldInitializer.CreateNewWorld());
             Log("  世界已重置为初始状态");
         }
+
+        
 
         void AssertEqual(string label, string actual, string expected)
         {

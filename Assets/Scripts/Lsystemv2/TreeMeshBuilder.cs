@@ -375,15 +375,15 @@ namespace GlimmerDiary.Flora
                 int tl = endRingFirst + j;             // top left
                 int tr = endRingFirst + j + 1;         // top right
                 
-                // First triangle
+                // First triangle (CW winding so the outer surface is front-facing)
                 _triangles.Add(bl);
-                _triangles.Add(tl);
                 _triangles.Add(br);
-                
+                _triangles.Add(tl);
+
                 // Second triangle
                 _triangles.Add(br);
-                _triangles.Add(tl);
                 _triangles.Add(tr);
+                _triangles.Add(tl);
             }
         }
         
@@ -438,15 +438,15 @@ namespace GlimmerDiary.Flora
                 int tr = endRingFirst + jEnd1;
 
                 _triangles.Add(bl);
-                _triangles.Add(tl);
                 _triangles.Add(br);
+                _triangles.Add(tl);
 
                 _triangles.Add(br);
-                _triangles.Add(tl);
                 _triangles.Add(tr);
+                _triangles.Add(tl);
             }
         }
-        
+
         /// <summary>
         /// Determine which segments are branch tips (have no children)
         /// </summary>
