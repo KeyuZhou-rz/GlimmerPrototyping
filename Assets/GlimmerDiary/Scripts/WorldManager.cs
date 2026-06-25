@@ -67,6 +67,18 @@ public class WorldManager : MonoBehaviour
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
+
+        // 节律对齐到已载入的世界日历（季节/yearProgress 取自 gameTime）
+        NaturalRhythm.Tick(_saveData.gameTime);
+
+        // 启动 catch-up：按真实墙钟流逝天数把世界静默推进到现在
+        int catchUpDays = WallClockDeltaDays();
+        if (catchUpDays > 0)
+        {
+            Debug.Log($"[WorldManager] Catch-up: advancing {catchUpDays} day(s) since last save.");
+            WorldTick(catchUpDays, isCatchUp: true);
+            SaveSystem.SaveWorldState(_saveData);   // 重新锚定到现在
+        }
     }
 
     void Start()
@@ -74,12 +86,21 @@ public class WorldManager : MonoBehaviour
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
     }
 
-    // 玩家提交日记时的唯一入口（由 UI 层调用）
-    public void OnJournalSubmitted(JournalEntry entry)
+    // 自主软上限：catch-up 总是按完整墙钟天数推进 gameTime 日历，
+    // 但每日重模拟只跑最后 N 天，避免长缺席时启动卡顿（深层历史留给 Phase 3 摘要）
+    const int MaxSimulatedCatchupDays = 90;
+
+    // 推进一个日历日：gameTime+1 → 情绪向基线回落 → 刷新季节
+    private void AdvanceCalendar()
     {
-        EmotionInertia.Update(entry.emotion);
         _saveData.gameTime.Advance(1);
-        NaturalRhythm.Tick();
+        EmotionInertia.Relax();                 // 自主回落（alpha 0.05）
+        NaturalRhythm.Tick(_saveData.gameTime);
+    }
+
+    // 在当前日历/情绪下跑一次完整模拟（不推进日历日）
+    private void SimulatePass()
+    {
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
         PropagateEnvironmentToLocations();
 
@@ -100,8 +121,56 @@ public class WorldManager : MonoBehaviour
         // 实体关系层：在叙事规则之后级联评估（优先级有序，效果就地生效）
         _relationSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem.Evaluate(_allRelations, _saveData.gameTime);
+    }
 
-        SaveSystem.SaveWorldState(_saveData);
+    // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
+    public void WorldTick(int deltaDays, bool isCatchUp = false)
+    {
+        if (deltaDays <= 0) return;
+
+        int chronicleMark = _saveData.pendingChronicles.Count;   // Phase 3 摘要接缝
+        int simulateFrom  = isCatchUp ? Mathf.Max(0, deltaDays - MaxSimulatedCatchupDays) : 0;
+
+        for (int d = 0; d < deltaDays; d++)
+        {
+            AdvanceCalendar();                          // 始终推进 gameTime（= 墙钟天数）
+            if (d >= simulateFrom) SimulatePass();      // 软上限跳过深层历史
+        }
+
+        if (isCatchUp)
+        {
+            // Phase 0：丢弃 catch-up 期间产生的逐日世界志噪音。
+            // worldEvents（append-only 永久日志）原样保留。
+            // Phase 3 HOOK：把下方丢弃替换为从同一区间聚合的「你离开的这些天…」摘要。
+            int extra = _saveData.pendingChronicles.Count - chronicleMark;
+            if (extra > 0)
+                _saveData.pendingChronicles.RemoveRange(chronicleMark, extra);
+        }
+    }
+
+    // 情绪注入：仅写日记时调用，只更新 E_env，不推进日历
+    public void InjectEmotion(JournalEntry entry) => EmotionInertia.Update(entry.emotion);
+
+    // 距上次锚点的整天数（同一天为 0）；新世界返回 0
+    private int WallClockDeltaDays()
+    {
+        if (string.IsNullOrEmpty(_saveData.lastTickRealTime)) return 0;
+        if (!DateTime.TryParse(_saveData.lastTickRealTime, null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var last)) return 0;
+        return Mathf.Max(0, (int)(DateTime.Now.Date - last.Date).TotalDays);
+    }
+
+    // 玩家提交日记时的唯一入口（由 UI 层调用）
+    // 墙钟 catch-up → 注入情绪 → 一次响应式模拟（不额外推进日历）→ 存档
+    public void OnJournalSubmitted(JournalEntry entry)
+    {
+        int delta = WallClockDeltaDays();
+        if (delta > 0) WorldTick(delta, isCatchUp: delta > 1);   // 缺席天数以注入前情绪演化
+
+        InjectEmotion(entry);   // 当天情绪
+        SimulatePass();         // 响应式模拟，不额外推进一天
+
+        SaveSystem.SaveWorldState(_saveData);   // 内部会盖上 lastTickRealTime = now
         SaveSystem.AppendJournalEntry(entry);
 
         // TODO: 通知视觉层播放仪式时刻（视觉阶段）
@@ -126,6 +195,7 @@ public class WorldManager : MonoBehaviour
         EmotionInertia = new EmotionInertiaSystem();
         EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory);
         Registry.Initialize(_saveData);
+        NaturalRhythm.Tick(_saveData.gameTime);
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
         _ruleEngine = new NarrativeRuleEngine(Registry, _saveData);
         _ruleEngine.SetEnvironment(Environment.State, NaturalRhythm.State);

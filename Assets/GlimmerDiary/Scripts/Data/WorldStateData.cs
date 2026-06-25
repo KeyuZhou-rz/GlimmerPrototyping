@@ -28,6 +28,9 @@ namespace GlimmerDiary.Data
     {
         public GameDateTime gameTime = new();
 
+        // 墙钟锚点：上次存档的真实时刻（ISO-8601 "o"）；空 = 新世界，不做 catch-up
+        public string lastTickRealTime;
+
         // 情感历史
         public List<EnvEmotionSnapshot> emotionHistory = new();
         public EmotionVector             currentEEnv;

@@ -16,27 +16,33 @@ namespace GlimmerDiary.Core
         public NaturalRhythmState State => CurrentState;   // WorldManager 使用的简写
         public RhythmSnapshot LastSnapshot { get; private set; }
 
+
+
         public NaturalRhythmSystem()
         {
-            Tick(DateTime.Now);
+            Tick(new GameDateTime());   // 默认 Y1-M1-D1，确保构造后 CurrentState 有效
         }
 
-        // 无参重载：使用当前真实时刻（WorldManager 调用点）
-        public void Tick() => Tick(DateTime.Now);
-
-        // 更新节律状态，供 WorldSimulator 每次进入时调用
-        public void Tick(DateTime now)
+        // 更新节律状态：一钟两粒度
+        //   季节 / yearProgress —— 取自 gameTime（catch-up 推进的世界日历）
+        //   光照 / weekProgress —— 取自真实墙钟（你的昼夜 / 周作息）
+        public void Tick(GameDateTime gameTime)
         {
-            CurrentSeason = GetSeason(now);
-            YearProgress = (now.DayOfYear - 1f) / (DateTime.IsLeapYear(now.Year) ? 366f : 365f);
+            var now = DateTime.Now;
 
-            // 周一=0, 周日=6 → 归一化到 0~1
-            int dow = ((int)now.DayOfWeek + 6) % 7;
-            WeekProgress = dow / 6f;
+            // —— 日历粒度：世界日历（每月30天，每年12月 → 360天）——
+            CurrentSeason = GetSeason(gameTime.month);
+            int dayOfYear = (gameTime.month - 1) * 30 + gameTime.day;   // 1..360
+            YearProgress  = (dayOfYear - 1) / 360f;
 
+            // —— 亚日粒度：真实墙钟 ——
             // 光照强度：正午=1, 6am/6pm=0, 夜间=0（正弦曲线）
             float hour = now.Hour + now.Minute / 60f;
             LightIntensity = Mathf.Clamp01(Mathf.Sin((hour - 6f) / 12f * Mathf.PI));
+
+            // 周一=0, 周日=6 → 归一化到 0~1（保留真实生活周节律）
+            int dow = ((int)now.DayOfWeek + 6) % 7;
+            WeekProgress = dow / 6f;
 
             CurrentState = new NaturalRhythmState
             {
@@ -100,14 +106,15 @@ namespace GlimmerDiary.Core
             eEnv.S = Mathf.Clamp(eEnv.S + bias.S * strength, 0f, 1f);
         }
 
-        private static Season GetSeason(DateTime date)
+
+        private static Season GetSeason(int month)
         {
-            return date.Month switch
+            return month switch
             {
+                12 or 1 or 2 => Season.Winter,
                 3 or 4 or 5 => Season.Spring,
                 6 or 7 or 8 => Season.Summer,
-                9 or 10 or 11 => Season.Autumn,
-                _ => Season.Winter
+                _ => Season.Autumn
             };
         }
     }

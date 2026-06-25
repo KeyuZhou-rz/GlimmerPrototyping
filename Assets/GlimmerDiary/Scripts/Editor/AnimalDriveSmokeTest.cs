@@ -132,11 +132,13 @@ namespace GlimmerDiary.Editor
             if (prose != null) Debug.Log($"    → \"{prose.text}\"");
         }
 
-        // 端到端：忠实复刻 WorldManager.OnJournalSubmitted 全管线
+        // 端到端：忠实复刻 WorldManager 全管线
         // （EmotionInertia → 天气 → 水位传播 → 驱动系统 → 文本层 → 规则 → 关系[已退役过滤]）。
-        // 验证洪水迁移由 NarrativeRule 拥有、驱动系统不再抢先移动田鼠，且世界志无死字符串。
-        // 构建一条忠实复刻 WorldManager.OnJournalSubmitted 的全管线，返回 (save, reg, submit)。
-        private static (WorldSaveData save, EntityRegistry reg, System.Action<float, float, float> submit) BuildPipeline()
+        // 复刻 WorldManager 的管线（EditMode 无法走 MonoBehaviour），分解为可独立调用的算子：
+        //   submit    —— 完整一天（推进日历 + 注入情绪 + 模拟），供既有逐日测试使用
+        //   inject    —— 仅注入情绪 + 一次响应式模拟（不推进日历），对应 InjectEmotion+SimulatePass
+        //   worldTick —— 自主推进 N 天（每天 Advance+Relax+模拟），对应 WorldManager.WorldTick
+        private static Pipeline BuildPipeline()
         {
             var save = WorldInitializer.CreateNewWorld();
             var reg  = new EntityRegistry();
@@ -160,14 +162,12 @@ namespace GlimmerDiary.Editor
             var allRelations = new List<EntityRelationSO>(Resources.LoadAll<EntityRelationSO>("Relations"));
             allRelations.RemoveAll(r => r != null && retired.Contains(r.relationId));
 
+            rhythm.Tick(save.gameTime);
             env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
 
-            // 单日全管线（与 WorldManager.OnJournalSubmitted 顺序一致）
-            void Submit(float V, float A, float C)
+            // 一次完整模拟（不推进日历），对应 WorldManager.SimulatePass
+            void Simulate()
             {
-                inertia.Update(new EmotionVector { V = V, A = A, T = 1f, S = 0f, C = C });
-                save.gameTime.Advance(1);
-                rhythm.Tick();
                 env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
                 float rain = env.State.Rainfall;
                 foreach (var loc in save.locations)
@@ -195,14 +195,63 @@ namespace GlimmerDiary.Editor
                 relationSystem.Evaluate(allRelations, save.gameTime);
             }
 
+            // 仅注入情绪 + 一次响应式模拟（不推进日历）
+            void Inject(float V, float A, float C)
+            {
+                inertia.Update(new EmotionVector { V = V, A = A, T = 1f, S = 0f, C = C });
+                Simulate();
+            }
+
+            // 自主推进 N 天：每天 Advance→Relax→刷新季节→模拟；catch-up 丢弃逐日世界志噪音
+            void WorldTick(int deltaDays, bool isCatchUp)
+            {
+                if (deltaDays <= 0) return;
+                int chronicleMark = save.pendingChronicles.Count;
+                for (int d = 0; d < deltaDays; d++)
+                {
+                    save.gameTime.Advance(1);
+                    inertia.Relax();
+                    rhythm.Tick(save.gameTime);
+                    Simulate();
+                }
+                if (isCatchUp)
+                {
+                    int extra = save.pendingChronicles.Count - chronicleMark;
+                    if (extra > 0) save.pendingChronicles.RemoveRange(chronicleMark, extra);
+                }
+            }
+
+            // 单日全管线（保持既有逐日测试语义：每次 submit 推进一天，不回落）
+            void Submit(float V, float A, float C)
+            {
+                inertia.Update(new EmotionVector { V = V, A = A, T = 1f, S = 0f, C = C });
+                save.gameTime.Advance(1);
+                rhythm.Tick(save.gameTime);
+                Simulate();
+            }
+
             Debug.Log($"[Pipeline] Rules={allRules.Count}  Relations={allRelations.Count} (retired 4)");
-            return (save, reg, Submit);
+            return new Pipeline { save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick };
         }
+
+        // 管线算子集合（EditMode 测试共享）
+        private class Pipeline
+        {
+            public WorldSaveData                save;
+            public EntityRegistry               reg;
+            public System.Action<float,float,float> submit;     // 完整一天
+            public System.Action<float,float,float> inject;     // 注入 + 响应式模拟（不推进日历）
+            public System.Action<int,bool>          worldTick;  // 自主推进 N 天
+        }
+
+        // 世界绝对日序（用于断言推进天数）：每月30天、每年12月
+        private static int AbsDay(GameDateTime t) => (t.year - 1) * 360 + (t.month - 1) * 30 + t.day;
 
         [MenuItem("GlimmerDiary/Test Full Pipeline (Flood)")]
         public static void RunFullPipelineFlood()
         {
-            var (save, reg, submit) = BuildPipeline();
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg; var submit = p.submit;
             var vole = reg.GetAnimal("vole");
             Debug.Log("=== FullPipeline Flood (EditMode, 真实管线) ===");
             for (int i = 0; i < 6; i++)
@@ -245,7 +294,8 @@ namespace GlimmerDiary.Editor
         [MenuItem("GlimmerDiary/Test Long Run (Health)")]
         public static void RunLongRunHealth()
         {
-            var (save, reg, submit) = BuildPipeline();
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg; var submit = p.submit;
             var fox = reg.GetAnimal("fox");
             var vole = reg.GetAnimal("vole");
             var dm = reg.GetAnimal("deer_mouse");
@@ -304,7 +354,8 @@ namespace GlimmerDiary.Editor
         [MenuItem("GlimmerDiary/Test Full Pipeline (Bird Arrival)")]
         public static void RunFullPipelineBird()
         {
-            var (save, reg, submit) = BuildPipeline();
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg; var submit = p.submit;
             var bird = reg.GetAnimal("migratory_bird");
             var vole = reg.GetAnimal("vole");
             Debug.Log("=== FullPipeline BirdArrival (EditMode, 真实管线) ===");
@@ -325,6 +376,73 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(voleStay ? "PASS" : "FAIL")}] 田鼠留在 lowland（此情境本就不该迁移）实际 @{vole.location}");
             foreach (var c in save.pendingChronicles)
                 Debug.Log($"    世界志[{c.eventId}]: \"{c.text}\"");
+        }
+
+        // Phase 0：统一时钟 + 自主心跳。提交 1 篇 → 静默推进 30 天，断言：
+        //   gameTime 进了 30 天 / E_env 朝基线收敛 / 动物状态演化 / 世界志无逐日噪音 / 事件日志 append-only。
+        [MenuItem("GlimmerDiary/Test Silent Advance (30d)")]
+        public static void RunSilentAdvance30()
+        {
+            var p    = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var dm   = reg.GetAnimal("deer_mouse");
+            var vole = reg.GetAnimal("vole");
+
+            Debug.Log("=== SilentAdvance30 (EditMode, Phase 0 自主心跳) ===");
+
+            // 1) 提交 1 篇：强负向、偏唤醒情绪（注入 + 一次响应式模拟，不推进日历）
+            p.inject(-0.7f, 0.6f, 0.5f);
+
+            int    dayAfterInject = AbsDay(save.gameTime);
+            var    eAfterInject   = new EmotionVector
+            { V = save.currentEEnv.V, A = save.currentEEnv.A, T = save.currentEEnv.T,
+              S = save.currentEEnv.S, C = save.currentEEnv.C };
+            float  dmAnxBefore    = dm.internalState.anxiety;
+            float  voleFoodBefore = vole.internalState.foodStock;
+            int    eventsBefore   = save.worldEvents.Count;
+            int    pendingBefore  = save.pendingChronicles.Count;
+            Debug.Log($"提交后: 第{AbsDay(save.gameTime)}日  E_env V={eAfterInject.V:F2} A={eAfterInject.A:F2} C={eAfterInject.C:F2} | " +
+                      $"鹿鼠 anx={dmAnxBefore:F2} | 田鼠 food={voleFoodBefore:F2} | 事件={eventsBefore} 世界志={pendingBefore}");
+
+            // 2) 静默推进 30 天（catch-up：丢弃逐日世界志噪音）
+            p.worldTick(30, true);
+
+            int    dayAfter30 = AbsDay(save.gameTime);
+            var    eAfter30   = save.currentEEnv;
+            Debug.Log($"30天后: 第{dayAfter30}日  E_env V={eAfter30.V:F2} A={eAfter30.A:F2} C={eAfter30.C:F2} | " +
+                      $"鹿鼠 anx={dm.internalState.anxiety:F2} | 田鼠 food={vole.internalState.foodStock:F2} | " +
+                      $"事件={save.worldEvents.Count} 世界志={save.pendingChronicles.Count}");
+
+            // 断言
+            bool t1 = (dayAfter30 - dayAfterInject) == 30;
+
+            // 基线为零向量：每个注入后非零分量的绝对值应减小（朝 0 收敛）
+            bool t2 = ConvergedToZero(eAfterInject.V, eAfter30.V)
+                   && ConvergedToZero(eAfterInject.A, eAfter30.A)
+                   && ConvergedToZero(eAfterInject.C, eAfter30.C);
+
+            bool t3 = !Mathf.Approximately(dm.internalState.anxiety, dmAnxBefore)
+                   || !Mathf.Approximately(vole.internalState.foodStock, voleFoodBefore);
+
+            // catch-up 丢弃逐日噪音：世界志净增 ≤ 1（Phase 0 期望 0）
+            int pendingAdded = save.pendingChronicles.Count - pendingBefore;
+            bool t4 = pendingAdded <= 1;
+
+            // 永久事件日志 append-only：计数只增不减
+            bool t5 = save.worldEvents.Count >= eventsBefore;
+
+            Debug.Log($"[{(t1 ? "PASS" : "FAIL")}] gameTime 推进 30 天  (实际 {dayAfter30 - dayAfterInject})");
+            Debug.Log($"[{(t2 ? "PASS" : "FAIL")}] E_env 朝基线(零)收敛  (V {eAfterInject.V:F2}→{eAfter30.V:F2}, A {eAfterInject.A:F2}→{eAfter30.A:F2}, C {eAfterInject.C:F2}→{eAfter30.C:F2})");
+            Debug.Log($"[{(t3 ? "PASS" : "FAIL")}] 动物内部状态发生演化");
+            Debug.Log($"[{(t4 ? "PASS" : "FAIL")}] 世界志无逐日噪音  (净增 {pendingAdded} 条)");
+            Debug.Log($"[{(t5 ? "PASS" : "FAIL")}] worldEvents append-only  (前 {eventsBefore} → 后 {save.worldEvents.Count})");
+        }
+
+        // 朝零基线收敛：要么本就接近零，要么绝对值确有减小
+        private static bool ConvergedToZero(float before, float after)
+        {
+            if (Mathf.Abs(before) < 0.02f) return true;
+            return Mathf.Abs(after) < Mathf.Abs(before) - 1e-4f;
         }
     }
 }
