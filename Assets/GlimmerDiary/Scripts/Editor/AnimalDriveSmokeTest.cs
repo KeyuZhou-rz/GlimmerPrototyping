@@ -152,6 +152,8 @@ namespace GlimmerDiary.Editor
             var narrator       = new BehaviorNarrator(reg, save);
             var ruleEngine     = new NarrativeRuleEngine(reg, save);
             var relationSystem = new EntityRelationSystem(reg, save);
+            var emergentTuning = ScriptableObject.CreateInstance<EmergentMomentTuning>();
+            var detector       = new EmergentMomentDetector(reg, save, emergentTuning);
 
             var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
             var retired  = new HashSet<string>
@@ -231,7 +233,11 @@ namespace GlimmerDiary.Editor
             }
 
             Debug.Log($"[Pipeline] Rules={allRules.Count}  Relations={allRelations.Count} (retired 4)");
-            return new Pipeline { save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick };
+            return new Pipeline
+            {
+                save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick,
+                detector = detector, emergentTuning = emergentTuning
+            };
         }
 
         // 管线算子集合（EditMode 测试共享）
@@ -242,6 +248,8 @@ namespace GlimmerDiary.Editor
             public System.Action<float,float,float> submit;     // 完整一天
             public System.Action<float,float,float> inject;     // 注入 + 响应式模拟（不推进日历）
             public System.Action<int,bool>          worldTick;  // 自主推进 N 天
+            public EmergentMomentDetector           detector;       // 涌现时刻检测器（测试显式驱动）
+            public EmergentMomentTuning             emergentTuning; // 可改 baseP/winterP=1 做确定性
         }
 
         // 世界绝对日序（用于断言推进天数）：每月30天、每年12月
@@ -443,6 +451,160 @@ namespace GlimmerDiary.Editor
         {
             if (Mathf.Abs(before) < 0.02f) return true;
             return Mathf.Abs(after) < Mathf.Abs(before) - 1e-4f;
+        }
+
+        // ── Phase 1：涌现式相遇（QuietConvergence） ────────────────────────────
+
+        private static int CountConvergence(WorldSaveData save)
+        {
+            int n = 0;
+            foreach (var e in save.worldEvents)
+                if (e.type == WorldEventType.QuietConvergence) n++;
+            return n;
+        }
+
+        // 直接安排一个「良性 + 暖 + 静 + 同 zone」的簇：fox + weaver 都在 center 休憩。
+        // 注意：调用前需先跑过一遍管线，确保 baobab.internalState 已初始化。
+        private static void ArrangeBenignClusterAtCenter(EntityRegistry reg, WorldSaveData save)
+        {
+            var fox = reg.GetAnimal("fox");
+            fox.isPresent = true; fox.location = "center";
+            fox.behavior ??= new BehaviorOutput();
+            fox.behavior.drive = "Rest"; fox.behavior.zone = "center";
+
+            var weaver = reg.GetAnimal("weaver_bird");
+            weaver.isPresent = true; weaver.location = "center";
+            weaver.behavior ??= new BehaviorOutput();
+            weaver.behavior.drive = "Nest"; weaver.behavior.zone = "center";
+
+            reg.GetPlant("baobab_main").internalState.vitality = 0.9f;  // 暖
+            save.currentEEnv.A = 0.1f;                                  // 静
+        }
+
+        // 测试 1：确定性——WouldFire 谓词（无随机）+ 冷却间隔（p=1）。
+        [MenuItem("GlimmerDiary/Test Quiet Convergence (Deterministic)")]
+        public static void RunQuietConvergence_Deterministic()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            Debug.Log("=== QuietConvergence Deterministic (EditMode) ===");
+
+            // 初始化：跑一天管线让 baobab.internalState 存在
+            p.submit(0.5f, 0.2f, 0.6f);
+
+            // 基准：良性+暖+静+同zone簇 → 命中
+            ArrangeBenignClusterAtCenter(reg, save);
+            bool baseFire = p.detector.WouldFire(out string z, out string csv);
+
+            // 逐项翻转单一前提 → 应否决
+            ArrangeBenignClusterAtCenter(reg, save);
+            reg.GetAnimal("fox").behavior.drive = "Foraging";              // (a) 捕猎 ≠ 休憩
+            bool noHunt = !p.detector.WouldFire(out _, out _);
+
+            ArrangeBenignClusterAtCenter(reg, save);
+            save.currentEEnv.A = 0.9f;                                     // (b) 高唤醒
+            bool noArousal = !p.detector.WouldFire(out _, out _);
+
+            ArrangeBenignClusterAtCenter(reg, save);
+            reg.GetPlant("baobab_main").internalState.vitality = 0.1f;     // (c) 无暖沉积
+            bool noCold = !p.detector.WouldFire(out _, out _);
+
+            ArrangeBenignClusterAtCenter(reg, save);
+            reg.GetAnimal("weaver_bird").isPresent = false;               // (d) 只剩一只 → 无簇
+            bool noSingle = !p.detector.WouldFire(out _, out _);
+
+            // 概率门设 1 → 谓词命中即触发；验证冷却
+            p.emergentTuning.baseP = 1f; p.emergentTuning.winterP = 1f;
+            ArrangeBenignClusterAtCenter(reg, save);
+            int before = CountConvergence(save);
+            p.detector.Detect(save.gameTime);                             // 首次触发
+            int after1 = CountConvergence(save);
+            p.detector.Detect(save.gameTime);                            // 同日再调 → 冷却挡住
+            int after2 = CountConvergence(save);
+            for (int i = 0; i < p.emergentTuning.cooldownDays; i++) save.gameTime.Advance(1);
+            ArrangeBenignClusterAtCenter(reg, save);
+            p.detector.Detect(save.gameTime);                            // 超过冷却 → 再触发
+            int after3 = CountConvergence(save);
+
+            bool t1 = baseFire;
+            bool t2 = noHunt && noArousal && noCold && noSingle;
+            bool t3 = (after1 - before) == 1;
+            bool t4 = after2 == after1;
+            bool t5 = (after3 - after2) == 1;
+
+            Debug.Log($"[{(t1 ? "PASS" : "FAIL")}] 良性+暖+静+同zone簇 → WouldFire 命中 (@{z} [{csv}])");
+            Debug.Log($"[{(t2 ? "PASS" : "FAIL")}] 翻转任一前提 → 否决 (hunt阻={noHunt} arousal阻={noArousal} cold阻={noCold} single阻={noSingle})");
+            Debug.Log($"[{(t3 ? "PASS" : "FAIL")}] p=1 → Detect 触发一次");
+            Debug.Log($"[{(t4 ? "PASS" : "FAIL")}] 冷却内重复 Detect 不再触发");
+            Debug.Log($"[{(t5 ? "PASS" : "FAIL")}] 超过冷却后再次触发");
+        }
+
+        // 测试 2：organic 可行性闸门——drive.Tick 真跑（不 re-assert），统计 WouldFire 可触发天数占比。
+        [MenuItem("GlimmerDiary/Test Quiet Convergence (Organic Feasibility)")]
+        public static void RunQuietConvergence_Organic()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            Debug.Log("=== QuietConvergence Organic Feasibility (EditMode, drive 真跑) ===");
+
+            const int DAYS = 200;
+            int triggerableDays = 0, foxDmDays = 0, foxWeaverDays = 0, otherDays = 0;
+            var pairCounts = new Dictionary<string, int>();
+
+            for (int d = 0; d < DAYS; d++)
+            {
+                p.submit(0.6f, 0.2f, 0.6f);   // 长期暖+静；drive 真跑，绝不 re-assert
+                if (!p.detector.WouldFire(out string zone, out string csv)) continue;
+
+                triggerableDays++;
+                pairCounts.TryGetValue(csv, out int c); pairCounts[csv] = c + 1;
+                bool fox = csv.Contains("fox");
+                bool rodent = csv.Contains("deer_mouse") || csv.Contains("vole");
+                if      (fox && rodent)               foxDmDays++;
+                else if (fox && csv.Contains("weaver_bird")) foxWeaverDays++;
+                else                                  otherDays++;
+            }
+
+            Debug.Log($"可触发天数占比: {triggerableDays}/{DAYS} = {(float)triggerableDays / DAYS:P0}");
+            foreach (var kv in pairCounts)
+                Debug.Log($"    簇 [{kv.Key}]: {kv.Value} 天");
+            Debug.Log($"诊断 · 宿敌对(fox+啮齿)可触发天数 = {foxDmDays}  ← 决定 drive 层后续阶段优先级");
+            Debug.Log($"诊断 · fox+weaver = {foxWeaverDays}   其他 = {otherDays}");
+
+            bool alive = triggerableDays > 0;
+            Debug.Log($"[{(alive ? "PASS" : "FAIL")}] 机制在活世界中可触发（总可触发天数 > 0）");
+            if (foxDmDays == 0)
+                Debug.Log("[INFO] 宿敌对在当前 tuning 下 organically 不可触发 → 需 drive 层使能（已排期，超出 Phase 1 read-only 边界）");
+        }
+
+        // 测试 3：统计——隔离随机门，强制永久可触发，断言触发率 ≈ baseP。
+        [MenuItem("GlimmerDiary/Test Quiet Convergence (Rate)")]
+        public static void RunQuietConvergence_Rate()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            p.submit(0.5f, 0.2f, 0.6f);   // 初始化 internalState
+
+            p.emergentTuning.cooldownDays = 1;          // 让随机门成为唯一节流
+            float targetP = p.emergentTuning.baseP;     // 默认 ~0.12
+
+            const int TRIALS = 4000;
+            int fires = 0;
+            Random.InitState(20260624);
+            for (int i = 0; i < TRIALS; i++)
+            {
+                ArrangeBenignClusterAtCenter(reg, save);
+                // 每次跨年（ToDays +360 > cooldown），且固定非冬季月（M9）避免 winterP 干扰
+                save.gameTime.year = i + 1; save.gameTime.month = 9; save.gameTime.day = 1;
+                int before = CountConvergence(save);
+                p.detector.Detect(save.gameTime);
+                if (CountConvergence(save) > before) fires++;
+            }
+
+            float observed = (float)fires / TRIALS;
+            bool within = Mathf.Abs(observed - targetP) < 0.03f;
+            Debug.Log("=== QuietConvergence Rate (EditMode, 隔离随机门) ===");
+            Debug.Log($"[{(within ? "PASS" : "FAIL")}] 触发率 ≈ baseP  (观测 {observed:P1}, 目标 {targetP:P1}, TRIALS={TRIALS})");
         }
     }
 }

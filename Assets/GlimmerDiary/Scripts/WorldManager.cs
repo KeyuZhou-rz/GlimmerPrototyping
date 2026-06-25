@@ -28,6 +28,7 @@ public class WorldManager : MonoBehaviour
     private AnimalDriveSystem      _driveSystem;
     private BehaviorNarrator       _narrator;
     private AnimalDriveTuning      _driveTuning;
+    private EmergentMomentDetector _emergentDetector;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -64,6 +65,8 @@ public class WorldManager : MonoBehaviour
         _driveTuning    = Resources.Load<AnimalDriveTuning>("Tuning/AnimalDriveTuning");
         _driveSystem    = new AnimalDriveSystem(Registry, _saveData, _driveTuning);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
+        var emergentTuning = Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning");
+        _emergentDetector  = new EmergentMomentDetector(Registry, _saveData, emergentTuning);
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
@@ -110,6 +113,10 @@ public class WorldManager : MonoBehaviour
         // 动物状态系统：内部状态演化 → 行为输出（在文本层之前，让其读到最新行为）
         _driveSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _driveSystem.Tick(_saveData.gameTime);
+
+        // 涌现时刻检测器：只读 behavior + 位置，命中则追加 QuietConvergence 世界事件
+        // （在 narrator 之前，让本日叙述同一遍带上它）
+        _emergentDetector.Detect(_saveData.gameTime);
 
         // 文本层：读行为输出 + 世界事件 → 世界志（按 cause 选细节）
         _narrator.SetEnvironment(Environment.State, NaturalRhythm.State);
@@ -205,6 +212,8 @@ public class WorldManager : MonoBehaviour
         _driveSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
         _narrator.SetEnvironment(Environment.State, NaturalRhythm.State);
+        _emergentDetector = new EmergentMomentDetector(Registry, _saveData,
+            Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning"));
     }
 
     // 将全局环境参数（Rainfall）传播到各地点实体的 waterLevel

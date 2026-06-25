@@ -69,6 +69,16 @@ namespace GlimmerDiary.Core
 
         private void NarrateEvent(WorldEvent e, GameDateTime time)
         {
+            // 涌现时刻：按事件 payload 里的物种对分支语气——宿敌对（狐狸+啮齿）情感最重，
+            // 中性对更淡。机制泛化，charge 靠 narrator 找回。
+            if (e.type == WorldEventType.QuietConvergence)
+            {
+                Emit($"event_{e.type}",
+                     Pick(IsChargedPair(e.payload) ? QuietConvergenceCharged : QuietConvergenceNeutral),
+                     time);
+                return;
+            }
+
             string[] templates = e.type switch
             {
                 WorldEventType.WeaverBirdDeparted => WeaverDeparted,
@@ -79,6 +89,15 @@ namespace GlimmerDiary.Core
             };
             if (templates == null) return;
             Emit($"event_{e.type}", Pick(templates), time);
+        }
+
+        // 宿敌对：捕食者（fox）与啮齿（deer_mouse / vole）罕见地共处
+        private static bool IsChargedPair(string speciesCsv)
+        {
+            if (string.IsNullOrEmpty(speciesCsv)) return false;
+            bool hasFox    = speciesCsv.Contains("fox");
+            bool hasRodent = speciesCsv.Contains("deer_mouse") || speciesCsv.Contains("vole");
+            return hasFox && hasRodent;
         }
 
         // ── 文案模板（迁移 + 新增；{date}{sky} 占位） ─────────────
@@ -238,9 +257,38 @@ namespace GlimmerDiary.Core
     
     // 稀有感
     "{date} {sky} 猴面包树开花了，不是每年都有这种事。",
-    
+
     // 带地面的痕迹
     "{date} {sky} 猴面包树开花了。早晨树下有一些落下来的花瓣，白色，已经有点褐了。",
+};
+
+        // 涌现时刻 · 宿敌对（狐狸 + 啮齿）：永不点破，只写「挨着歇息」这个可观察的行为
+        private static readonly string[] QuietConvergenceCharged =
+{
+    // 「谁也没有先动」是这一刻的核心
+    "{date} {sky} 今晚有两个影子挨得近了些。平时它们总是绕着走，这次谁也没有先动。",
+
+    // 用「距离」写，不写身份
+    "{date} {sky} 该是猎与被猎的两边，今夜歇在了同一片草里。中间留着一点距离，但没有谁离开。",
+
+    // 小报式的克制
+    "{date} {sky} 据观察，两只素来回避彼此的动物，于今夜短暂共处。原因不明，未持续。",
+
+    // 用「没有发生的事」来写
+    "{date} {sky} 该追的没有追，该逃的没有逃。它们就那样待着，直到天色变了。",
+
+    // 留一点不确定
+    "{date} {sky} 不知是太累还是夜太静，那两个本不该在一起的，今晚靠着同一处歇下了。",
+};
+
+        // 涌现时刻 · 中性对（邻里）：更淡的语气
+        private static readonly string[] QuietConvergenceNeutral =
+{
+    "{date} {sky} 几只动物今晚聚在树边，没有争抢，也没有走开。",
+
+    "{date} {sky} 同一片地方今夜歇着不止一个身影。夜很安静，谁也没打扰谁。",
+
+    "{date} {sky} 它们凑在一处过了一夜。说不上为什么，就是都在那儿。",
 };
 
         // ── 工具 ───────────────────────────────────────────────────
