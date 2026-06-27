@@ -21,6 +21,8 @@ namespace GlimmerDiary.Utils
         public static void SaveWorldState(WorldSaveData data)
         {
             EnsureDir();
+            // 以「存档时刻」为墙钟锚点（崩溃安全，优于仅 OnApplicationQuit）
+            data.lastTickRealTime = DateTime.Now.ToString("o");
             File.WriteAllText(WorldStatePath, JsonUtility.ToJson(data, prettyPrint: true));
             Debug.Log($"[SaveSystem] World state saved → {WorldStatePath}");
         }
