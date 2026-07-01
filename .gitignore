@@ -105,6 +105,10 @@ InitTestScene*.unity*
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
 
+# Unity scene recovery files (auto-generated on crash — not for VCS)
+/[Aa]ssets/_Recovery/
+/[Aa]ssets/_Recovery.meta
+
 # ---------------------------------------------------------------------------
 # Re-importable third-party Asset Store packages — NOT version controlled.
 # These are downloaded from the Unity Asset Store and would otherwise bloat
