@@ -31,7 +31,7 @@ namespace GlimmerDiary.Core
         private readonly float VOLE_FOOD_DECAY, VOLE_FOOD_REGEN, VOLE_FORAGE_RELIEF, VOLE_EXPAND_RELIEF, VOLE_EXPAND_FOOD, VOLE_DM_RANGE_FREE;
         private readonly float FOX_HUNGER_GAIN, FOX_FORAGE_RELIEF, FOX_SAFETY_RECOVER, FOX_TERR_RECOVER, FOX_PATROL_REASSERT, FOX_TERR_ENCROACH;
         private readonly float BIRD_URGE_SEASON, BIRD_URGE_OFF, BIRD_URGE_BLEAK, BIRD_COMFORT_LERP, BIRD_FOX_DISCOMFORT;
-        private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN, INSECT_VEG_DECAY;
+        private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN;
         private readonly int   WEAVER_RETURN_TICKS;
 
         static readonly HashSet<string> FOX_TERRITORY = new() { "highland_east", "center" };
@@ -58,7 +58,7 @@ namespace GlimmerDiary.Core
             BIRD_URGE_SEASON = t.birdUrgeSeason; BIRD_URGE_OFF = t.birdUrgeOff; BIRD_URGE_BLEAK = t.birdUrgeBleak;
             BIRD_COMFORT_LERP = t.birdComfortLerp; BIRD_FOX_DISCOMFORT = t.birdFoxDiscomfort;
             TREE_VITALITY_ALPHA = t.treeVitalityAlpha; TREE_FLOWER_GAIN = t.treeFlowerGain;
-            WEAVER_RETURN_TICKS = t.weaverReturnTicks; INSECT_VEG_DECAY = t.insectVegDecay;
+            WEAVER_RETURN_TICKS = t.weaverReturnTicks;
         }
 
         public void SetEnvironment(WorldEnvironmentState env, NaturalRhythmState rhythm)
@@ -368,7 +368,8 @@ namespace GlimmerDiary.Core
             a.behavior.cause = CauseFactor.None;
         }
 
-        // ── 猴面包树：vitality / 开花 / 断枝边沿 → 织巢鸟离场 + 虫害植被衰减 ──
+        // ── 猴面包树：vitality / 开花 / 断枝边沿 → 织巢鸟离场 ──
+        // 虫害植被衰减已迁至 VegetationSystem（loc.vegetationDensity 单一写者）。
         private void TickTree(Dictionary<string, Snap> snap, GameDateTime time)
         {
             var tree = _registry.GetPlant("baobab_main");
@@ -410,15 +411,8 @@ namespace GlimmerDiary.Core
                 st.floweringReadiness = 0f;
                 Emit(WorldEventType.TreeFlowered, "baobab_main", "", "", time);
             }
-
-            // 替代 Relation_InsectSurgeVegetation：织巢鸟不在 → 东侧高地虫害植被衰减
-            var weaverNow = _registry.GetAnimal("weaver_bird");
-            if (weaverNow != null && !weaverNow.isPresent)
-            {
-                var he = _registry.GetLocation("highland_east");
-                if (he != null && he.vegetationDensity > 0.10f)
-                    he.vegetationDensity = Mathf.Clamp01(he.vegetationDensity - INSECT_VEG_DECAY);
-            }
+            // 虫害植被衰减已迁至 VegetationSystem（loc.vegetationDensity 单一写者），
+            // 在 drive.Tick 之前运行；TickTree 不再写任何 location 字段。
         }
 
         // ── 工具 ───────────────────────────────────────────────────
@@ -436,29 +430,25 @@ namespace GlimmerDiary.Core
             out float winning)
             => Argmax(incumbent, out winning, a, b, c, d);
 
-        private string Argmax(string incumbent, out float winning,
-            params (string name, float p)[] drives)
+        private string Argmax(string incumbent, out float winning, params(string name, float p)[] drives)
         {
             float bestP = Mathf.NegativeInfinity;
             string best = drives[0].name;
-
-            foreach(var(name, p) in drives)
+            foreach (var (name, p) in drives)
             {
-                float adj = p + (name == incumbent ? INCUMBENT_BONUS : 0f);
+                float term = p + (name == incumbent ? INCUMBENT_BONUS : 0f); 
 
-                if (adj > bestP)
+                if (term > bestP)
                 {
-                    bestP = adj;
+                    bestP = term;
                     best = name;
                 }
-
-                
             }
+
             winning = Mathf.Clamp01(bestP);
             return best;
-
-            
         }
+
 
         // 当前 zone 及其邻居中植被最高者（狐狸觅食目标）
         private string HighestVegInReach(string zone)

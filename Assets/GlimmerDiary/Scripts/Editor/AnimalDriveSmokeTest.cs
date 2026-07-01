@@ -148,7 +148,9 @@ namespace GlimmerDiary.Editor
             inertia.Restore(save.currentEEnv, save.emotionHistory);
             var rhythm         = new NaturalRhythmSystem();
             var env            = new WorldEnvironmentSystem();
+            var translation    = new TranslationLayer();
             var drive          = new AnimalDriveSystem(reg, save);
+            var vegetation     = new VegetationSystem(reg, save, 0.003f); // 虫害衰减率 = AnimalDriveTuning.insectVegDecay 默认
             var narrator       = new BehaviorNarrator(reg, save);
             var ruleEngine     = new NarrativeRuleEngine(reg, save);
             var relationSystem = new EntityRelationSystem(reg, save);
@@ -165,12 +167,13 @@ namespace GlimmerDiary.Editor
             allRelations.RemoveAll(r => r != null && retired.Contains(r.relationId));
 
             rhythm.Tick(save.gameTime);
-            env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
+            env.UpdateFromEEnv(inertia.CurrentEEnv, translation.Translate(inertia.CurrentEEnv, rhythm.State));
 
             // 一次完整模拟（不推进日历），对应 WorldManager.SimulatePass
             void Simulate()
             {
-                env.UpdateFromEEnv(inertia.CurrentEEnv, rhythm.State);
+                var signals = translation.Translate(inertia.CurrentEEnv, rhythm.State);
+                env.UpdateFromEEnv(inertia.CurrentEEnv, signals);
                 float rain = env.State.Rainfall;
                 foreach (var loc in save.locations)
                 {
@@ -184,7 +187,18 @@ namespace GlimmerDiary.Editor
                         _               => 0.15f
                     };
                     loc.waterLevel = Mathf.Clamp01(loc.waterLevel + rain * accRate - 0.03f);
+                    float soakRate = loc.locationId switch
+                    {
+                        "lowland"       => 0.15f,
+                        "riverbank"     => 0.12f,
+                        "center"        => 0.10f,
+                        "highland_east" => 0.07f,
+                        "stone_area"    => 0.04f,
+                        _               => 0.10f
+                    };
+                    loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * soakRate - 0.02f);
                 }
+                vegetation.Tick(save.gameTime);   // loc.vegetationDensity 单一写者（虫害）；驱动层只读
                 save.currentEEnv    = inertia.CurrentEEnv;
                 save.emotionHistory = inertia.History;
                 drive.SetEnvironment(env.State, rhythm.State);
@@ -605,6 +619,111 @@ namespace GlimmerDiary.Editor
             bool within = Mathf.Abs(observed - targetP) < 0.03f;
             Debug.Log("=== QuietConvergence Rate (EditMode, 隔离随机门) ===");
             Debug.Log($"[{(within ? "PASS" : "FAIL")}] 触发率 ≈ baseP  (观测 {observed:P1}, 目标 {targetP:P1}, TRIALS={TRIALS})");
+        }
+
+        // 虫害经 VegetationSystem 生效：断枝 → 织巢鸟离场 → highland_east 植被衰减（1-tick 滞后）。
+        [MenuItem("GlimmerDiary/Test Vegetation Pest")]
+        public static void RunVegetationPest()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var he = reg.GetLocation("highland_east");
+            var weaver = reg.GetAnimal("weaver_bird");
+            var tree = reg.GetPlant("baobab_main");
+
+            Debug.Log("=== VegetationPest (EditMode) ===");
+            for (int i = 0; i < 3; i++) p.submit(0.5f, 0.2f, 0.6f);   // 初始化 internalState
+            float vegBefore = he.vegetationDensity;
+            Debug.Log($"断枝前: highland_east.veg={vegBefore:F3}  织巢鸟 present={weaver.isPresent}");
+
+            // 模拟断枝（NarrativeRule 拥有）→ TickTree 边沿 → 织巢鸟离场
+            tree.permanentDamages.Add(new PermanentDamageRecord
+            {
+                date = save.gameTime.ToKeyString(), damageType = "branch_broken",
+                description = "smoketest", triggeredBy = "smoketest"
+            });
+
+            for (int i = 0; i < 10; i++) p.submit(0.5f, 0.2f, 0.6f);
+            float vegAfter = he.vegetationDensity;
+            Debug.Log($"断枝后 10 天: highland_east.veg={vegAfter:F3}  织巢鸟 present={weaver.isPresent}  (衰减 {vegBefore - vegAfter:F3})");
+
+            bool weaverGone = !weaver.isPresent;
+            bool declined   = vegAfter < vegBefore - 1e-4f;
+            Debug.Log($"[{(weaverGone ? "PASS" : "FAIL")}] 织巢鸟经断枝离场");
+            Debug.Log($"[{(declined   ? "PASS" : "FAIL")}] 虫害经 VegetationSystem 衰减 highland_east 植被（1-tick 滞后）");
+        }
+
+        // 土壤湿度经 PropagateEnvironment 生效：大雨蓄水（分区保水差）+ 无雨蒸发。
+        [MenuItem("GlimmerDiary/Test Soil Moisture")]
+        public static void RunSoilMoisture()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var lowland = reg.GetLocation("lowland");
+            var stone   = reg.GetLocation("stone_area");
+
+            Debug.Log("=== SoilMoisture (EditMode) ===");
+            float lowInit = lowland.soilMoisture, stoneInit = stone.soilMoisture;
+            Debug.Log($"初始: lowland={lowInit:F3}  stone_area={stoneInit:F3}");
+
+            // 连续大雨 6 天（V=-1 → Rainfall=1.0）
+            for (int i = 0; i < 6; i++) p.submit(-1f, 0.3f, 0.5f);
+            float lowRain = lowland.soilMoisture, stoneRain = stone.soilMoisture;
+            Debug.Log($"大雨 6 天后: lowland={lowRain:F3}  stone_area={stoneRain:F3}");
+
+            // 连续无雨 6 天（V=0.6 → Rainfall=0）
+            for (int i = 0; i < 6; i++) p.submit(0.6f, 0.3f, 0.6f);
+            float lowDry = lowland.soilMoisture, stoneDry = stone.soilMoisture;
+            Debug.Log($"无雨 6 天后: lowland={lowDry:F3}  stone_area={stoneDry:F3}");
+
+            bool a1 = lowRain  > lowInit  + 1e-4f;      // 雨天蓄水
+            bool a2 = lowRain  > stoneRain + 1e-4f;      // 分区保水差（lowland 比 stone_area 更保湿）
+            bool a3 = lowDry   < lowRain  - 1e-4f;       // 无雨蒸发（lowland）
+            bool a4 = stoneDry < stoneRain - 1e-4f;      // 无雨蒸发（stone_area）
+            Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] 大雨 → lowland 蓄水  ({lowInit:F3}→{lowRain:F3})");
+            Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 分区保水差  lowland({lowRain:F3}) > stone_area({stoneRain:F3})");
+            Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] 无雨 → lowland 蒸发  ({lowRain:F3}→{lowDry:F3})");
+            Debug.Log($"[{(a4 ? "PASS" : "FAIL")}] 无雨 → stone_area 蒸发  ({stoneRain:F3}→{stoneDry:F3})");
+        }
+
+        // 翻译层无状态信号 1/2/3/7：降水/躁动/晦明/苍穹。直接调 Translate（绕过 submit 的 T=1 硬编码），
+        // 用固定 lightIntensity=0 的 NaturalRhythmState，消除墙钟光照的非确定性。
+        [MenuItem("GlimmerDiary/Test Translation Layer")]
+        public static void RunTranslationLayer()
+        {
+            var nightRhythm = new NaturalRhythmState { lightIntensity = 0f };  // 夜晚，确定性
+            var tl = new TranslationLayer();
+
+            EmotionVector Vec(float V, float A, float T, float C) =>
+                new EmotionVector { V = V, A = A, T = T, S = 0f, C = C };
+
+            Debug.Log("=== TranslationLayer (EditMode) ===");
+
+            // 信号 1 降水 Wetness：V=-1 大雨，V=0.6 无雨
+            var sRain = tl.Translate(Vec(-1f, 0.3f, 1f, 0.5f), nightRhythm);
+            var sDry  = tl.Translate(Vec(0.6f, 0.3f, 1f, 0.5f), nightRhythm);
+            Debug.Log($"信号1 Wetness: V=-1 → {sRain.Wetness:F3}   V=0.6 → {sDry.Wetness:F3}");
+            Debug.Log($"[{(sRain.Wetness > 0.9f ? "PASS" : "FAIL")}] 信号1 V=-1 → Wetness 高  ({sRain.Wetness:F3})");
+            Debug.Log($"[{(sDry.Wetness  < 0.05f ? "PASS" : "FAIL")}] 信号1 V=0.6 → Wetness≈0  ({sDry.Wetness:F3})");
+
+            // 信号 2 躁动 Agitation：A=1 强，A=0 弱
+            var sWind1 = tl.Translate(Vec(0f, 1f, 1f, 0.5f), nightRhythm);
+            var sWind0 = tl.Translate(Vec(0f, 0f, 1f, 0.5f), nightRhythm);
+            Debug.Log($"[{(sWind1.Agitation > 0.8f ? "PASS" : "FAIL")}] 信号2 A=1 → Agitation 高  ({sWind1.Agitation:F3})");
+            Debug.Log($"[{(sWind0.Agitation < 0.1f  ? "PASS" : "FAIL")}] 信号2 A=0 → Agitation 低  ({sWind0.Agitation:F3})");
+
+            // 信号 3 晦明 Dimness：C=0 浓雾，C=1 无雾
+            var sFog0 = tl.Translate(Vec(0f, 0.3f, 1f, 0f), nightRhythm);
+            var sFog1 = tl.Translate(Vec(0f, 0.3f, 1f, 1f), nightRhythm);
+            Debug.Log($"[{(sFog0.Dimness > 0.7f ? "PASS" : "FAIL")}] 信号3 C=0 → Dimness 高  ({sFog0.Dimness:F3})");
+            Debug.Log($"[{(sFog1.Dimness < 0.05f ? "PASS" : "FAIL")}] 信号3 C=1 → Dimness≈0  ({sFog1.Dimness:F3})");
+
+            // 信号 7 苍穹 Firmament：T 敏感 + 雨门控（夜晚 lightIntensity=0，去除光照干扰）
+            var sT1 = tl.Translate(Vec(0.5f, 0.3f, 1f, 0.5f), nightRhythm);  // 无雨
+            var sT0 = tl.Translate(Vec(0.5f, 0.3f, 0f, 0.5f), nightRhythm);
+            Debug.Log($"信号7 Firmament: T=1 → {sT1.Firmament:F3}   T=0 → {sT0.Firmament:F3}   大雨T=1 → {sRain.Firmament:F3}");
+            Debug.Log($"[{(sT1.Firmament > sT0.Firmament + 1e-4f ? "PASS" : "FAIL")}] 信号7 T 敏感: T=1 ({sT1.Firmament:F3}) > T=0 ({sT0.Firmament:F3})");
+            Debug.Log($"[{(sRain.Firmament < sT1.Firmament - 1e-4f ? "PASS" : "FAIL")}] 信号7 雨门控: 大雨 T=1 ({sRain.Firmament:F3}) < 无雨 ({sT1.Firmament:F3})");
         }
     }
 }
