@@ -21,6 +21,7 @@ namespace GlimmerDiary.Data
         public float yearProgress;    // 0.0 ~ 1.0
         public float weekProgress;    // 0.0 ~ 1.0
         public float lightIntensity;  // 0=夜晚, 1=正午，基于实际时刻
+        public float dayProgress;     // 0.0 ~ 1.0，一天中的真实时刻（0=午夜），供渲染层转太阳角度
     }
 
     [Serializable]

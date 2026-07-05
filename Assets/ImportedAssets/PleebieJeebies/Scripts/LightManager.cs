@@ -12,7 +12,25 @@ public class LightManager : MonoBehaviour
     [SerializeField, Tooltip("How fast time will go")] private float TimeMultiplier = 1;
     [SerializeField] private bool ControlLights = true;
 
+    [Header("External Drive")]
+    [Tooltip("为 true 时停止内部时钟自增，由外部（WorldAtmosphereBinder）经 SetTimePercent 驱动")]
+    public bool driveExternally = false;
+
     private const float inverseDayLength = 1f / 1440f;
+
+    /// <summary>
+    /// 外部驱动入口：t01 为一天中的时刻（0=午夜，0.5=正午）。
+    /// 仅在 driveExternally=true 时由绑定层调用；同步 TimeOfDay 便于 Inspector 观察。
+    /// </summary>
+    public void SetTimePercent(float t01)
+    {
+        if (DayNightPreset == null)
+            return;
+
+        t01 = Mathf.Repeat(t01, 1f);
+        TimeOfDay = t01 * 1440f;
+        UpdateLighting(t01);
+    }
 
     /// <summary>
     /// On project start, if controlLights is true, collect all non-directional lights in the current scene and place in a list
@@ -49,6 +67,9 @@ public class LightManager : MonoBehaviour
     {
         if (DayNightPreset == null)
             return;
+
+        if (driveExternally)
+            return;   // 外部驱动时跳过内部时钟自增，等待 SetTimePercent
 
         TimeOfDay = TimeOfDay + (Time.deltaTime * TimeMultiplier);
         TimeOfDay = TimeOfDay % 1440;

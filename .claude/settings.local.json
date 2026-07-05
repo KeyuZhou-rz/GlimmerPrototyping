@@ -29,7 +29,8 @@
       "Bash(git push *)",
       "Bash(git branch *)",
       "Bash(dir C:UsersZ2005Glimmer_Prototyping *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Skill(update-config)"
     ]
   }
 }

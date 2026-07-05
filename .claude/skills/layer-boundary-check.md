@@ -19,9 +19,9 @@ grep `currentEEnv\s*=\s*new EmotionVector` in `Assets/GlimmerDiary/Scripts/` (�
 grep `UnityEngine\.UI|UnityEngine\.EventSystems|Canvas|Button` in `Assets/GlimmerDiary/Scripts/Core/` and `Data/`
 
 ## L3 违规
-grep `currentEEnv\s*=|\.behavior\s*=|\s*\.internalState\s*=|\.activityRange\s*=|\s*\.location\s*=\s*"|\.isPresent\s*=|\.waterLevel\s*=|\.vitality\s*=` in `Assets/Scripts/` and `Assets/Script/` and `Assets/PleebieJeebies/`
-grep `new AnimalEntity|new PlantEntity|new LocationEntity|new WorldSaveData|new WorldEnvironmentState` in `Assets/Scripts/` and `Assets/Script/` and `Assets/PleebieJeebies/`
-grep `OnJournalSubmitted|InjectEmotion|SimulatePass|WorldTick|ReinitializeWithSave` in `Assets/Scripts/` and `Assets/Script/` and `Assets/PleebieJeebies/`
+grep `currentEEnv\s*=|\.behavior\s*=|\s*\.internalState\s*=|\.activityRange\s*=|\s*\.location\s*=\s*"|\.isPresent\s*=|\.waterLevel\s*=|\.vitality\s*=` in `Assets/Scripts/` and `Assets/Script/` and `Assets/ImportedAssets/PleebieJeebies/`
+grep `new AnimalEntity|new PlantEntity|new LocationEntity|new WorldSaveData|new WorldEnvironmentState` in `Assets/Scripts/` and `Assets/Script/` and `Assets/ImportedAssets/PleebieJeebies/`
+grep `OnJournalSubmitted|InjectEmotion|SimulatePass|WorldTick|ReinitializeWithSave` in `Assets/Scripts/` and `Assets/Script/` and `Assets/ImportedAssets/PleebieJeebies/`
 
 ## 单一写者违规
 S1: grep `\.behavior\s*=|\s*\.internalState\s*=\s*new Internal|\.activityRange\s*=` in `Assets/GlimmerDiary/Scripts/Core/` (排除 AnimalDriveSystem.cs, BehaviorNarrator.cs; 允许 WorldInitializer.cs)

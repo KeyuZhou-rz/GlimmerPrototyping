@@ -3,6 +3,10 @@ using System.Collections;
 
 public class EmotionWeatherController : MonoBehaviour
 {
+    [Header("外部驱动")]
+    [Tooltip("勾选时由 WorldAtmosphereBinder 按世界状态每帧覆写下面的滑条；取消勾选即可手动调参（调试用）")]
+    public bool allowExternalDrive = true;
+
     [Header("核心输入(雨量，风力，雷电)")]
     [Range(-1f, 1f)]
     public float rainIntensity = 0f;
@@ -11,15 +15,24 @@ public class EmotionWeatherController : MonoBehaviour
     [Range(0f, 1f)]
     public float thunderIntensity = 0f;
 
+    [Header("晦明（雾的情绪分量，独立于降雨）")]
+    [Range(0f, 1f)]
+    public float dimness = 0f;               // 默认 0：未接绑定层的场景雾公式退化回原样
+    [Range(0f, 1f)]
+    public float dimnessFogWeight = 0.45f;   // dimness=1 时雾距向暴雨端额外收拢的比例
+
     [Header("雨水系统设置")]
     public ParticleSystem rainParticleSystem;
     public AudioSource rainAudioSource;
-    public float maxRainEmission = 1000f;
-    public float maxRainSize = 0.1f;
-    [Header("雨滴湍流设置")]
-    public float maxRainTurbulenceY = 3f;  // Y轴随机飘移（上下）
-    public float maxRainTurbulenceZ = 3f;  // Z轴随机飘移（前后）- 主要倾斜方向
-    public float turbulenceFrequency = 10f; // 湍流频率
+    public float maxRainEmission = 1400f;
+    public float minRainSize = 0.05f;       // 细雨雨丝宽度
+    public float maxRainSize = 0.09f;       // 暴雨雨丝宽度
+    [Header("雨滴风感设置")]
+    [Tooltip("世界空间风向（水平分量）。主相机沿 +Z 看，X 分量才是画面里可见的斜雨方向")]
+    public Vector3 windDirection = new Vector3(1f, 0f, 0.25f);
+    public float maxRainWindForce = 9f;     // 满风时的恒定横向力（把整幕雨吹斜）
+    public float maxRainTurbulenceZ = 1.2f; // 满风时的低频摆动幅度
+    public float turbulenceFrequency = 0.2f; // 湍流频率：低频=整幕缓摆，高频=雨丝乱抖
 
     [Header("风力系统")]
     public WindZone sceneWindZone;
@@ -39,16 +52,18 @@ public class EmotionWeatherController : MonoBehaviour
     public int flickerAmount = 3;
 
     [Header("天空与能见度 (Fog)")]
-    public Color stormFogColor = new Color(0.1f, 0.1f, 0.2f);
-    public Color sunnyFogColor = new Color(0.5f, 0.8f, 1.0f);
-    public float stormFogDensity = 0.005f;
-    public float sunnyFogDensity = 0.001f;
+    public Color stormFogColor = new Color(0.16f, 0.19f, 0.24f);
+    public Color sunnyFogColor = new Color(0.58f, 0.66f, 0.72f);
+    [Tooltip("夜晚雾亮度跟随的平行光（留空自动取 RenderSettings.sun）")]
+    public Light sunForFogBrightness;
+    [Range(0f, 1f), Tooltip("光照全灭时雾保留的亮度比例——夜里雾应沉入夜色而非发白")]
+    public float nightFogFloor = 0.18f;
 
     [Header("线性雾可见距离")]
-    public float fogLinearSunnyStart = 100f;
-    public float fogLinearSunnyEnd = 3000f;
-    public float fogLinearStormStart = 50f;
-    public float fogLinearStormEnd = 800f;
+    public float fogLinearSunnyStart = 60f;
+    public float fogLinearSunnyEnd = 380f;
+    public float fogLinearStormStart = 18f;
+    public float fogLinearStormEnd = 130f;
 
     [Header("对外输出（植物生长）")]
     [Range(0f, 1f)] public float currentWaterSaturation;
@@ -126,10 +141,10 @@ public class EmotionWeatherController : MonoBehaviour
         }
 
 
-        // 初始雾设置
+        // 初始雾设置：与 UpdateRain 的公式同源（fogT=0 晴天端）
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = Color.Lerp(stormFogColor, sunnyFogColor, 0.5f);
+        RenderSettings.fogColor = sunnyFogColor;
         RenderSettings.fogStartDistance = fogLinearSunnyStart;
         RenderSettings.fogEndDistance = fogLinearSunnyEnd;
     }
@@ -164,29 +179,43 @@ public class EmotionWeatherController : MonoBehaviour
             var main = rainParticleSystem.main;
 
             emission.rateOverTime = Mathf.Lerp(0f, maxRainEmission, smoothedRainIntensity);
-            main.startSize = Mathf.Lerp(0.1f, maxRainSize, smoothedRainIntensity);
+            // 雨丝宽度：小雨细、暴雨略粗；长度由渲染器 lengthScale 拉伸控制
+            main.startSize = Mathf.Lerp(minRainSize, maxRainSize, smoothedRainIntensity);
+            // 下落速度：小雨徐、暴雨急（真实雨终速 ~9m/s，风格化取 12~20）
+            main.startSpeed = Mathf.Lerp(12f, 20f, smoothedRainIntensity);
 
-            // 应用风力湍流效果 - 随机飘移
+            // 恒定风力：自然的雨是整幕同向倾斜，而不是逐滴乱抖
+            var force = rainParticleSystem.forceOverLifetime;
+            bool wantForce = currentWind > 0.01f;
+            force.enabled = wantForce;
+            if (wantForce)
+            {
+                Vector3 wind = windDirection.sqrMagnitude > 1e-4f
+                    ? new Vector3(windDirection.x, 0f, windDirection.z).normalized
+                    : Vector3.right;
+                float f = Mathf.Lerp(0f, maxRainWindForce, currentWind);
+                force.space = ParticleSystemSimulationSpace.World;
+                force.x = wind.x * f;
+                force.y = 0f;
+                force.z = wind.z * f;
+            }
+
+            // 低频湍流：风向平面内一层缓摆（阵风感）。频率必须低，高频会让雨丝抖成噪点
             var noise = rainParticleSystem.noise;
-            noise.enabled = true;
-            noise.separateAxes = true;
-
-            // X轴不受影响（因为视角固定在X轴）
-            noise.strengthX = 0f;
-
-            // Y轴轻微随机飘移（上下）
-            float turbulenceY = Mathf.Lerp(0f, maxRainTurbulenceY, currentWind);
-            noise.strengthY = new ParticleSystem.MinMaxCurve(turbulenceY * 0.5f, turbulenceY);
-
-            // Z轴主要飘移方向（前后）- 模拟风吹效果
-            float turbulenceZ = Mathf.Lerp(0f, maxRainTurbulenceZ, currentWind);
-            noise.strengthZ = new ParticleSystem.MinMaxCurve(turbulenceZ * 0.7f, turbulenceZ);
-
-            // 湍流频率
-            noise.frequency = turbulenceFrequency;
-            noise.damping = true;
-            noise.scrollSpeed = 1f;
-            noise.quality = ParticleSystemNoiseQuality.High;
+            bool wantNoise = currentWind > 0.15f;
+            noise.enabled = wantNoise;
+            if (wantNoise)
+            {
+                float turb = Mathf.Lerp(0f, maxRainTurbulenceZ, currentWind);
+                noise.separateAxes = true;
+                noise.strengthX = new ParticleSystem.MinMaxCurve(turb);
+                noise.strengthY = 0f;   // 雨不该上下飘
+                noise.strengthZ = new ParticleSystem.MinMaxCurve(turb * 0.4f);
+                noise.frequency = turbulenceFrequency;
+                noise.damping = true;
+                noise.scrollSpeed = 0.35f;
+                noise.quality = ParticleSystemNoiseQuality.Medium;
+            }
 
             if (smoothedRainIntensity > 0.01f && !rainParticleSystem.isPlaying)
                 rainParticleSystem.Play();
@@ -204,21 +233,28 @@ public class EmotionWeatherController : MonoBehaviour
             else if (targetVolume <= 0.01f && rainAudioSource.isPlaying)
                 rainAudioSource.Stop();
         }
-        RenderSettings.fogDensity = Mathf.Min(0.01f, 0.015f * smoothedRainIntensity);
-        
-        RenderSettings.fogColor = Color.Lerp(stormFogColor, sunnyFogColor, RenderSettings.fogDensity);
-        /*
-        float fogStart = Mathf.Lerp(fogLinearSunnyStart, fogLinearStormStart, smoothedRainIntensity);
-        float fogEnd = Mathf.Lerp(fogLinearSunnyEnd, fogLinearStormEnd, smoothedRainIntensity);
+        // —— 雾：统一线性雾 ——
+        // 坏天气程度 = 雨强 ⊕ 晦明（dimness 按权重折算，只影响雾，不影响雨粒子）
+        float fogT = Mathf.Clamp01(smoothedRainIntensity + dimness * dimnessFogWeight);
+
+        float fogStart = Mathf.Lerp(fogLinearSunnyStart, fogLinearStormStart, fogT);
+        float fogEnd   = Mathf.Lerp(fogLinearSunnyEnd,   fogLinearStormEnd,   fogT);
         fogStart = Mathf.Clamp(fogStart, 0f, fogEnd - 0.01f);
 
+        RenderSettings.fogMode          = FogMode.Linear;
         RenderSettings.fogStartDistance = fogStart;
-        RenderSettings.fogEndDistance = fogEnd;
-        RenderSettings.fogDensity = Mathf.Lerp(sunnyFogDensity, stormFogDensity * 0.5f, smoothedRainIntensity);
-        */
-        RenderSettings.fogMode = FogMode.ExponentialSquared;
-        
+        RenderSettings.fogEndDistance   = fogEnd;
 
+        // 雾色跟随昼夜：夜里太阳沉下后雾同步压暗，否则黑夜地平线上浮起灰白带
+        Color fogCol = Color.Lerp(sunnyFogColor, stormFogColor, fogT);
+        var sun = sunForFogBrightness != null ? sunForFogBrightness : RenderSettings.sun;
+        if (sun != null)
+        {
+            float sunUp = Mathf.Clamp01(Vector3.Dot(-sun.transform.forward, Vector3.up) * 2f);
+            float dayLight = Mathf.Clamp01(sun.intensity) * sunUp;
+            fogCol *= Mathf.Lerp(nightFogFloor, 1f, dayLight);
+        }
+        RenderSettings.fogColor = fogCol;
 
         currentWaterSaturation = smoothedRainIntensity;
         currentSunlightIntensity = smoothedSunIntensity;

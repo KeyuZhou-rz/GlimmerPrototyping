@@ -95,6 +95,20 @@ public class WorldManager : MonoBehaviour
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
     }
 
+    // 空闲心跳：会话内无日记输入时也定期重算节律快照（dayProgress/lightIntensity 跟随真实墙钟），
+    // 只刷新 NaturalRhythm，不碰 worldEvents/animals/plants/emotionHistory，不是 SimulatePass。
+    [SerializeField, Tooltip("节律心跳间隔（真实秒）。dayProgress 一天走一圈，30 秒的变化量已低于肉眼阈值。")]
+    private float rhythmHeartbeatSeconds = 30f;
+    private float _rhythmHeartbeatTimer;
+
+    void Update()
+    {
+        _rhythmHeartbeatTimer += Time.deltaTime;
+        if (_rhythmHeartbeatTimer < rhythmHeartbeatSeconds) return;
+        _rhythmHeartbeatTimer = 0f;
+        NaturalRhythm.Tick(_saveData.gameTime);
+    }
+
     // 自主软上限：catch-up 总是按完整墙钟天数推进 gameTime 日历，
     // 但每日重模拟只跑最后 N 天，避免长缺席时启动卡顿（深层历史留给 Phase 3 摘要）
     const int MaxSimulatedCatchupDays = 90;
