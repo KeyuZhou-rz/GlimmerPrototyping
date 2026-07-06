@@ -87,23 +87,23 @@ public static class GlimmerVisualSetup
         }
         mat.shader = shader;
 
-        // 草原调色板：河岸沙 → 低地草 → 平原草 → 高地干草 → 山岩
-        // 明度接近、色相渐移——塞尔达式的和谐来自低对比同族色
-        mat.SetColor("_SandColor",     new Color(0.72f, 0.64f, 0.46f));
-        mat.SetColor("_LowlandColor",  new Color(0.40f, 0.50f, 0.27f));
-        mat.SetColor("_PlainsColor",   new Color(0.48f, 0.53f, 0.27f));
-        mat.SetColor("_HighlandColor", new Color(0.56f, 0.53f, 0.31f));
-        mat.SetColor("_PeakColor",     new Color(0.50f, 0.46f, 0.42f));
-        mat.SetColor("_CliffColor",    new Color(0.42f, 0.36f, 0.30f));
-        mat.SetFloat("_BandSoftness", 1.3f);
-        mat.SetFloat("_BandNoiseAmp", 0.8f);
-        mat.SetFloat("_CliffStart", 0.45f);
-        mat.SetFloat("_CliffSharp", 0.18f);
+        // 旱季草原调色板（demo2 对齐轮 · B1 落地）：苍白低饱和同族色，
+        // 色带彼此靠近，暖冷对比交给光照；岩石用暖灰棕（用户明确排除蓝灰岩）
+        mat.SetColor("_SandColor",     new Color(0.80f, 0.73f, 0.58f));  // 苍白骨沙
+        mat.SetColor("_LowlandColor",  new Color(0.66f, 0.63f, 0.44f));  // 干稻草
+        mat.SetColor("_PlainsColor",   new Color(0.72f, 0.68f, 0.50f));  // 苍白干草
+        mat.SetColor("_HighlandColor", new Color(0.70f, 0.63f, 0.47f));  // 日晒褪色
+        mat.SetColor("_PeakColor",     new Color(0.55f, 0.51f, 0.45f));  // 暖灰棕
+        mat.SetColor("_CliffColor",    new Color(0.38f, 0.34f, 0.29f));  // 暖深棕
+        mat.SetFloat("_BandSoftness", 1.4f);
+        mat.SetFloat("_BandNoiseAmp", 0.7f);
+        mat.SetFloat("_CliffStart", 0.42f);
+        mat.SetFloat("_CliffSharp", 0.16f);
         mat.SetFloat("_FacetVariation", 0.10f);
         mat.SetFloat("_ShadeBands", 3f);
         mat.SetFloat("_Posterize", 0.6f);
-        mat.SetFloat("_AmbientBoost", 0.9f);
-        mat.SetColor("_ShadowTint", new Color(0.30f, 0.38f, 0.46f));
+        mat.SetFloat("_AmbientBoost", 0.95f);
+        mat.SetColor("_ShadowTint", new Color(0.34f, 0.40f, 0.50f));
         EditorUtility.SetDirty(mat);
 
         var tg = Object.FindFirstObjectByType<TerrainGenerator>();
@@ -214,7 +214,7 @@ public static class GlimmerVisualSetup
 
         var ca = GetOrAdd<ColorAdjustments>();
         ca.active = true;
-        ca.saturation.Override(8f);
+        ca.saturation.Override(0f);       // 苍白草原调色板下 +8 会把稻草推回绿黄（E6 校准）
         ca.contrast.Override(8f);
         ca.postExposure.Override(0f);     // 提亮交给光照，不走后处理（曝光+泛光=糊）
 
