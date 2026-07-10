@@ -15,6 +15,7 @@ public class WorldManager : MonoBehaviour
     public EmotionInertiaSystem   EmotionInertia { get; private set; }
     public NaturalRhythmSystem    NaturalRhythm  { get; private set; }
     public WorldEnvironmentSystem Environment    { get; private set; }
+    public TranslationLayer        Translation   { get; private set; }
     public EntityRegistry         Registry       { get; private set; }
 
     // 测试层通过 _saveData 直接访问（同一程序集内 internal 可见）
@@ -29,6 +30,7 @@ public class WorldManager : MonoBehaviour
     private BehaviorNarrator       _narrator;
     private AnimalDriveTuning      _driveTuning;
     private EmergentMomentDetector _emergentDetector;
+    private VegetationSystem       _vegetationSystem;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -50,6 +52,7 @@ public class WorldManager : MonoBehaviour
         EmotionInertia = new EmotionInertiaSystem();
         NaturalRhythm  = new NaturalRhythmSystem();
         Environment    = new WorldEnvironmentSystem();
+        Translation    = new TranslationLayer();
 
         _saveData = SaveSystem.LoadWorldState() ?? WorldInitializer.CreateNewWorld();
         EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory);
@@ -64,6 +67,8 @@ public class WorldManager : MonoBehaviour
         _allRelations.RemoveAll(r => r != null && RetiredRelationIds.Contains(r.relationId));
         _driveTuning    = Resources.Load<AnimalDriveTuning>("Tuning/AnimalDriveTuning");
         _driveSystem    = new AnimalDriveSystem(Registry, _saveData, _driveTuning);
+        _vegetationSystem = new VegetationSystem(Registry, _saveData,
+                              _driveTuning != null ? _driveTuning.insectVegDecay : 0.003f);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
         var emergentTuning = Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning");
         _emergentDetector  = new EmergentMomentDetector(Registry, _saveData, emergentTuning);
@@ -86,7 +91,22 @@ public class WorldManager : MonoBehaviour
 
     void Start()
     {
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
+    }
+
+    // 空闲心跳：会话内无日记输入时也定期重算节律快照（dayProgress/lightIntensity 跟随真实墙钟），
+    // 只刷新 NaturalRhythm，不碰 worldEvents/animals/plants/emotionHistory，不是 SimulatePass。
+    [SerializeField, Tooltip("节律心跳间隔（真实秒）。dayProgress 一天走一圈，30 秒的变化量已低于肉眼阈值。")]
+    private float rhythmHeartbeatSeconds = 30f;
+    private float _rhythmHeartbeatTimer;
+
+    void Update()
+    {
+        _rhythmHeartbeatTimer += Time.deltaTime;
+        if (_rhythmHeartbeatTimer < rhythmHeartbeatSeconds) return;
+        _rhythmHeartbeatTimer = 0f;
+        NaturalRhythm.Tick(_saveData.gameTime);
     }
 
     // 自主软上限：catch-up 总是按完整墙钟天数推进 gameTime 日历，
@@ -104,8 +124,11 @@ public class WorldManager : MonoBehaviour
     // 在当前日历/情绪下跑一次完整模拟（不推进日历日）
     private void SimulatePass()
     {
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        // Step 0：翻译层产出无状态信号 1/2/3/7（在天气消费之前）
+        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
         PropagateEnvironmentToLocations();
+        _vegetationSystem.Tick(_saveData.gameTime);   // loc.vegetationDensity 单一写者；驱动层只读
 
         _saveData.currentEEnv    = EmotionInertia.CurrentEEnv;
         _saveData.emotionHistory = EmotionInertia.History;
@@ -203,21 +226,26 @@ public class WorldManager : MonoBehaviour
         EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory);
         Registry.Initialize(_saveData);
         NaturalRhythm.Tick(_saveData.gameTime);
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
         _ruleEngine = new NarrativeRuleEngine(Registry, _saveData);
         _ruleEngine.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem = new EntityRelationSystem(Registry, _saveData);
         _relationSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _driveSystem    = new AnimalDriveSystem(Registry, _saveData, _driveTuning);
         _driveSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
+        _vegetationSystem = new VegetationSystem(Registry, _saveData,
+                              _driveTuning != null ? _driveTuning.insectVegDecay : 0.003f);
         _narrator       = new BehaviorNarrator(Registry, _saveData);
         _narrator.SetEnvironment(Environment.State, NaturalRhythm.State);
         _emergentDetector = new EmergentMomentDetector(Registry, _saveData,
             Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning"));
     }
 
-    // 将全局环境参数（Rainfall）传播到各地点实体的 waterLevel
+    // 将全局环境参数（Rainfall）传播到各地点实体的 waterLevel / soilMoisture（单写者）
     // 放在规则评估之前调用，让规则看到最新的地点状态
+    // 信号 1 Wetness 已由翻译层落地（State.Rainfall = signals.Wetness）；本传播函数仍经 State.Rainfall
+    // 消费，改读 signals.Wetness 的消费者迁移延后。soilMoisture 读者（植被）待翻译层复合式决定。
     private void PropagateEnvironmentToLocations()
     {
         float rain = Environment.State.Rainfall;
@@ -236,6 +264,19 @@ public class WorldManager : MonoBehaviour
             // 固定每日排水 0.03，降雨按各地积水率蓄水
             float delta = rain * accRate - 0.03f;
             loc.waterLevel = Mathf.Clamp01(loc.waterLevel + delta);
+
+            // 土壤湿度：比水位更慢的蓄水库；按区渗透率不同（沙石地渗透快、保水差）
+            float soakRate = loc.locationId switch
+            {
+                "lowland"       => 0.15f,
+                "riverbank"     => 0.12f,
+                "center"        => 0.10f,
+                "highland_east" => 0.07f,
+                "stone_area"    => 0.04f,
+                _               => 0.10f
+            };
+            // 固定每日蒸发 0.02，降雨按各地渗透率蓄水（沙石地需大雨才能保湿）
+            loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * soakRate - 0.02f);
         }
     }
 

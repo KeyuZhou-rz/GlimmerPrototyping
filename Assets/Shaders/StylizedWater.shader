@@ -41,6 +41,7 @@ Shader "Custom/StylizedWater"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             // 提供 _CameraDepthTexture / SampleSceneDepth：从中重建“水面到河床”的真实水深。
@@ -56,6 +57,7 @@ Shader "Custom/StylizedWater"
             {
                 float4 positionHCS : SV_POSITION;
                 float3 positionWS  : TEXCOORD0;
+                float  fogFactor   : TEXCOORD1;
             };
 
             CBUFFER_START(UnityPerMaterial)
@@ -87,6 +89,7 @@ Shader "Custom/StylizedWater"
 
                 OUT.positionWS  = TransformObjectToWorld(posOS);
                 OUT.positionHCS = TransformWorldToHClip(OUT.positionWS);
+                OUT.fogFactor   = ComputeFogFactor(OUT.positionHCS.z);
                 return OUT;
             }
 
@@ -113,6 +116,13 @@ Shader "Custom/StylizedWater"
                 float  hi = smoothstep(_HiThreshold, _HiThreshold + _HiSoftness, NdotL);
 
                 col = lerp(col, _HighlightColor.rgb, hi);
+
+                // 水随场景光照明暗：夜里沉入夜色，不再自发光
+                half3 sceneLight = SampleSH(float3(0, 1, 0)) + mainLight.color;
+                col *= saturate(sceneLight) * 0.85 + 0.06;
+
+                // 水面与陆地同雾衰减，保持远景一体
+                col = MixFog(col, IN.fogFactor);
 
                 return half4(col, alpha);
             }

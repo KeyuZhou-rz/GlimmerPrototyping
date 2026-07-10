@@ -22,7 +22,15 @@
       "Bash(grep \".prefab$\")",
       "Bash(grep -nA4 \"\\\\\"m_Color\\\\\":\" \"Assets/Shaders/Terrain 1.shadergraph\")",
       "Bash(grep -nA30 \"SmoothstepNode\" \"Assets/Shaders/Terrain.shadergraph\")",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(python -c \"import uuid;print\\(uuid.uuid4\\(\\).hex\\);print\\(uuid.uuid4\\(\\).hex\\)\")",
+      "Bash(git commit -m 'feat\\(world\\): Phase 0 — 统一时钟 + 自主心跳 *)",
+      "Bash(git commit -m 'feat\\(world\\): Phase 1 — 涌现式相遇 QuietConvergence *)",
+      "Bash(git push *)",
+      "Bash(git branch *)",
+      "Bash(dir C:UsersZ2005Glimmer_Prototyping *)",
+      "Bash(git *)",
+      "Skill(update-config)"
     ]
   }
 }

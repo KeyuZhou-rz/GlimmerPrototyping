@@ -12,6 +12,7 @@ namespace GlimmerDiary.Core
         public float YearProgress { get; private set; }    // 0.0 ~ 1.0
         public float WeekProgress { get; private set; }    // 0.0 ~ 1.0 (周一=0, 周日≈1)
         public float LightIntensity { get; private set; }  // 0=夜晚, 1=正午
+        public float DayProgress { get; private set; }     // 0.0 ~ 1.0，一天中的真实时刻（0=午夜）
         public NaturalRhythmState CurrentState { get; private set; }
         public NaturalRhythmState State => CurrentState;   // WorldManager 使用的简写
         public RhythmSnapshot LastSnapshot { get; private set; }
@@ -39,6 +40,7 @@ namespace GlimmerDiary.Core
             // 光照强度：正午=1, 6am/6pm=0, 夜间=0（正弦曲线）
             float hour = now.Hour + now.Minute / 60f;
             LightIntensity = Mathf.Clamp01(Mathf.Sin((hour - 6f) / 12f * Mathf.PI));
+            DayProgress = hour / 24f;   // 0=午夜，单一写者：仅此处赋值
 
             // 周一=0, 周日=6 → 归一化到 0~1（保留真实生活周节律）
             int dow = ((int)now.DayOfWeek + 6) % 7;
@@ -49,7 +51,8 @@ namespace GlimmerDiary.Core
                 season = CurrentSeason,
                 yearProgress = YearProgress,
                 weekProgress = WeekProgress,
-                lightIntensity = LightIntensity
+                lightIntensity = LightIntensity,
+                dayProgress = DayProgress
             };
 
             LastSnapshot = new RhythmSnapshot

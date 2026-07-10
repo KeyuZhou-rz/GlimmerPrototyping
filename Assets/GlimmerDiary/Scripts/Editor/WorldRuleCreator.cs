@@ -238,7 +238,7 @@ namespace GlimmerDiary.Editor
             rule.textTemplates = new List<string>
             {
                 "{date} {sky} 河岸边今天多了几个影子。候鸟来了。",
-                "{date} {sky} 芦苇丛里有了新的声音。它们是昨晚到的，还是前天，说不清楚。"
+                "{date} {sky} 河岸的草叶间有了新的声音。它们是昨晚到的，还是前天，说不清楚。"
             };
 
             rule.variables = new List<TemplateVariable>();

@@ -1,6 +1,8 @@
 using UnityEngine;
 using System.Collections.Generic;
 using GlimmerDiary.Data;
+using Mono.Cecil;
+using Unity.VisualScripting;
 
 namespace GlimmerDiary.Ecosystem_nonL
 {
@@ -92,10 +94,32 @@ namespace GlimmerDiary.Ecosystem_nonL
 
         private List<TreeData> _lastResult;
 
+        // ---Instantiate---
+        [Header("Instantiation")]
+        private readonly List<GameObject> _spawnedTrees = new();
+        public Transform treeParent;
+        public bool populateOnStart = true;
+
+
         private void Awake()
         {
             if (terrain == null) terrain = FindFirstObjectByType<TerrainGenerator>();
             if (water == null && terrain != null) water = terrain.GetComponentInChildren<WaterGenerator>();
+        }
+
+        // instantiate
+        private void SpawnFromData(List<TreeData> trees)
+        {
+            foreach(var t in trees)
+            {
+                if (t.speciesIndex < 0 || t.speciesIndex >= _allSpecies.Count) continue;
+                var prefab = _allSpecies[t.speciesIndex];
+                if (prefab == null) continue;
+
+                var go = Instantiate(prefab, t.position, Quaternion.identity, treeParent != null ? treeParent : transform);
+
+                _spawnedTrees.Add(go);
+            }
         }
 
         // =====================================================================
@@ -297,6 +321,26 @@ namespace GlimmerDiary.Ecosystem_nonL
             Debug.Log($"[EcosystemManager] Populated {result.Count} trees from {attempts} attempts " +
                       $"(seed {seed}). Species pool size {_allSpecies.Count}.");
         }
+
+        [ContextMenu("Populate with real instantiating")]
+        private void PopulatewithTree()
+        {
+            var result = Populate();
+            SpawnFromData(result);
+
+            Debug.Log($"[EcosystemManager] Populated {result.Count} trees from {attempts} attempts " +
+                      $"(seed {seed}). Species pool size {_allSpecies.Count}.");
+        }
+        [ContextMenu("Clear")]
+        private void ClearTrees()
+        {
+            foreach(var t in _spawnedTrees)
+            {
+                if (t != null) DestroyImmediate(t);
+            }
+            _spawnedTrees.Clear();
+        }
+        
 
         private void OnDrawGizmosSelected()
         {
