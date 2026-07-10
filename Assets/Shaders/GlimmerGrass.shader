@@ -73,6 +73,12 @@ Shader "Glimmer/Grass"
                 float  _WindStrength, _WindFrequency;
             CBUFFER_END
 
+            // 踩踏点（全局，WorldTraceBinder 每帧 SetGlobalVectorArray 写入；
+            // 数组长度 16 与 binder 的 TRAMPLE_MAX 耦合——两侧同改）。
+            // xy = 世界 XZ 中心, z = 半径, w = 强度 0..1。编辑态默认 0 → 无压痕。
+            float  _TrampleCount;
+            float4 _TramplePoints[16];
+
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
@@ -89,6 +95,23 @@ Shader "Glimmer/Grass"
 
                 OUT.positionWS = TransformObjectToWorld(posOS);
                 OUT.positionWS.xz += windDir * sway * w;
+
+                // 踩踏：近踩踏点的草外倒 + 压扁，权重沿用 w=uv.y²（根部锚定）
+                int trampleN = (int)_TrampleCount;
+                [loop] for (int t = 0; t < trampleN; t++)
+                {
+                    float2 c   = _TramplePoints[t].xy;
+                    float  rad = max(_TramplePoints[t].z, 1e-3);
+                    float  str = _TramplePoints[t].w;
+                    float  d   = distance(pivotWS.xz, c);
+                    float  fall = saturate(1.0 - d / rad) * str;
+                    if (fall > 0.0)
+                    {
+                        float2 dir = d > 1e-3 ? (pivotWS.xz - c) / d : float2(1, 0);
+                        OUT.positionWS.xz += dir * fall * 0.35 * w;
+                        OUT.positionWS.y  -= (OUT.positionWS.y - pivotWS.y) * fall * 0.6 * w;
+                    }
+                }
 
                 OUT.positionHCS = TransformWorldToHClip(OUT.positionWS);
                 OUT.normalWS    = TransformObjectToWorldNormal(IN.normalOS);

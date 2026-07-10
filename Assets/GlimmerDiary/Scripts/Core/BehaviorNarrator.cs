@@ -149,6 +149,9 @@ namespace GlimmerDiary.Core
     
     // 带季节细节
     "{date} {sky} 田鼠把新洞口开在了向阳的坡上，朝东南。选址经过了一些考虑，看起来。",
+
+    // 借场景里真实存在的巨石定位（视觉可兑现）
+    "{date} {sky} 新翻的土堆在两块石头中间，颜色比周围深。是今天的。",
 };
 
 
@@ -178,22 +181,25 @@ namespace GlimmerDiary.Core
     
     // 用「停住」来写，不写原因
     "{date} {sky} 狐狸在东侧低地边缘停了很久。风从中央方向来。它最后往石头区走了。",
+
+    // 记号与倒伏的草：痕迹本身在场景里可见
+    "{date} {sky} 石头边上又多了几个记号。狐狸走过的地方，草是倒的。",
 };
 
         // 候鸟提前离去：细节暗示"狐狸常来河岸"这一跨实体成因
         private static readonly string[] BirdEarlyDepartFox =
 {
-    // 芦苇丛的「空」是视觉上最强的意象
-    "{date} {sky} 芦苇丛空了。它们走得比往年早一些，没有留什么。",
-    
+    // 「空」是视觉上最强的意象
+    "{date} {sky} 河岸边空了。它们走得比往年早一些，没有留什么。",
+
     // 时间错位：「该走的时候还没到」
     "{date} {sky} 候鸟动身了，比该动身的时候早了将近半个月。河岸边那个影子最近来得很勤。",
-    
+
     // 小报语气，「未作说明」
-    "{date} {sky} 候鸟就提前离境一事，未作任何说明。芦苇丛里留了几根羽毛。",
-    
+    "{date} {sky} 候鸟就提前离境一事，未作任何说明。水边的草上留了几根羽毛。",
+
     // 用「羽毛」这个遗留物来写离去
-    "{date} {sky} 河岸的芦苇顶上有几根羽毛，是昨天还是前天留下的。候鸟已经不在了。",
+    "{date} {sky} 河岸的草叶上挂着几根羽毛，是昨天还是前天留下的。候鸟已经不在了。",
     
     // 间接写狐狸的影响，不点明
     "{date} {sky} 候鸟走了。这阵子河岸不太安静，可能和这个有关，也可能没有。",
@@ -239,7 +245,7 @@ namespace GlimmerDiary.Core
         {
             "{date} {sky} 河岸边的影子少了几个。候鸟动身了。",
 
-            "{date} {sky} 芦苇丛里安静下来。它们走了，比往年早。",
+            "{date} {sky} 河岸的草丛里安静下来。它们走了，比往年早。",
         };
        private static readonly string[] TreeFlowered =
 {
@@ -279,6 +285,9 @@ namespace GlimmerDiary.Core
 
     // 留一点不确定
     "{date} {sky} 不知是太累还是夜太静，那两个本不该在一起的，今晚靠着同一处歇下了。",
+
+    // 压痕：这一夜在草地上留下的实物证据
+    "{date} {sky} 草被压出两片挨着的浅坑，天亮以后还没弹回来。",
 };
 
         // 涌现时刻 · 中性对（邻里）：更淡的语气
@@ -289,6 +298,8 @@ namespace GlimmerDiary.Core
     "{date} {sky} 同一片地方今夜歇着不止一个身影。夜很安静，谁也没打扰谁。",
 
     "{date} {sky} 它们凑在一处过了一夜。说不上为什么，就是都在那儿。",
+
+    "{date} {sky} 那片草塌下去一小块，形状像是有谁靠着睡了一夜。",
 };
 
         // ── 工具 ───────────────────────────────────────────────────
@@ -313,6 +324,9 @@ namespace GlimmerDiary.Core
                 .Replace("{sky}",  PickSky(time));
         }
 
+        // 文本天气与画面天气同源：_env 即 WorldAtmosphereBinder 渲染所读的
+        // WorldEnvironmentState（Rainfall→雨粒子、FogDensity→dimness），措辞与画面一致；
+        // 月相项按 day 推导，是纯文本风味，无渲染对应。
         private string PickSky(GameDateTime time)
         {
             float moon = (time.day - 1) / 29f;
