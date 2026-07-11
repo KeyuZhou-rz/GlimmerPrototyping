@@ -18,6 +18,7 @@ public static class GlimmerVisualSetup
     const string MatDir = "Assets/Materials/Glimmer";
     const string TerrainMatPath = MatDir + "/Terrain_Glimmer.mat";
     const string RainMatPath = MatDir + "/RainStreak.mat";
+    const string SkyMatPath = MatDir + "/SkyGradient.mat";
     const string ProfilePath = "Assets/Settings/GlimmerPostFX.asset";
 
     static readonly string[] TreeMatPaths =
@@ -37,6 +38,7 @@ public static class GlimmerVisualSetup
         SetupTreeMaterials();
         SetupTerrain();
         SetupRain();
+        SetupSky();
         SetupPostFX();
         SetupWeatherDefaults();
         DisableLSystemVegetation();
@@ -179,6 +181,62 @@ public static class GlimmerVisualSetup
         Debug.Log("[GlimmerVisualSetup] Rain particle → RainStreak stretch billboard");
     }
 
+    // ---- 3b. 天空（桑人岩画渐变，Docs/SkySanRockArt.md） -------------------
+    static void SetupSky()
+    {
+        var shader = Shader.Find("Glimmer/SkyGradient");
+        if (shader == null) { Debug.LogError("Glimmer/SkyGradient shader not found"); return; }
+
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
+        if (mat == null)
+        {
+            mat = new Material(shader);
+            AssetDatabase.CreateAsset(mat, SkyMatPath);
+        }
+        mat.shader = shader;
+
+        // 静态基线 = 晴天正午（运行时属性全部由 EmotionWeatherController 覆写；
+        // 这里写一份合理编辑态值，保证不进 Play 也能看到岩画天空而非品红/黑空）
+        mat.SetColor("_SkyTop", new Color(0.34f, 0.38f, 0.44f));
+        mat.SetColor("_SkyHorizon", new Color(0.66f, 0.62f, 0.55f));   // ≈ sunnyFogColor，天地一体
+        mat.SetColor("_GroundCol", new Color(0.66f, 0.62f, 0.55f));            // 雾色派生（skyGroundDim=1）
+        mat.SetFloat("_HorizonBlur", 0.35f);
+        mat.SetFloat("_Exposure", 1.0f);
+        mat.SetColor("_SunTint", new Color(1.0f, 0.72f, 0.42f));
+        mat.SetFloat("_SunSize", 5f);
+        mat.SetFloat("_SunGlow", 0.9f);
+        mat.SetFloat("_SunDiscStrength", 1f);
+        mat.SetFloat("_SunEdgeRagged", 0.45f);
+        mat.SetFloat("_HaloPosterize", 0.6f);
+        mat.SetVector("_SunDir", new Vector4(-0.35f, 0.55f, -0.76f, 0f)); // 编辑态默认≈Golden Hour 方位
+        // 岩面风化：白天克制档（约 2-3% 亮度扰动，主要功能是消色带）
+        mat.SetFloat("_GrainAmount", 0.028f);
+        mat.SetFloat("_GrainScale", 90f);
+        mat.SetFloat("_MottleAmount", 0.06f);
+        mat.SetFloat("_MottleScale", 2.3f);
+        // 撒灰夜空：编辑态默认 0（白天），Playtest 夜景由控制器渐显
+        mat.SetFloat("_StarBlend", 0f);
+        mat.SetColor("_StarColorA", new Color(0.92f, 0.90f, 0.84f));
+        mat.SetColor("_StarColorB", new Color(0.85f, 0.42f, 0.28f));
+        mat.SetFloat("_StarDensity", 14f);
+        mat.SetFloat("_StarSize", 0.10f);
+        mat.SetColor("_AshColor", new Color(0.72f, 0.70f, 0.66f));
+        mat.SetFloat("_AshStrength", 0.35f);
+        mat.SetFloat("_AshWidth", 0.22f);
+        mat.SetFloat("_SkyRotSpeed", 0.06f);
+        EditorUtility.SetDirty(mat);
+
+        // 赋给场景（sky.mat 留盘备份不动）+ 接线控制器
+        RenderSettings.skybox = mat;
+        var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
+        if (wc != null && wc.skyboxMaterial != mat)
+        {
+            wc.skyboxMaterial = mat;
+            EditorUtility.SetDirty(wc);
+        }
+        Debug.Log("[GlimmerVisualSetup] Skybox → Glimmer/SkyGradient (San rock-art sky)");
+    }
+
     // ---- 4. 后处理 ------------------------------------------------------
     static void SetupPostFX()
     {
@@ -248,12 +306,12 @@ public static class GlimmerVisualSetup
         var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
         if (wc == null) { Debug.LogWarning("[GlimmerVisualSetup] No EmotionWeatherController"); return; }
 
-        wc.stormFogColor = new Color(0.16f, 0.19f, 0.24f);
-        wc.sunnyFogColor = new Color(0.58f, 0.66f, 0.72f);
-        wc.fogLinearSunnyStart = 60f;
-        wc.fogLinearSunnyEnd = 380f;
-        wc.fogLinearStormStart = 18f;
-        wc.fogLinearStormEnd = 130f;
+        wc.stormFogColor = new Color(0.20f, 0.22f, 0.26f);
+        wc.sunnyFogColor = new Color(0.66f, 0.62f, 0.55f);   // 暖灰，=_SkyHorizon 基线
+        wc.fogLinearSunnyStart = 45f;
+        wc.fogLinearSunnyEnd = 210f;     // ≈ 地形对角线，远山可溶进天空
+        wc.fogLinearStormStart = 16f;
+        wc.fogLinearStormEnd = 95f;
         wc.dimnessFogWeight = 0.45f;
 
         wc.maxRainEmission = 2200f;
@@ -310,9 +368,10 @@ public static class GlimmerVisualSetup
         RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = new Color(0.58f, 0.66f, 0.72f);
-        RenderSettings.fogStartDistance = 60f;
-        RenderSettings.fogEndDistance = 380f;
+        RenderSettings.fogColor = new Color(0.66f, 0.62f, 0.55f);
+        RenderSettings.fogStartDistance = 45f;
+        RenderSettings.fogEndDistance = 210f;
+        PreviewSky(sun, new Color(0.66f, 0.62f, 0.55f), 0f);
         SceneView.RepaintAll();
         Debug.Log("[GlimmerVisualSetup] Golden hour preview lighting set");
     }
@@ -338,10 +397,32 @@ public static class GlimmerVisualSetup
         RenderSettings.ambientGroundColor = new Color(0.12f, 0.13f, 0.15f);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = new Color(0.16f, 0.19f, 0.24f);
-        RenderSettings.fogStartDistance = 18f;
-        RenderSettings.fogEndDistance = 130f;
+        RenderSettings.fogColor = new Color(0.20f, 0.22f, 0.26f);
+        RenderSettings.fogStartDistance = 16f;
+        RenderSettings.fogEndDistance = 95f;
+        PreviewSky(sun, new Color(0.20f, 0.22f, 0.26f), 1f);
         SceneView.RepaintAll();
         Debug.Log("[GlimmerVisualSetup] Storm preview lighting set");
+    }
+
+    /// <summary>
+    /// 编辑态天空预览：把预览光照对应的天空属性写进 SkyGradient.mat。
+    /// 与 EmotionWeatherController.UpdateSkybox 同一套映射（badT 0=晴 1=暴雨），
+    /// 保证编辑态预览 = 运行时基线；进 Play 后控制器接管全部属性。
+    /// </summary>
+    static void PreviewSky(Light sun, Color fogColor, float badT)
+    {
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
+        if (mat == null) return;
+
+        Color top = Color.Lerp(new Color(0.34f, 0.38f, 0.44f), new Color(0.22f, 0.24f, 0.28f), badT);
+        mat.SetColor("_SkyTop", top);
+        mat.SetColor("_SkyHorizon", fogColor);
+        mat.SetColor("_GroundCol", fogColor);
+        if (sun != null) mat.SetVector("_SunDir", -sun.transform.forward);
+        mat.SetFloat("_SunGlow", Mathf.Lerp(0.9f, 0.15f, badT));
+        mat.SetFloat("_SunDiscStrength", 1f - badT * 0.9f);
+        mat.SetFloat("_StarBlend", 0f);
+        if (RenderSettings.skybox != mat) RenderSettings.skybox = mat;
     }
 }

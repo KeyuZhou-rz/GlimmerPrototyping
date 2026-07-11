@@ -52,18 +52,18 @@ public class EmotionWeatherController : MonoBehaviour
     public int flickerAmount = 3;
 
     [Header("天空与能见度 (Fog)")]
-    public Color stormFogColor = new Color(0.16f, 0.19f, 0.24f);
-    public Color sunnyFogColor = new Color(0.58f, 0.66f, 0.72f);
+    public Color stormFogColor = new Color(0.20f, 0.22f, 0.26f);
+    public Color sunnyFogColor = new Color(0.66f, 0.62f, 0.55f);
     [Tooltip("夜晚雾亮度跟随的平行光（留空自动取 RenderSettings.sun）")]
     public Light sunForFogBrightness;
     [Range(0f, 1f), Tooltip("光照全灭时雾保留的亮度比例——夜里雾应沉入夜色而非发白")]
     public float nightFogFloor = 0.18f;
 
     [Header("线性雾可见距离")]
-    public float fogLinearSunnyStart = 60f;
-    public float fogLinearSunnyEnd = 380f;
-    public float fogLinearStormStart = 18f;
-    public float fogLinearStormEnd = 130f;
+    public float fogLinearSunnyStart = 45f;
+    public float fogLinearSunnyEnd = 210f;
+    public float fogLinearStormStart = 16f;
+    public float fogLinearStormEnd = 95f;
 
     [Header("对外输出（植物生长）")]
     [Range(0f, 1f)] public float currentWaterSaturation;
@@ -79,16 +79,31 @@ public class EmotionWeatherController : MonoBehaviour
     private float lightingTimer = 0f;
     private bool isFlashing = false;
 
-    [Header("天空盒")]
+    [Header("天空盒（Glimmer/SkyGradient — 岩画天空，见 Docs/SkySanRockArt.md）")]
+    [Tooltip("SkyGradient.mat。控制器是该材质运行时属性的唯一写者（单写者纪律）")]
     public Material skyboxMaterial;
 
-    // 晴天的颜色
-    public Color sunnySkyColor = new Color(0.5f,0.5f,0.5f,1.0f);
-    public Color stormSkyColor = new Color(0.2f, 0.2f, 0.2f, 1f);
+    [Header("天空 · 晴天三段色")]
+    public Color sunnySkyTop = new Color(0.34f, 0.38f, 0.44f);
+    [Range(0f, 3f)] public float sunnySunGlow = 0.9f;
 
-    //厚度
-    public float sunnyAtmosphere = 1.0f;
-    public float stormAtmosphere = 3.0f;
+    [Header("天空 · 暴雨三段色")]
+    public Color stormSkyTop = new Color(0.22f, 0.24f, 0.28f);
+    [Range(0f, 3f)] public float stormSunGlow = 0.15f;
+
+    [Header("天空 · 地平线以下")]
+    [Tooltip("地平线以下天空 = 雾色 × 该系数。1=纯雾色（无限远地面在线性雾里就是雾色）；调低会在俯视时与全雾化地形出现分界")]
+    [Range(0.5f, 1f)] public float skyGroundDim = 1f;
+
+    [Header("天空 · 夜色（乘在昼色上压暗，非替换）")]
+    [Tooltip("夜里天顶保留的亮度比例（岩壁在月下仍有形，不走纯黑）")]
+    [Range(0f, 1f)] public float nightSkyFloor = 0.16f;
+    [Tooltip("坏天气把星空遮掉的比例：暴雨云层下不该满天星")]
+    [Range(0f, 1f)] public float stormStarHide = 0.85f;
+
+    // UpdateRain 每帧算好的雾色/昼夜因子，UpdateSkybox 复用（同一帧内先 Rain 后 Skybox）
+    private Color _fogColThisFrame;
+    private float _dayLightThisFrame = 1f;
 
 
     void Start()
@@ -248,13 +263,18 @@ public class EmotionWeatherController : MonoBehaviour
         // 雾色跟随昼夜：夜里太阳沉下后雾同步压暗，否则黑夜地平线上浮起灰白带
         Color fogCol = Color.Lerp(sunnyFogColor, stormFogColor, fogT);
         var sun = sunForFogBrightness != null ? sunForFogBrightness : RenderSettings.sun;
+        float dayLight = 1f;
         if (sun != null)
         {
             float sunUp = Mathf.Clamp01(Vector3.Dot(-sun.transform.forward, Vector3.up) * 2f);
-            float dayLight = Mathf.Clamp01(sun.intensity) * sunUp;
+            dayLight = Mathf.Clamp01(sun.intensity) * sunUp;
             fogCol *= Mathf.Lerp(nightFogFloor, 1f, dayLight);
         }
         RenderSettings.fogColor = fogCol;
+
+        // 供同帧 UpdateSkybox 复用：地平线色=雾色（远山溶解）、昼夜因子（星空/压暗）
+        _fogColThisFrame = fogCol;
+        _dayLightThisFrame = dayLight;
 
         currentWaterSaturation = smoothedRainIntensity;
         currentSunlightIntensity = smoothedSunIntensity;
@@ -345,24 +365,32 @@ public class EmotionWeatherController : MonoBehaviour
 
     private void UpdateSkybox()
     {
-        if (skyboxMaterial != null)
-        {
-            // 这里的 smoothedRainIntensity (0~1) 代表了坏天气的程度
-            // 0 = 晴天, 1 = 暴雨
+        if (skyboxMaterial == null) return;
 
-            // 1. 混合颜色：从 晴天色 变到 阴天色
-            Color currentSkyColor = Color.Lerp(sunnySkyColor, stormSkyColor, smoothedRainIntensity);
-            skyboxMaterial.SetColor("_SkyTint", currentSkyColor);
-            skyboxMaterial.SetColor("_GroundColor", currentSkyColor);
+        // 坏天气程度与雾同源：雨强 ⊕ 晦明（天空和雾必须一起变脏，否则天地脱节）
+        float badT = Mathf.Clamp01(smoothedRainIntensity + dimness * dimnessFogWeight);
 
-            // 2. 混合大气厚度：从 通透 变到 浑浊
-            float currentAtmosphere = Mathf.Lerp(sunnyAtmosphere, stormAtmosphere, smoothedRainIntensity);
-            skyboxMaterial.SetFloat("_AtmosphereThickness", currentAtmosphere);
+        // 夜晚压暗系数：昼色 → 乘性沉入夜色（保底 nightSkyFloor，岩壁月下仍有形）
+        float nightMul = Mathf.Lerp(nightSkyFloor, 1f, _dayLightThisFrame);
 
-            // 3. (可选) 控制曝光度：阴天暗一点
-            float currentExposure = Mathf.Lerp(1.3f, 0.8f, smoothedRainIntensity);
-            skyboxMaterial.SetFloat("_Exposure", currentExposure);
-        }
+        Color top = Color.Lerp(sunnySkyTop, stormSkyTop, badT) * nightMul;
+
+        skyboxMaterial.SetColor("_SkyTop", top);
+        // 关键：地平线 = 本帧雾色（UpdateRain 已含昼夜压暗）→ 远山溶进天空；
+        // 地平线以下从雾色派生（俯视视角下远地形对着这块，配色脱钩会浮成色板）
+        skyboxMaterial.SetColor("_SkyHorizon", _fogColThisFrame);
+        skyboxMaterial.SetColor("_GroundCol", _fogColThisFrame * skyGroundDim);
+
+        // 颜料日盘跟随真实太阳：方向每帧写入；坏天气晕环收敛、日盘隐入云层
+        var sun = sunForFogBrightness != null ? sunForFogBrightness : RenderSettings.sun;
+        if (sun != null)
+            skyboxMaterial.SetVector("_SunDir", -sun.transform.forward);
+        skyboxMaterial.SetFloat("_SunGlow", Mathf.Lerp(sunnySunGlow, stormSunGlow, badT));
+        skyboxMaterial.SetFloat("_SunDiscStrength", (1f - badT * 0.9f) * Mathf.Clamp01(_dayLightThisFrame * 4f));
+
+        // 撒灰星穹：夜里渐显，暴雨云层遮蔽大半
+        float starBlend = (1f - _dayLightThisFrame) * (1f - badT * stormStarHide);
+        skyboxMaterial.SetFloat("_StarBlend", starBlend);
     }
     private void ThunderPlay()
     {
