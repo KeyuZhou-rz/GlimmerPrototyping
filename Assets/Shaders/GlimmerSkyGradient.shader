@@ -187,7 +187,15 @@ Shader "Glimmer/SkyGradient"
                 float3 h = Hash33(cell);
                 float3 sp = 0.20 + 0.60 * h;
                 float r = size * (0.55 + 0.90 * h.x);
-                float spot = 1.0 - smoothstep(r * 0.4, r, length(f - sp));
+                float dist = length(f - sp);
+                // 亚像素反闪烁：点径钳到 ≥1 像素足迹，能量守恒压亮度。
+                // 否则 1px 星点随天穹旋转跨像素边界时逐帧灭亮 —— 运行时"灯在闪"。
+                // 足迹必须用 fwidth(d)（方向连续）折算：fwidth(dist) 在格界跳变，
+                // 导数尖峰会画出淡色格框
+                float px = density * length(fwidth(d));
+                float rC = max(r, px * 1.2);
+                float spot = 1.0 - smoothstep(rC * 0.4, rC, dist);
+                spot *= saturate((r * r) / (rC * rC));
                 float present = step(fillThresh, Hash13(cell + 19.19));
                 float bright = 0.30 + 0.70 * h.z;
                 return float2(spot * present * bright, h.y);

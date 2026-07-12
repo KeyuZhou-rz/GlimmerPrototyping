@@ -9,6 +9,8 @@ Shader "Glimmer/RainStreak"
         _CoreBoost   ("Core Brightness", Range(0,2)) = 0.35
         _EdgeSoft    ("Horizontal Softness", Range(0.05, 0.5)) = 0.22
         _TipFade     ("Vertical Tip Fade", Range(0.05, 0.5)) = 0.30
+        _FarFadeStart ("Far Fade Start", Float) = 40
+        _FarFadeEnd   ("Far Fade End",   Float) = 75
     }
 
     SubShader
@@ -30,6 +32,7 @@ Shader "Glimmer/RainStreak"
             #pragma multi_compile_fog
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             struct Attributes
             {
@@ -51,13 +54,20 @@ Shader "Glimmer/RainStreak"
                 half  _CoreBoost;
                 half  _EdgeSoft;
                 half  _TipFade;
+                float _FarFadeStart, _FarFadeEnd;
             CBUFFER_END
 
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
-                OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
+                float3 posWS    = TransformObjectToWorld(IN.positionOS.xyz);
+                OUT.positionHCS = TransformWorldToHClip(posWS);
                 OUT.color       = IN.color;
+                // 远距硬渐隐：拉伸公告板在远处塌成亚像素竖线，与天空色带
+                // 交叠时逐帧闪断（时隐时现="天上的灯在闪"）。线性雾衰减
+                // 不够快，这里在 alpha 上直接掐掉远端
+                float distEye = distance(posWS, _WorldSpaceCameraPos);
+                OUT.color.a *= 1.0 - smoothstep(_FarFadeStart, _FarFadeEnd, distEye);
                 OUT.uv          = IN.uv;
                 OUT.fogFactor   = ComputeFogFactor(OUT.positionHCS.z);
                 return OUT;
@@ -76,6 +86,12 @@ Shader "Glimmer/RainStreak"
 
                 half a = horiz * tip * _StreakColor.a * IN.color.a;
                 half3 col = _StreakColor.rgb * (1.0 + core * _CoreBoost) * IN.color.rgb;
+
+                // 随场景光沉暗：加色混合的雨丝夜里必须跟着环境一起熄灭，
+                // 否则日落后每根雨丝都是黑天上的亮线 —— 远处积成持续闪烁的光斑
+                Light mainLight = GetMainLight();
+                half sceneLum = saturate(dot(mainLight.color, half3(0.3, 0.6, 0.1)) + 0.15);
+                col *= sceneLum;
 
                 // 雾：远处雨丝随场景一起衰减，避免"贴脸白线"
                 col = MixFogColor(col, half3(0, 0, 0), IN.fogFactor);
