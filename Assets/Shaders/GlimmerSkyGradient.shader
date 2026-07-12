@@ -3,8 +3,10 @@ Shader "Glimmer/SkyGradient"
     // 桑人岩画天空（基调决议见 Docs/SkySanRockArt.md）：
     //   底色 = 三段垂直渐变，地平线色由控制器逐帧设为当前雾色 → 远山溶解；
     //   岩面 = 低频斑驳（矿物沁色）+ 细颗粒（岩壁齿感），白天克制，只负责消色带；
-    //   太阳 = 颜料日盘（毛边圆 + 分段晕环，像赭石一圈圈涂上去，不做摄影级辉光）；
-    //   夜空 = 撒灰银河（ǀXam 神话：少女掷灰成河）+ 骨白/赭红双色星点，
+    //   太阳 = 日轮图腾（实心颜料盘 + 盘内凹槽环 + 骨白/赭红双刻环 + 交替短射线，
+    //          每类刻线配凿痕暗边 —— 凿进岩壁再填颜料，废摄影级连续光晕）；
+    //   夜空 = 点描撒灰银河（ǀXam 神话：少女掷灰成河 —— 骨白灰烬点 + 赭红余烬
+    //          + 炭黑暗裂谷纵贯）+ 骨白/赭红双色星点，
     //          整个星穹绕斜轴缓慢旋转 —— 世界自己的生命，与输入无关。
     // 零贴图、单 pass、无光照 include；_SunDir/_StarBlend/_SkyHorizon 由
     // EmotionWeatherController 独家驱动（单写者），shader 不读 URP 光源数据。
@@ -17,14 +19,16 @@ Shader "Glimmer/SkyGradient"
         _HorizonBlur ("Horizon Blur",       Range(0.02, 1)) = 0.35
         _Exposure    ("Exposure",           Range(0, 2)) = 1.0
 
-        [Header(Pigment sun. dir written by controller from the real light)]
+        [Header(Totem sun. dir written by controller from the real light)]
         _SunDir        ("Sun Direction",        Vector) = (0, 1, 0, 0)
         _SunTint       ("Sun Pigment",          Color) = (1.0, 0.72, 0.42, 1)
         _SunSize       ("Sun Disc Size Deg",    Range(0.5, 30)) = 5
-        _SunGlow       ("Halo Strength",        Range(0, 3)) = 0.9
+        _SunGlow       ("Totem Ring Strength",  Range(0, 3)) = 0.9
         _SunDiscStrength ("Disc Strength",      Range(0, 1)) = 1
         _SunEdgeRagged ("Disc Edge Raggedness", Range(0, 1)) = 0.45
-        _HaloPosterize ("Halo Posterize",       Range(0, 1)) = 0.6
+        _TotemRayCount ("Totem Ray Count",      Range(6, 32)) = 18
+        _TotemRayLen   ("Totem Ray Outer q",    Range(2.1, 4)) = 2.8
+        _CarveShadow   ("Carve Groove Shadow",  Range(0, 1)) = 0.30
 
         [Header(Rock face weathering)]
         _GrainAmount  ("Grain Amount",  Range(0, 0.15)) = 0.028
@@ -42,6 +46,14 @@ Shader "Glimmer/SkyGradient"
         _AshStrength ("Ash Band Strength",      Range(0, 1)) = 0.35
         _AshWidth    ("Ash Band Width",         Range(0.05, 0.6)) = 0.22
         _SkyRotSpeed ("Sky Wheel Deg Per Sec",  Range(0, 2)) = 0.06
+
+        [Header(Ash stipple and dark rift)]
+        _StippleDensity  ("Stipple Density",      Range(40, 240)) = 110
+        _StippleSize     ("Stipple Dot Size",     Range(0.02, 0.4)) = 0.15
+        _StippleStrength ("Stipple Strength",     Range(0, 2)) = 1.0
+        _RiftWidth       ("Rift Width Frac",      Range(0.1, 0.8)) = 0.38
+        _RiftDepth       ("Rift Darkness",        Range(0, 1)) = 0.60
+        _RiftWander      ("Rift Wander",          Range(0, 0.3)) = 0.10
     }
 
     SubShader
@@ -64,13 +76,16 @@ Shader "Glimmer/SkyGradient"
                 float  _HorizonBlur, _Exposure;
                 float4 _SunDir;
                 half4  _SunTint;
-                float  _SunSize, _SunGlow, _SunDiscStrength, _SunEdgeRagged, _HaloPosterize;
+                float  _SunSize, _SunGlow, _SunDiscStrength, _SunEdgeRagged;
+                float  _TotemRayCount, _TotemRayLen, _CarveShadow;
                 float  _GrainAmount, _GrainScale, _MottleAmount, _MottleScale;
                 float  _StarBlend;
                 half4  _StarColorA, _StarColorB;
                 float  _StarDensity, _StarSize;
                 half4  _AshColor;
                 float  _AshStrength, _AshWidth, _SkyRotSpeed;
+                float  _StippleDensity, _StippleSize, _StippleStrength;
+                float  _RiftWidth, _RiftDepth, _RiftWander;
             CBUFFER_END
 
             struct Attributes
@@ -133,10 +148,11 @@ Shader "Glimmer/SkyGradient"
                 return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
             }
 
-            // 星点层：3D 晶格取最近特征点。星点缩在格心 0.2~0.8 区间、半径 ≤0.15 格，
-            // 保证单格采样不会裁掉邻格伸过来的星（省掉 27 格邻域查询）
+            // 星点/点描层：3D 晶格取最近特征点。点缩在格心 0.2~0.8 区间、半径 ≤0.15 格，
+            // 保证单格采样不会裁掉邻格伸过来的点（省掉 27 格邻域查询）
+            // fillThresh: 空格比例（星空稀疏 0.62，点描撒灰 0.25）
             // 返回 (亮度, 配色随机数)
-            float2 StarLayer(float3 d, float density, float size)
+            float2 StarLayer(float3 d, float density, float size, float fillThresh)
             {
                 float3 p = d * density;
                 float3 cell = floor(p);
@@ -145,7 +161,7 @@ Shader "Glimmer/SkyGradient"
                 float3 sp = 0.20 + 0.60 * h;
                 float r = size * (0.55 + 0.90 * h.x);
                 float spot = 1.0 - smoothstep(r * 0.4, r, length(f - sp));
-                float present = step(0.62, Hash13(cell + 19.19));   // 稀疏：并非每格都有星
+                float present = step(fillThresh, Hash13(cell + 19.19));
                 float bright = 0.30 + 0.70 * h.z;
                 return float2(spot * present * bright, h.y);
             }
@@ -172,48 +188,138 @@ Shader "Glimmer/SkyGradient"
                                  lerp(_SkyHorizon.rgb, _SkyTop.rgb, tUp),
                                  step(0.0, y));
 
-                // —— 2. 颜料日盘：毛边圆一笔盖上去（非叠加），晕环分段像一圈圈颜料washes ——
-                float3 sunDir = normalize(_SunDir.xyz + float3(0, 1e-5, 0));
-                float cosA = dot(d, sunDir);
-                float edgeN = (ValueNoise3(d * 42.0) - 0.5) * _SunEdgeRagged * 0.02;
-                float cosR = cos(radians(_SunSize));
-                float disc = smoothstep(cosR - 0.006, cosR + 0.004, cosA + edgeN);
-                float hSun = saturate(cosA);
-                float inner = pow(hSun, 42.0);
-                inner = lerp(inner, floor(inner * 3.0) / 3.0, _HaloPosterize);
-                float outer = pow(hSun, 5.0) * 0.14;
-                col = lerp(col, _SunTint.rgb * 1.06, disc * 0.92 * _SunDiscStrength);
-                col += _SunTint.rgb * (inner + outer) * _SunGlow;
-
-                // —— 3. 岩面风化：斑驳 + 颗粒。地平线附近淡出，保住与雾的无缝拼接 ——
+                // —— 2. 岩面斑驳（低频矿物沁色）：先于日盘 —— 颜料要盖在风化
+                //       岩面上，斑驳叠在亮盘上会产生脏块（上一轮截图已见）——
                 float weatherMask = smoothstep(0.015, 0.14, abs(y));
                 float mottle = Fbm3(d * _MottleScale);
                 col *= 1.0 - _MottleAmount * mottle * weatherMask;
+
+                // —— 3. 日轮图腾：先凿刻后填彩。废连续光晕数学，全部元素是
+                //       q(以日盘半径为单位的极径)/theta(绕日方位角) 空间里的
+                //       离散刻画：盘内凹槽环、骨白全环、赭红断续环、交替短射线，
+                //       每类刻线配凿痕暗边 —— 凿进岩面的深度感 ——
+                float3 sunDir = normalize(_SunDir.xyz + float3(0, 1e-5, 0));
+                // 稳定正交基：world-up 参考；太阳过天顶时退化到 world-x
+                float3 upRef = abs(sunDir.y) > 0.98 ? float3(1, 0, 0) : float3(0, 1, 0);
+                float3 sunT = normalize(cross(upRef, sunDir));
+                float3 sunB = cross(sunDir, sunT);
+                float ang = acos(clamp(dot(d, sunDir), -1.0, 1.0));
+                float q = ang / radians(_SunSize);            // 1 = 日盘边缘
+                float theta = atan2(dot(d, sunB), dot(d, sunT));
+
+                if (q < _TotemRayLen + 0.7)   // 图腾影响圈外整段跳过
+                {
+                    // 手绘毛边：方向域低频噪声抖动极径（所有环/射线共用同一抖动，
+                    // 像同一只手刻出来的）
+                    float qr = q + (ValueNoise3(d * 42.0) - 0.5) * _SunEdgeRagged * 0.16;
+
+                    // 日落隐没：太阳沉下地平线，整幅图腾一起走（也修掉旧版
+                    // 光晕夜里透到地平线下的问题）
+                    float sunUpMask = smoothstep(-0.06, 0.04, sunDir.y);
+                    float ringStr = saturate(_SunGlow) * sunUpMask;
+
+                    // — 日盘（实心颜料饼）+ 盘内暗赭凹槽环 —
+                    float disc   = 1.0 - smoothstep(0.97, 1.03, qr);
+                    float ringIn = 1.0 - smoothstep(0.05, 0.10, abs(qr - 0.62));
+
+                    // — 外刻环 A：骨白完整圆 —
+                    float ringA = 1.0 - smoothstep(0.028, 0.055, abs(qr - 1.38));
+
+                    // — 外刻环 B：赭红断续弧（24 段 hash 择 ~65% 存在）—
+                    float segB  = floor((theta / TWO_PI + 0.5) * 24.0);
+                    float segOn = step(0.35, Hash13(float3(segB, 17.3, 4.7)));
+                    float ringB = (1.0 - smoothstep(0.025, 0.05, abs(qr - 1.80))) * segOn;
+
+                    // — 短射线：N 根离散刻线，骨白/赭红逐根交替，长度逐根 hash —
+                    float rayIdx = floor((theta / TWO_PI + 0.5) * _TotemRayCount);
+                    float3 rayH  = Hash33(float3(rayIdx, 7.7, 21.1));
+                    float rayOn  = step(0.15, rayH.x);                    // ~85% 存在
+                    float rayEnd = lerp(2.35, _TotemRayLen, rayH.y);
+                    float rayCenter = (rayIdx + 0.5) / _TotemRayCount * TWO_PI - PI;
+                    float dTheta = theta - rayCenter;
+                    dTheta = dTheta - TWO_PI * round(dTheta / TWO_PI);
+                    float slat = dTheta * q;                              // 弧长单位 → 平行边刻线
+                    float rayRadial = smoothstep(1.98, 2.12, qr)
+                                    * (1.0 - smoothstep(rayEnd - 0.10, rayEnd + 0.06, qr));
+                    float rayBody = (1.0 - smoothstep(0.05, 0.09, abs(slat))) * rayRadial * rayOn;
+
+                    // — 凿痕暗边：环外侧/射线单侧的细暗线（先刻后填彩）—
+                    float shadowA = 1.0 - smoothstep(0.018, 0.045, abs(qr - 1.47));
+                    float shadowB = (1.0 - smoothstep(0.015, 0.04, abs(qr - 1.89))) * segOn;
+                    float shadowR = (1.0 - smoothstep(0.02, 0.05, abs(slat - 0.13))) * rayRadial * rayOn;
+                    float carve = max(shadowA, max(shadowB, shadowR)) * ringStr;
+                    col *= 1.0 - carve * _CarveShadow;
+
+                    // — 填彩（平涂覆盖，非加法 —— 图腾平涂感的关键）—
+                    col = lerp(col, _SunTint.rgb * 1.06, disc * 0.92 * _SunDiscStrength * sunUpMask);
+                    col = lerp(col, _SunTint.rgb * 0.55, ringIn * disc * 0.85 * _SunDiscStrength * sunUpMask);
+                    col = lerp(col, _StarColorA.rgb, ringA * 0.85 * ringStr);
+                    col = lerp(col, _StarColorB.rgb, ringB * 0.80 * ringStr);
+                    half3 rayCol = lerp(_StarColorA.rgb, _StarColorB.rgb, fmod(rayIdx, 2.0));
+                    col = lerp(col, rayCol, rayBody * 0.75 * ringStr);
+
+                    // 一丝暖染：q 基二次衰减，在图腾影响圈边界前归零（严禁用
+                    // pow(cosA,n)——它在 q 空间衰减太慢，会在分支边界切出可见圆盘）
+                    float airGlow = saturate(1.0 - q / (_TotemRayLen + 0.55));
+                    col += _SunTint.rgb * airGlow * airGlow * 0.045 * _SunGlow * sunUpMask;
+                }
+
+                // —— 4. 岩壁细颗粒：透过颜料（材料统一），地平线处淡出 ——
                 float grain = (ValueNoise3(d * _GrainScale) - 0.5) * 2.0;
                 col *= 1.0 + grain * _GrainAmount * weatherMask;
 
-                // —— 4. 夜空：撒灰银河 + 双色星点，绕斜天轴整体缓转 ——
+                // —— 5. 夜空：点描撒灰银河（骨白灰烬+赭红余烬+炭黑裂谷三色系）——
+                //        灰带主体从连续雾换成手点的灰烬颗粒，一道蜿蜒暗裂谷
+                //        纵贯全带（真实银河暗带，也是雕刻里的凿槽）
                 if (_StarBlend > 0.001)
                 {
                     float3 axis = normalize(float3(0.30, 0.85, -0.43));   // 南天极式斜轴
                     float3 dr = RotateAround(d, axis, _Time.y * radians(_SkyRotSpeed));
                     float horizMask = smoothstep(0.04, 0.30, y);          // 星沉入地平线薄霭
 
-                    // 银河 = 大圆灰带：法线定带的走向；fbm 撕出断续的手掷灰块
+                    // 带坐标：bandCoord=0 是带中线；fbm 撕出断续的手掷灰块
                     float3 bandN = normalize(float3(0.42, 0.18, 0.89));
-                    float band = 1.0 - smoothstep(_AshWidth * 0.35, _AshWidth, abs(dot(dr, bandN)));
+                    float bandCoord = dot(dr, bandN);
+                    float band = 1.0 - smoothstep(_AshWidth * 0.35, _AshWidth, abs(bandCoord));
                     float patches = smoothstep(0.30, 0.78, Fbm3(dr * 3.1 + 7.7));
                     float3 coreDir = normalize(cross(bandN, float3(0, 1, 0)));
                     float core = 0.55 + 0.45 * saturate(dot(dr, coreDir)); // 一侧更稠（银心感）
-                    half3 night = _AshColor.rgb * (band * patches * core * _AshStrength);
+                    float ashMask = band * patches * core;
 
-                    // 主星层：~14% 赭红余烬，其余骨白；微尘层沿灰带加密
-                    float2 s1 = StarLayer(dr, _StarDensity, _StarSize);
-                    float2 s2 = StarLayer(dr + 3.7, _StarDensity * 2.3, _StarSize * 0.55);
-                    half3 starCol = lerp(_StarColorA.rgb, _StarColorB.rgb, step(0.86, s1.y));
-                    night += starCol * s1.x;
+                    // 暗裂谷：中线附近蜿蜒（fbm 摆动），乘性吃掉灰带 + 轻刻天空底色
+                    float riftOff = (Fbm3(dr * 2.2 + 31.7) - 0.44) * _RiftWander * 2.0;
+                    float rift = 1.0 - smoothstep(_RiftWidth * 0.5 * _AshWidth,
+                                                  _RiftWidth * _AshWidth,
+                                                  abs(bandCoord - riftOff));
+                    rift *= smoothstep(0.25, 0.6, patches);   // 裂谷只在灰块存在处显形
+
+                    // 底层薄雾垫底 30%：防纯点墨感，点描坐在余灰上
+                    half3 night = _AshColor.rgb * (ashMask * _AshStrength * 0.30);
+
+                    // 点描撒灰双层：骨白灰烬为主，~25% 赭红余烬（掷灰传说的火种）。
+                    // 亮度×2.2：点要比旧雾带亮一档才能读出"颗粒"而非"噪声"
+                    float2 st1 = StarLayer(dr + 11.3, _StippleDensity, _StippleSize, 0.25);
+                    float2 st2 = StarLayer(dr + 27.9, _StippleDensity * 1.9, _StippleSize * 0.6, 0.25);
+                    half3 ashDot1 = lerp(_AshColor.rgb, _StarColorB.rgb * 0.9, step(0.75, st1.y));
+                    half3 ashDot2 = lerp(_AshColor.rgb, _StarColorB.rgb * 0.9, step(0.75, st2.y));
+                    float stippleMask = ashMask * _StippleStrength * 2.2;
+                    night += ashDot1 * st1.x * stippleMask;
+                    night += ashDot2 * st2.x * stippleMask * 0.55;
+
+                    // 微尘星层先于裂谷（被暗尘遮蔽）
+                    float2 s2 = StarLayer(dr + 3.7, _StarDensity * 2.3, _StarSize * 0.55, 0.62);
                     night += _StarColorA.rgb * s2.x * 0.35 * (0.5 + 0.5 * band);
 
+                    // 裂谷压暗（凿槽吃掉灰与微尘）
+                    night *= 1.0 - rift * _RiftDepth;
+
+                    // 主星层后于裂谷：亮星穿谷而过，~14% 赭红余烬
+                    float2 s1 = StarLayer(dr, _StarDensity, _StarSize, 0.62);
+                    half3 starCol = lerp(_StarColorA.rgb, _StarColorB.rgb, step(0.86, s1.y));
+                    night += starCol * s1.x;
+
+                    // 裂谷轻刻天空底色：凿槽比夜空更深一线
+                    col *= 1.0 - rift * band * 0.25 * _StarBlend * horizMask;
                     col += night * horizMask * _StarBlend;
                 }
 

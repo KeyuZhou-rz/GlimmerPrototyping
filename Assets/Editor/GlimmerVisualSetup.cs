@@ -207,7 +207,10 @@ public static class GlimmerVisualSetup
         mat.SetFloat("_SunGlow", 0.9f);
         mat.SetFloat("_SunDiscStrength", 1f);
         mat.SetFloat("_SunEdgeRagged", 0.45f);
-        mat.SetFloat("_HaloPosterize", 0.6f);
+        // 日轮图腾（静态雕刻参数，不随天气变；天气只调 _SunGlow/_SunDiscStrength）
+        mat.SetFloat("_TotemRayCount", 18f);
+        mat.SetFloat("_TotemRayLen", 2.8f);
+        mat.SetFloat("_CarveShadow", 0.30f);
         mat.SetVector("_SunDir", new Vector4(-0.35f, 0.55f, -0.76f, 0f)); // 编辑态默认≈Golden Hour 方位
         // 岩面风化：白天克制档（约 2-3% 亮度扰动，主要功能是消色带）
         mat.SetFloat("_GrainAmount", 0.028f);
@@ -224,6 +227,13 @@ public static class GlimmerVisualSetup
         mat.SetFloat("_AshStrength", 0.35f);
         mat.SetFloat("_AshWidth", 0.22f);
         mat.SetFloat("_SkyRotSpeed", 0.06f);
+        // 点描撒灰 + 暗裂谷（图腾化精修轮）
+        mat.SetFloat("_StippleDensity", 110f);
+        mat.SetFloat("_StippleSize", 0.15f);
+        mat.SetFloat("_StippleStrength", 1.0f);
+        mat.SetFloat("_RiftWidth", 0.38f);
+        mat.SetFloat("_RiftDepth", 0.60f);
+        mat.SetFloat("_RiftWander", 0.10f);
         EditorUtility.SetDirty(mat);
 
         // 赋给场景（sky.mat 留盘备份不动）+ 接线控制器
