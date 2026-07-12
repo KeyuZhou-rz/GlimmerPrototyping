@@ -195,13 +195,19 @@ public static class GlimmerVisualSetup
         }
         mat.shader = shader;
 
-        // 静态基线 = 晴天正午（运行时属性全部由 EmotionWeatherController 覆写；
+        // 静态基线 = 白天相（运行时属性全部由 EmotionWeatherController 覆写；
         // 这里写一份合理编辑态值，保证不进 Play 也能看到岩画天空而非品红/黑空）
-        mat.SetColor("_SkyTop", new Color(0.34f, 0.38f, 0.44f));
+        mat.SetColor("_SkyZenith", new Color(0.36f, 0.46f, 0.56f));    // 尘蓝苍白
+        mat.SetColor("_SkyMid", new Color(0.56f, 0.60f, 0.62f));
+        mat.SetColor("_HorizonGlowCol", new Color(0.78f, 0.74f, 0.66f));
         mat.SetColor("_SkyHorizon", new Color(0.66f, 0.62f, 0.55f));   // ≈ sunnyFogColor，天地一体
-        mat.SetColor("_GroundCol", new Color(0.66f, 0.62f, 0.55f));            // 雾色派生（skyGroundDim=1）
-        mat.SetFloat("_HorizonBlur", 0.35f);
+        mat.SetColor("_GroundCol", new Color(0.66f, 0.62f, 0.55f));    // 雾色派生
+        mat.SetFloat("_GlowHeight", 0.14f);
+        mat.SetFloat("_MidHeight", 0.50f);
         mat.SetFloat("_Exposure", 1.0f);
+        mat.SetFloat("_BandingAmount", 0.55f);
+        mat.SetColor("_SunWashCol", new Color(0.90f, 0.82f, 0.68f));
+        mat.SetFloat("_SunWashAmt", 0.15f);
         mat.SetColor("_SunTint", new Color(1.0f, 0.72f, 0.42f));
         mat.SetFloat("_SunSize", 5f);
         mat.SetFloat("_SunGlow", 0.9f);
@@ -212,11 +218,11 @@ public static class GlimmerVisualSetup
         mat.SetFloat("_TotemRayLen", 2.8f);
         mat.SetFloat("_CarveShadow", 0.30f);
         mat.SetVector("_SunDir", new Vector4(-0.35f, 0.55f, -0.76f, 0f)); // 编辑态默认≈Golden Hour 方位
-        // 岩面风化：白天克制档（约 2-3% 亮度扰动，主要功能是消色带）
+        // 岩面颗粒（白天克制档）+ 卷云笔触（相位驱动，编辑态=白天档）
         mat.SetFloat("_GrainAmount", 0.028f);
         mat.SetFloat("_GrainScale", 90f);
-        mat.SetFloat("_MottleAmount", 0.06f);
         mat.SetFloat("_MottleScale", 2.3f);
+        mat.SetFloat("_StrokeAmount", 0.05f);
         // 撒灰夜空：编辑态默认 0（白天），Playtest 夜景由控制器渐显
         mat.SetFloat("_StarBlend", 0f);
         mat.SetColor("_StarColorA", new Color(0.92f, 0.90f, 0.84f));
@@ -416,19 +422,30 @@ public static class GlimmerVisualSetup
     }
 
     /// <summary>
-    /// 编辑态天空预览：把预览光照对应的天空属性写进 SkyGradient.mat。
-    /// 与 EmotionWeatherController.UpdateSkybox 同一套映射（badT 0=晴 1=暴雨），
-    /// 保证编辑态预览 = 运行时基线；进 Play 后控制器接管全部属性。
+    /// 编辑态天空预览：把预览光照对应相位的天空色板写进 SkyGradient.mat。
+    /// 与 EmotionWeatherController.UpdateSkybox 同一套四相映射
+    /// （badT 0=晴 1=暴雨；金色时刻≈golden 相），保证编辑态预览=运行时基线；
+    /// 进 Play 后控制器接管全部属性。
     /// </summary>
     static void PreviewSky(Light sun, Color fogColor, float badT)
     {
         var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
         if (mat == null) return;
 
-        Color top = Color.Lerp(new Color(0.34f, 0.38f, 0.44f), new Color(0.22f, 0.24f, 0.28f), badT);
-        mat.SetColor("_SkyTop", top);
+        // golden 相色板（Preview Golden Hour 的太阳仰角 38° 实际偏 day，
+        // 但预览的意义是看最富的状态 → 直接给 golden 相）
+        Color zenith = Color.Lerp(new Color(0.30f, 0.38f, 0.46f), new Color(0.20f, 0.23f, 0.28f), badT);
+        Color mid    = Color.Lerp(new Color(0.62f, 0.52f, 0.48f), new Color(0.28f, 0.30f, 0.34f), badT);
+        Color glow   = Color.Lerp(new Color(0.95f, 0.62f, 0.38f), new Color(0.38f, 0.38f, 0.38f), badT);
+        mat.SetColor("_SkyZenith", zenith);
+        mat.SetColor("_SkyMid", mid);
+        mat.SetColor("_HorizonGlowCol", glow);
         mat.SetColor("_SkyHorizon", fogColor);
         mat.SetColor("_GroundCol", fogColor);
+        mat.SetColor("_SunWashCol", new Color(1.0f, 0.60f, 0.38f));
+        mat.SetFloat("_SunWashAmt", 0.45f * (1f - badT));
+        mat.SetFloat("_BandingAmount", 0.55f * (1f - badT * 0.5f));
+        mat.SetFloat("_StrokeAmount", Mathf.Lerp(0.10f, 0.16f, badT));
         if (sun != null) mat.SetVector("_SunDir", -sun.transform.forward);
         mat.SetFloat("_SunGlow", Mathf.Lerp(0.9f, 0.15f, badT));
         mat.SetFloat("_SunDiscStrength", 1f - badT * 0.9f);

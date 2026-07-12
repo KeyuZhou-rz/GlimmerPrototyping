@@ -21,6 +21,20 @@ public static class ClaudeSkyVerify
         CaptureOverview(Path.Combine(OutDir, "sky_golden.png"));
         // 朝日盘方向：PreviewGoldenHour 太阳 Euler(38,215) → 日盘在方位 35°、仰角 38°
         CaptureView(Path.Combine(OutDir, "sky_golden_sun.png"), Quaternion.Euler(-28f, 35f, 0f));
+        // 背日侧：验证日侧暖洗 vs 背日冷沉的方位不对称（TLD 特征）
+        CaptureView(Path.Combine(OutDir, "sky_golden_antisun.png"), Quaternion.Euler(-12f, 215f, 0f));
+
+        // —— 正午（白天相：尘蓝苍白色板 + 色带）——
+        var sunNoon = RenderSettings.sun;
+        if (sunNoon != null)
+        {
+            sunNoon.transform.rotation = Quaternion.Euler(75f, 215f, 0f);
+            sunNoon.color = new Color(1.0f, 0.96f, 0.90f);
+            sunNoon.intensity = 1.15f;
+        }
+        PreviewDaySky();
+        CaptureOverview(Path.Combine(OutDir, "sky_noon.png"));
+        CaptureView(Path.Combine(OutDir, "sky_noon_up.png"), Quaternion.Euler(-65f, 35f, 0f));
 
         var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
         var sun = RenderSettings.sun;
@@ -37,12 +51,16 @@ public static class ClaudeSkyVerify
             RenderSettings.ambientSkyColor = new Color(0.10f, 0.12f, 0.16f);
             RenderSettings.ambientEquatorColor = new Color(0.07f, 0.08f, 0.11f);
             RenderSettings.ambientGroundColor = new Color(0.03f, 0.04f, 0.05f);
-            Color nightFog = new Color(0.66f, 0.62f, 0.55f) * 0.18f;
+            // 夜相色板：深海军三停 + 海军灰雾（与控制器 nightFogColor 同值）
+            Color nightFog = new Color(0.095f, 0.11f, 0.145f);
             RenderSettings.fogColor = nightFog;
-            float f = 0.16f;
-            mat.SetColor("_SkyTop", new Color(0.34f * f, 0.38f * f, 0.44f * f));
+            mat.SetColor("_SkyZenith", new Color(0.09f, 0.12f, 0.19f));
+            mat.SetColor("_SkyMid", new Color(0.13f, 0.16f, 0.22f));
+            mat.SetColor("_HorizonGlowCol", new Color(0.24f, 0.22f, 0.20f));  // airglow
             mat.SetColor("_SkyHorizon", nightFog);
             mat.SetColor("_GroundCol", nightFog);
+            mat.SetFloat("_SunWashAmt", 0f);
+            mat.SetFloat("_StrokeAmount", 0.02f);
             mat.SetFloat("_SunDiscStrength", 0f);
             mat.SetFloat("_SunGlow", 0f);
             mat.SetFloat("_StarBlend", 1f);
@@ -59,6 +77,32 @@ public static class ClaudeSkyVerify
         GlimmerVisualSetup.PreviewGoldenHour();
         AssetDatabase.SaveAssets();
         Debug.Log("[ClaudeSkyVerify] done");
+    }
+
+    // 白天相预览（正午截图用）：与控制器 day 色板同值
+    static void PreviewDaySky()
+    {
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
+        if (mat == null) return;
+        Color dayFog = new Color(0.66f, 0.62f, 0.55f);
+        RenderSettings.fogColor = dayFog;
+        RenderSettings.ambientSkyColor = new Color(0.55f, 0.62f, 0.72f);
+        RenderSettings.ambientEquatorColor = new Color(0.48f, 0.46f, 0.40f);
+        RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
+        mat.SetColor("_SkyZenith", new Color(0.36f, 0.46f, 0.56f));
+        mat.SetColor("_SkyMid", new Color(0.56f, 0.60f, 0.62f));
+        mat.SetColor("_HorizonGlowCol", new Color(0.78f, 0.74f, 0.66f));
+        mat.SetColor("_SkyHorizon", dayFog);
+        mat.SetColor("_GroundCol", dayFog);
+        mat.SetColor("_SunWashCol", new Color(0.90f, 0.82f, 0.68f));
+        mat.SetFloat("_SunWashAmt", 0.15f);
+        mat.SetFloat("_BandingAmount", 0.55f);
+        mat.SetFloat("_StrokeAmount", 0.05f);
+        var sun = RenderSettings.sun;
+        if (sun != null) mat.SetVector("_SunDir", -sun.transform.forward);
+        mat.SetFloat("_SunGlow", 0.9f);
+        mat.SetFloat("_SunDiscStrength", 1f);
+        mat.SetFloat("_StarBlend", 0f);
     }
 
     // 同 ClaudeViewCapture.CaptureOverview 的取景，但路径可指定

@@ -12,12 +12,22 @@ Shader "Glimmer/SkyGradient"
     // EmotionWeatherController 独家驱动（单写者），shader 不读 URP 光源数据。
     Properties
     {
-        [Header(Vertical gradient. horizon set to fog color by controller)]
-        _SkyTop      ("Sky Top",            Color) = (0.34, 0.38, 0.44, 1)
-        _SkyHorizon  ("Sky Horizon",        Color) = (0.66, 0.62, 0.55, 1)
-        _GroundCol   ("Below Horizon",      Color) = (0.45, 0.41, 0.35, 1)
-        _HorizonBlur ("Horizon Blur",       Range(0.02, 1)) = 0.35
-        _Exposure    ("Exposure",           Range(0, 2)) = 1.0
+        [Header(Four stop gradient. all runtime colors driven by controller)]
+        _SkyZenith      ("Zenith",           Color) = (0.36, 0.46, 0.56, 1)
+        _SkyMid         ("Mid Sky",          Color) = (0.56, 0.60, 0.62, 1)
+        _HorizonGlowCol ("Horizon Glow",     Color) = (0.78, 0.74, 0.66, 1)
+        _SkyHorizon     ("Fog Line",         Color) = (0.66, 0.62, 0.55, 1)
+        _GroundCol      ("Below Horizon",    Color) = (0.66, 0.62, 0.55, 1)
+        _GlowHeight     ("Glow Band Top Y",  Range(0.05, 0.4)) = 0.14
+        _MidHeight      ("Mid Sky Top Y",    Range(0.3, 0.8)) = 0.50
+        _Exposure       ("Exposure",         Range(0, 2)) = 1.0
+
+        [Header(Painterly banding. IGN dithered)]
+        _BandingAmount ("Banding Amount", Range(0, 1)) = 0.55
+
+        [Header(Sunward warm wash. TLD style azimuthal asymmetry)]
+        _SunWashCol ("Wash Color",    Color) = (0.90, 0.82, 0.68, 1)
+        _SunWashAmt ("Wash Strength", Range(0, 1)) = 0.15
 
         [Header(Totem sun. dir written by controller from the real light)]
         _SunDir        ("Sun Direction",        Vector) = (0, 1, 0, 0)
@@ -30,11 +40,11 @@ Shader "Glimmer/SkyGradient"
         _TotemRayLen   ("Totem Ray Outer q",    Range(2.1, 4)) = 2.8
         _CarveShadow   ("Carve Groove Shadow",  Range(0, 1)) = 0.30
 
-        [Header(Rock face weathering)]
+        [Header(Rock face weathering and cirrus strokes)]
         _GrainAmount  ("Grain Amount",  Range(0, 0.15)) = 0.028
         _GrainScale   ("Grain Scale",   Float) = 90
-        _MottleAmount ("Mottle Amount", Range(0, 0.3)) = 0.06
-        _MottleScale  ("Mottle Scale",  Float) = 2.3
+        _MottleScale  ("Stroke Scale",  Float) = 2.3
+        _StrokeAmount ("Stroke Amount", Range(0, 0.4)) = 0.05
 
         [Header(Night. ash sky. blend written by controller)]
         _StarBlend   ("Star Blend",             Range(0, 1)) = 0
@@ -72,13 +82,16 @@ Shader "Glimmer/SkyGradient"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
-                half4  _SkyTop, _SkyHorizon, _GroundCol;
-                float  _HorizonBlur, _Exposure;
+                half4  _SkyZenith, _SkyMid, _HorizonGlowCol, _SkyHorizon, _GroundCol;
+                float  _GlowHeight, _MidHeight, _Exposure;
+                float  _BandingAmount;
+                half4  _SunWashCol;
+                float  _SunWashAmt;
                 float4 _SunDir;
                 half4  _SunTint;
                 float  _SunSize, _SunGlow, _SunDiscStrength, _SunEdgeRagged;
                 float  _TotemRayCount, _TotemRayLen, _CarveShadow;
-                float  _GrainAmount, _GrainScale, _MottleAmount, _MottleScale;
+                float  _GrainAmount, _GrainScale, _MottleScale, _StrokeAmount;
                 float  _StarBlend;
                 half4  _StarColorA, _StarColorB;
                 float  _StarDensity, _StarSize;
@@ -148,6 +161,20 @@ Shader "Glimmer/SkyGradient"
                 return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
             }
 
+            // Interleaved Gradient Noise（屏幕空间）：打散色带量化的马赫带。
+            // 近看有台阶、远看是渐变的关键 —— 抖动幅度约半个色带宽
+            float IGN(float2 px)
+            {
+                return frac(52.9829189 * frac(0.06711056 * px.x + 0.00583715 * px.y));
+            }
+
+            // 分段色带量化：t∈[0,1] 切 n 带，IGN 抖动半带宽，_BandingAmount 控混合
+            float BandT(float t, float n, float dither)
+            {
+                float tq = floor(t * n + dither) / n;
+                return lerp(t, tq, _BandingAmount);
+            }
+
             // 星点/点描层：3D 晶格取最近特征点。点缩在格心 0.2~0.8 区间、半径 ≤0.15 格，
             // 保证单格采样不会裁掉邻格伸过来的点（省掉 27 格邻域查询）
             // fillThresh: 空格比例（星空稀疏 0.62，点描撒灰 0.25）
@@ -178,27 +205,70 @@ Shader "Glimmer/SkyGradient"
             {
                 float3 d = normalize(IN.dirOS);
                 float y = d.y;
+                float dith = IGN(IN.positionHCS.xy) - 0.5;
 
-                // —— 1. 三段垂直渐变（岩面底色，地平线 = 雾色 → 天地一体）——
-                float hb = max(_HorizonBlur, 0.02);
-                // pow<1 把暖地平线带抬高一点，接近 demo 的宽暖带
-                float tUp = smoothstep(0.0, 1.0, pow(saturate(y / hb), 0.8));
-                float tDn = smoothstep(0.0, 1.0, saturate(-y / (hb * 0.6)));
-                half3 col = lerp(lerp(_SkyHorizon.rgb, _GroundCol.rgb, tDn),
-                                 lerp(_SkyHorizon.rgb, _SkyTop.rgb, tUp),
-                                 step(0.0, y));
+                // —— 1. 四停垂直渐变：雾线→地平辉带→中天→天顶。每停局部 t
+                //       各自过色带量化（辉带3/中天4/天顶4 ≈ 11 带）——
+                //       近看读出台阶（呼应地形三段色阶），远看仍是渐变 ——
+                float3 sunDirW = normalize(_SunDir.xyz + float3(0, 1e-5, 0));
+                half3 col;
+                if (y <= 0.0)
+                {
+                    col = _GroundCol.rgb;   // 地平线以下：纯雾色（远地形=全雾）
+                }
+                else
+                {
+                    // 方位因子提前算：辉带色本身要按日侧/背日侧调制
+                    float2 dXZ = normalize(d.xz + float2(1e-5, 0));
+                    float2 sXZ = normalize(sunDirW.xz + float2(1e-5, 0));
+                    float azim = dot(dXZ, sXZ) * 0.5 + 0.5;
 
-                // —— 2. 岩面斑驳（低频矿物沁色）：先于日盘 —— 颜料要盖在风化
-                //       岩面上，斑驳叠在亮盘上会产生脏块（上一轮截图已见）——
+                    // 辉带/中天方位调制（TLD 关键）：日侧满暖，背日侧收敛向冷色
+                    // （否则黄昏琥珀辉带和玫瑰中天全方位铺开，背日侧也被染橙粉）
+                    half3 coolGlow = lerp(_SkyMid.rgb, _SkyZenith.rgb, 0.60);
+                    half3 glowCol = lerp(coolGlow, _HorizonGlowCol.rgb, 0.22 + 0.78 * pow(azim, 1.6));
+                    half3 midCol = lerp(lerp(_SkyMid.rgb, _SkyZenith.rgb, 0.45),
+                                        _SkyMid.rgb, 0.30 + 0.70 * pow(azim, 1.3));
+
+                    // 雾线停：贴地一窄条纯雾色，远山溶解的锚
+                    float tFog  = smoothstep(0.0, 0.03, y);
+                    // 辉带停：雾线上方的地平线辉光带
+                    float tGlow = BandT(smoothstep(0.03, _GlowHeight, y), 3.0, dith);
+                    // 中天停
+                    float tMid  = BandT(smoothstep(_GlowHeight, _MidHeight, y), 4.0, dith);
+                    // 天顶停
+                    float tZen  = BandT(smoothstep(_MidHeight, 0.95, y), 4.0, dith);
+
+                    col = lerp(_SkyHorizon.rgb, glowCol, tGlow);
+                    col = lerp(col, midCol,         tMid);
+                    col = lerp(col, _SkyZenith.rgb, tZen);
+                    // 雾线保底：最底 3% 强制回雾色（色带量化不许碰这条线）
+                    col = lerp(_SkyHorizon.rgb, col, tFog);
+
+                    // —— 1b. 日侧暖洗（TLD 式方位不对称）：日侧地平线暖亮、
+                    //         背日侧冷沉。wash 也过色带（3 段），图形语言统一 ——
+                    float horizProx = 1.0 - saturate(y / 0.55);
+                    float wash = BandT(pow(azim, 2.2) * horizProx, 3.0, dith) * _SunWashAmt;
+                    col = lerp(col, _SunWashCol.rgb, wash);
+                    float coolSide = (1.0 - azim) * horizProx * 0.18;
+                    col = lerp(col, _SkyZenith.rgb, BandT(coolSide, 3.0, dith));
+                }
+
+                // —— 2. 卷云笔触（先于图腾，颜料盖在笔触上）：水平拉长的
+                //       两八度噪声 —— 竖向高频压扁成横长条，读作画笔拖过的
+                //       干刷痕，不再是各向同性的均匀脏度 ——
                 float weatherMask = smoothstep(0.015, 0.14, abs(y));
-                float mottle = Fbm3(d * _MottleScale);
-                col *= 1.0 - _MottleAmount * mottle * weatherMask;
+                float stroke1 = ValueNoise3(d * float3(1.3, 6.0, 1.3) * _MottleScale);
+                float stroke2 = ValueNoise3(d * float3(1.3, 6.0, 1.3) * _MottleScale * 2.7 + 13.1);
+                float stroke = smoothstep(0.35, 0.75, stroke1 * 0.65 + stroke2 * 0.35);
+                half3 strokeCol = lerp(_SkyMid.rgb, _HorizonGlowCol.rgb, 0.5);
+                col = lerp(col, strokeCol, stroke * _StrokeAmount * weatherMask);
 
                 // —— 3. 日轮图腾：先凿刻后填彩。废连续光晕数学，全部元素是
                 //       q(以日盘半径为单位的极径)/theta(绕日方位角) 空间里的
                 //       离散刻画：盘内凹槽环、骨白全环、赭红断续环、交替短射线，
                 //       每类刻线配凿痕暗边 —— 凿进岩面的深度感 ——
-                float3 sunDir = normalize(_SunDir.xyz + float3(0, 1e-5, 0));
+                float3 sunDir = sunDirW;
                 // 稳定正交基：world-up 参考；太阳过天顶时退化到 world-x
                 float3 upRef = abs(sunDir.y) > 0.98 ? float3(1, 0, 0) : float3(0, 1, 0);
                 float3 sunT = normalize(cross(upRef, sunDir));

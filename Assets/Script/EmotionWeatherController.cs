@@ -83,21 +83,48 @@ public class EmotionWeatherController : MonoBehaviour
     [Tooltip("SkyGradient.mat。控制器是该材质运行时属性的唯一写者（单写者纪律）")]
     public Material skyboxMaterial;
 
-    [Header("天空 · 晴天三段色")]
-    public Color sunnySkyTop = new Color(0.34f, 0.38f, 0.44f);
-    [Range(0f, 3f)] public float sunnySunGlow = 0.9f;
+    // 四相色板（TLD/KRZ 完成度轮）：每相 zenith 天顶 / mid 中天 / glow 地平辉带。
+    // 相位权重由真实太阳仰角导出，天空不再依赖"单一色板×乘法压暗"。
+    [Header("天空 · 白天（尘蓝苍白，保 demo 基调）")]
+    public Color daySkyZenith = new Color(0.36f, 0.46f, 0.56f);
+    public Color daySkyMid    = new Color(0.56f, 0.60f, 0.62f);
+    public Color daySkyGlow   = new Color(0.78f, 0.74f, 0.66f);
 
-    [Header("天空 · 暴雨三段色")]
-    public Color stormSkyTop = new Color(0.22f, 0.24f, 0.28f);
+    [Header("天空 · 黄昏/黎明（戏剧带）")]
+    public Color goldSkyZenith = new Color(0.30f, 0.38f, 0.46f);
+    public Color goldSkyMid    = new Color(0.62f, 0.52f, 0.48f);
+    public Color goldSkyGlow   = new Color(0.95f, 0.62f, 0.38f);
+
+    [Header("天空 · 夜（深海军，有色相立场）")]
+    public Color nightSkyZenith = new Color(0.09f, 0.12f, 0.19f);
+    public Color nightSkyMid    = new Color(0.13f, 0.16f, 0.22f);
+    public Color nightSkyGlow   = new Color(0.24f, 0.22f, 0.20f);   // airglow 暖灰微光，夜地平线不死黑
+
+    [Header("天空 · 暴雨")]
+    public Color stormSkyZenith = new Color(0.20f, 0.23f, 0.28f);
+    public Color stormSkyMid    = new Color(0.28f, 0.30f, 0.34f);
+    public Color stormSkyGlow   = new Color(0.38f, 0.38f, 0.38f);
+    [Range(0f, 3f)] public float sunnySunGlow = 0.9f;
     [Range(0f, 3f)] public float stormSunGlow = 0.15f;
 
-    [Header("天空 · 地平线以下")]
-    [Tooltip("地平线以下天空 = 雾色 × 该系数。1=纯雾色（无限远地面在线性雾里就是雾色）；调低会在俯视时与全雾化地形出现分界")]
-    [Range(0.5f, 1f)] public float skyGroundDim = 1f;
+    [Header("天空 · 日侧暖洗（TLD 式方位不对称）")]
+    public Color goldenWashColor = new Color(1.0f, 0.60f, 0.38f);
+    [Range(0f, 1f)] public float goldenWashStrength = 0.45f;
+    public Color dayWashColor = new Color(0.90f, 0.82f, 0.68f);
+    [Range(0f, 1f)] public float dayWashStrength = 0.15f;
 
-    [Header("天空 · 夜色（乘在昼色上压暗，非替换）")]
-    [Tooltip("夜里天顶保留的亮度比例（岩壁在月下仍有形，不走纯黑）")]
-    [Range(0f, 1f)] public float nightSkyFloor = 0.16f;
+    [Header("天空 · 色带与笔触（相位驱动）")]
+    [Range(0f, 1f), Tooltip("色带量化强度；storm 相自动减半防等值线感")]
+    public float bandingAmount = 0.55f;
+    [Tooltip("笔触斑驳强度 per 相：day/golden/night/storm")]
+    public float strokeDay = 0.05f;
+    public float strokeGolden = 0.10f;
+    public float strokeNight = 0.02f;
+    public float strokeStorm = 0.16f;
+
+    [Header("夜雾色相（夜里雾随天空一起入蓝，不是压暗的棕灰）")]
+    public Color nightFogColor = new Color(0.095f, 0.11f, 0.145f);
+
     [Tooltip("坏天气把星空遮掉的比例：暴雨云层下不该满天星")]
     [Range(0f, 1f)] public float stormStarHide = 0.85f;
 
@@ -260,7 +287,8 @@ public class EmotionWeatherController : MonoBehaviour
         RenderSettings.fogStartDistance = fogStart;
         RenderSettings.fogEndDistance   = fogEnd;
 
-        // 雾色跟随昼夜：夜里太阳沉下后雾同步压暗，否则黑夜地平线上浮起灰白带
+        // 雾色跟随昼夜：夜里雾滑向海军灰（换色相，不是压暗的棕灰——
+        // 压值不换相的夜雾会把整个地平线染成脏米色）
         Color fogCol = Color.Lerp(sunnyFogColor, stormFogColor, fogT);
         var sun = sunForFogBrightness != null ? sunForFogBrightness : RenderSettings.sun;
         float dayLight = 1f;
@@ -268,7 +296,7 @@ public class EmotionWeatherController : MonoBehaviour
         {
             float sunUp = Mathf.Clamp01(Vector3.Dot(-sun.transform.forward, Vector3.up) * 2f);
             dayLight = Mathf.Clamp01(sun.intensity) * sunUp;
-            fogCol *= Mathf.Lerp(nightFogFloor, 1f, dayLight);
+            fogCol = Color.Lerp(nightFogColor, fogCol, Mathf.SmoothStep(0f, 1f, dayLight));
         }
         RenderSettings.fogColor = fogCol;
 
@@ -370,26 +398,49 @@ public class EmotionWeatherController : MonoBehaviour
         // 坏天气程度与雾同源：雨强 ⊕ 晦明（天空和雾必须一起变脏，否则天地脱节）
         float badT = Mathf.Clamp01(smoothedRainIntensity + dimness * dimnessFogWeight);
 
-        // 夜晚压暗系数：昼色 → 乘性沉入夜色（保底 nightSkyFloor，岩壁月下仍有形）
-        float nightMul = Mathf.Lerp(nightSkyFloor, 1f, _dayLightThisFrame);
-
-        Color top = Color.Lerp(sunnySkyTop, stormSkyTop, badT) * nightMul;
-
-        skyboxMaterial.SetColor("_SkyTop", top);
-        // 关键：地平线 = 本帧雾色（UpdateRain 已含昼夜压暗）→ 远山溶进天空；
-        // 地平线以下从雾色派生（俯视视角下远地形对着这块，配色脱钩会浮成色板）
-        skyboxMaterial.SetColor("_SkyHorizon", _fogColThisFrame);
-        skyboxMaterial.SetColor("_GroundCol", _fogColThisFrame * skyGroundDim);
-
-        // 颜料日盘跟随真实太阳：方向每帧写入；坏天气晕环收敛、日盘隐入云层
+        // —— 相位权重：真实太阳仰角 → 夜/黄昏/白天三相（黄昏=两者之外的余量）——
         var sun = sunForFogBrightness != null ? sunForFogBrightness : RenderSettings.sun;
+        float sunY = sun != null ? -sun.transform.forward.y : 0.5f;
+        float wNight = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(-0.12f, 0.02f, sunY));
+        float wDay = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.10f, 0.35f, sunY));
+        float wGold = Mathf.Clamp01(1f - wNight - wDay);
+
+        // —— 三停色板相位混合，再向暴雨端拉 ——
+        Color zenith = daySkyZenith * wDay + goldSkyZenith * wGold + nightSkyZenith * wNight;
+        Color mid    = daySkyMid    * wDay + goldSkyMid    * wGold + nightSkyMid    * wNight;
+        Color glow   = daySkyGlow   * wDay + goldSkyGlow   * wGold + nightSkyGlow   * wNight;
+        zenith = Color.Lerp(zenith, stormSkyZenith, badT);
+        mid    = Color.Lerp(mid,    stormSkyMid,    badT);
+        glow   = Color.Lerp(glow,   stormSkyGlow,   badT);
+
+        skyboxMaterial.SetColor("_SkyZenith", zenith);
+        skyboxMaterial.SetColor("_SkyMid", mid);
+        skyboxMaterial.SetColor("_HorizonGlowCol", glow);
+        // 雾线停 = 本帧雾色（UpdateRain 已含昼夜色相）→ 远山溶进天空；
+        // 地平线以下同雾色（无限远地面在线性雾里就是雾色）
+        skyboxMaterial.SetColor("_SkyHorizon", _fogColThisFrame);
+        skyboxMaterial.SetColor("_GroundCol", _fogColThisFrame);
+
+        // —— 日侧暖洗：白天淡暖、黄昏拉满；夜/暴雨自动归零 ——
+        Color washCol = wGold > wDay ? goldenWashColor : dayWashColor;
+        float washAmt = (dayWashStrength * wDay + goldenWashStrength * wGold) * (1f - badT);
+        skyboxMaterial.SetColor("_SunWashCol", washCol);
+        skyboxMaterial.SetFloat("_SunWashAmt", washAmt);
+
+        // —— 色带与笔触：storm 低对比色板上色带减半防等值线感 ——
+        skyboxMaterial.SetFloat("_BandingAmount", bandingAmount * (1f - badT * 0.5f));
+        float stroke = strokeDay * wDay + strokeGolden * wGold + strokeNight * wNight;
+        stroke = Mathf.Lerp(stroke, strokeStorm, badT);
+        skyboxMaterial.SetFloat("_StrokeAmount", stroke);
+
+        // 颜料日盘跟随真实太阳：方向每帧写入；坏天气图腾收敛、日盘隐入云层
         if (sun != null)
             skyboxMaterial.SetVector("_SunDir", -sun.transform.forward);
         skyboxMaterial.SetFloat("_SunGlow", Mathf.Lerp(sunnySunGlow, stormSunGlow, badT));
         skyboxMaterial.SetFloat("_SunDiscStrength", (1f - badT * 0.9f) * Mathf.Clamp01(_dayLightThisFrame * 4f));
 
-        // 撒灰星穹：夜里渐显，暴雨云层遮蔽大半
-        float starBlend = (1f - _dayLightThisFrame) * (1f - badT * stormStarHide);
+        // 撒灰星穹：夜相渐显，暴雨云层遮蔽大半
+        float starBlend = wNight * (1f - badT * stormStarHide);
         skyboxMaterial.SetFloat("_StarBlend", starBlend);
     }
     private void ThunderPlay()
