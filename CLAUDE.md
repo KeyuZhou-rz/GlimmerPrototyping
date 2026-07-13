@@ -13,6 +13,22 @@ three principles:
 3. Irreversible changes carry weight — certain world events cannot be undone.
    Never add undo/reset functionality to permanent world state.
 
+4. Mechanisms must interconnect — an isolated mechanism is a dead mechanism.
+   Before adding any new rule/system, name which existing fields it reads
+   and which existing systems react to what it writes. A mechanism that
+   only talks to itself does not ship. (Benchmark: not BotW's player-as-
+   catalyst chemistry, but shared substrates + cross-system propagation.)
+
+5. No trace, no mechanism — every causal link must leave visible evidence
+   in the scene. If a chain step cannot answer "what does the player see
+   of this?", the chain does not exist experientially. Simulation depth
+   that lives only in JSON is zero depth. (Player never sees animals —
+   only their traces; the trace IS the render.)
+
+Design authority: mechanism-interaction design decisions belong to the
+designer, made in Docs/InteractionWorksheet.md. Claude inventories facts
+and implements; it does not invent cross-mechanism interactions unasked.
+
 
 ## Architecture: Three Layers — Never Cross Boundaries
 
@@ -74,10 +90,19 @@ The north star is a single image: African savanna at night, baobab tree,
 hidden animals, vast sky. If a proposed implementation makes the world 
 feel more like a dashboard or a game with rules, it is wrong.
 
+Interaction stance (decided 2026-07-13, benchmark: Mountain):
+no retention mechanics, no daily rewards, no notifications-as-pressure,
+no progress bars, no social features. The only drivers are curiosity and
+emotional projection. Player camera: fixed stage view + click-to-approach
+on traces (option B). Trace-anchored attention markers are allowed as
+"noticing guidance" — they point at places, never expose values.
+
 Ask before implementing any feature that:
 - Gives the user more control over world state
 - Makes world behavior more predictable
 - Adds UI that exposes internal parameters
 
 ## Current Priority
-- Developing sentiment-Engine.
+- Developing sentiment-Engine (L1, decoupled — slice uses SubmitEmotion stubs).
+- Vertical slice: see Docs/InteractionWorksheet.md §6 for the build order;
+  §5 design matrix is filled by the designer, not Claude.
