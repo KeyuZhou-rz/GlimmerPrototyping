@@ -1,6 +1,5 @@
 using UnityEngine;
-using GlimmerDiary.Flora;
-
+using GlimmerDiary.Ecosystem_nonL;
 /// <summary>
 /// Layer 3 绑定层：世界状态（只读） → 视觉组件公开字段。
 /// 每帧读 WorldManager 的只读入口，算目标值并做一层展示层平滑，
@@ -13,7 +12,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
     [Header("绑定目标（场景现有组件，缺省则跳过对应通路）")]
     public EmotionWeatherController weatherController;
     public LightManager lightManager;
-    public EcosystemManager ecosystemManager;
+    public EcosystemManager treePlacement;
 
     [Header("展示层平滑")]
     [Tooltip("指数平滑速率。Layer 2 的值是按天跳变的快照，展示层需要自己的过渡，独立于 E_env 自身的惯性。")]
@@ -29,8 +28,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
     private float _wind;      // [0,1]
     private float _thunder;   // [0,1]
     private float _dimness;   // [0,1]
-    private float _valence;   // [-1,1]
-    private float _arousal;   // [0,1]
+    private float _starVis;   // [0,1]
     private bool _initialized;
 
     void Update()
@@ -57,6 +55,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
         }
 
         float dimnessTarget = env.FogDensity;
+        float starVisTarget = env.StarVisibility;
         float valenceTarget = eEnv != null ? eEnv.V : 0f;
         float arousalTarget = eEnv != null ? eEnv.A : 0.3f;
 
@@ -65,7 +64,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
         {
             // 首帧直接对齐，避免从 0 慢慢爬到当前世界状态
             _rain = rainTarget; _wind = windTarget; _thunder = thunderTarget;
-            _dimness = dimnessTarget; _valence = valenceTarget; _arousal = arousalTarget;
+            _dimness = dimnessTarget;
+            _starVis = starVisTarget;
             _initialized = true;
         }
         else
@@ -75,8 +75,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             _wind    = Mathf.Lerp(_wind,    windTarget,    k);
             _thunder = Mathf.Lerp(_thunder, thunderTarget, k);
             _dimness = Mathf.Lerp(_dimness, dimnessTarget, k);
-            _valence = Mathf.Lerp(_valence, valenceTarget, k);
-            _arousal = Mathf.Lerp(_arousal, arousalTarget, k);
+            _starVis = Mathf.Lerp(_starVis, starVisTarget, k);
         }
     }
 
@@ -84,6 +83,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
     {
         if (!_initialized) return;
         var wm = WorldManager.Instance;
+        var env = wm.GetWorldState();
         if (wm == null) return;
 
         if (weatherController != null && weatherController.allowExternalDrive)
@@ -92,6 +92,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             weatherController.windIntensity    = _wind;
             weatherController.thunderIntensity = _thunder;
             weatherController.dimness          = _dimness;
+            weatherController.starVisibility   = _starVis;
         }
 
         if (lightManager != null)
@@ -102,9 +103,10 @@ public class WorldAtmosphereBinder : MonoBehaviour
             lightManager.SetTimePercent(rhythm.dayProgress);
         }
 
-        if (ecosystemManager != null)
+        if (treePlacement != null)
         {
-            ecosystemManager.SetEmotionState(_valence, _arousal);
+            if (env != null)
+                treePlacement.SetRainfall(env.Rainfall);
         }
     }
 }

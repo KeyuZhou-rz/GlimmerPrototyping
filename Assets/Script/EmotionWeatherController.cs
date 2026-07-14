@@ -14,7 +14,8 @@ public class EmotionWeatherController : MonoBehaviour
     public float windIntensity = 0f;
     [Range(0f, 1f)]
     public float thunderIntensity = 0f;
-
+    [Range(0f, 1f)]
+    public float starVisibility = 0f;
     [Header("晦明（雾的情绪分量，独立于降雨）")]
     [Range(0f, 1f)]
     public float dimness = 0f;               // 默认 0：未接绑定层的场景雾公式退化回原样
@@ -440,7 +441,7 @@ public class EmotionWeatherController : MonoBehaviour
         skyboxMaterial.SetFloat("_SunDiscStrength", (1f - badT * 0.9f) * Mathf.Clamp01(_dayLightThisFrame * 4f));
 
         // 撒灰星穹：夜相渐显，暴雨云层遮蔽大半
-        float starBlend = wNight * (1f - badT * stormStarHide);
+        float starBlend = allowExternalDrive ? starVisibility : wNight * (1f - badT * stormStarHide);
         skyboxMaterial.SetFloat("_StarBlend", starBlend);
     }
     private void ThunderPlay()
