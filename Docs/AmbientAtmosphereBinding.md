@@ -61,7 +61,7 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
 |---|---|---|
 | `GlimmerDiary/Scripts/Data/EmotionData.cs` | `NaturalRhythmState` + `dayProgress` | 新增字段，不序列化，零风险 |
 | `GlimmerDiary/Scripts/Core/NaturalRhythmSystem.cs` | `DayProgress` 属性 + Tick 内赋值 | 纯新增 |
-| `GlimmerDiary/Scripts/WorldManager.cs` | 空闲心跳：`Update()` 每 ~30 真实秒（`[SerializeField]` 可调）只调 `NaturalRhythm.Tick(gameTime)`，不碰 worldEvents/animals/plants/emotionHistory，**不是** SimulatePass | 纯调度新增，不改现有调度顺序 |
+| `GlimmerDiary/Scripts/WorldManager.cs` | 空闲心跳：`Update()` 每 ~30 真实秒（`[SerializeField]` 可调）调 `NaturalRhythm.Tick(gameTime)` 并重译无状态信号 1/2/3/7（`Environment.ConsumeSignals`，信号 7 苍穹含墙钟光照因子，不重译会冻结），不碰 worldEvents/animals/plants/emotionHistory，**不是** SimulatePass | 纯调度新增，不改现有调度顺序 |
 | `ImportedAssets/PleebieJeebies/Scripts/LightManager.cs` | `driveExternally` 开关 + `SetTimePercent(t01)` | 默认 false，旧场景行为不变 |
 | `Script/EmotionWeatherController.cs` | `dimness` + `dimnessFogWeight` 字段；雾公式 `Min(0.01, 0.015·rain + weight·dimness)` | dimness=0 时退化回原公式（加法不减法） |
 | `Script/WorldAtmosphereBinder.cs` | **新建**，Layer 3 绑定层 | — |
@@ -93,4 +93,4 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
 - 绑定层永远只读世界状态；视觉参数绑定 E_env（经 State/信号），不绑 E_current 原始情绪。
 - 展示层平滑是渲染关切，独立于情绪惯性 α——两层平滑各管各的。
 - `dayProgress` 单一写者是 `NaturalRhythmSystem.Tick()`；渲染层不得自读 `DateTime.Now` 另起时钟。
-- 空闲心跳只重算节律快照，永不推进日历、永不触发模拟。
+- 空闲心跳只重算节律快照 + 重译无状态信号（`ConsumeSignals`，零积分），永不推进日历、永不触发模拟、永不碰有状态积分（Soil/Decay 等只在 SimulatePass 走 `UpdateFromEEnv`）。

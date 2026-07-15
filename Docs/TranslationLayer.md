@@ -26,7 +26,7 @@
 
 | 世界字段 | 单一写者 | 信号来源 | 所有权状态 |
 |---|---|---|---|
-| `State.Rainfall / WindSpeed / FogDensity / StarVisibility` | `WorldEnvironmentSystem.UpdateFromEEnv` | 信号 1/2/3/7（翻译层产出） | ✅ Step 2 |
+| `State.Rainfall / WindSpeed / FogDensity / StarVisibility` | `WorldEnvironmentSystem.ConsumeSignals`（SimulatePass 经 `UpdateFromEEnv` 内联调用；启动/重置/空闲心跳直调，幂等零积分） | 信号 1/2/3/7（翻译层产出） | ✅ Step 2 / 心跳新鲜度 2026-07-15 |
 | `loc.waterLevel` | `PropagateEnvironmentToLocations` | `State.Rainfall`（= 信号 1 Wetness） | ✅ 本就干净 |
 | `loc.soilMoisture` | `PropagateEnvironmentToLocations` | `State.Rainfall`（= 信号 1 Wetness） | ✅ Step 1b |
 | `loc.vegetationDensity` | `VegetationSystem.Tick` | 虫害（weaver 缺席）+ 气候基线[SEAM 信号 4/5] | ✅ Step 1 |
@@ -45,6 +45,7 @@
 - **Step 1b** (2026-07-01)：`PropagateEnvironmentToLocations` 扩写 `loc.soilMoisture`（分区 soakRate）。
 - **Step 2** (2026-07-01)：新建 `TranslationLayer`，落地无状态信号 1/2/3/7；`UpdateFromEEnv` 退化为消费者；苍穹由 V 驱动改 T-read。有状态 4/5/6 暂留原处。见记忆 `translation-step2-env-weather`。
 - **所有权表核实** (2026-07-02)：核实 cells 5/6 单写者不变式（见上表 ✅/⚠）。tree `vitality`/`floweringReadiness`（internalState，drive 独占）、`isFlowering`/`lastFlowerDate`（TickTree，grep 确认无活跃规则/关系资产写）均 ✅；animal `behavior`/`internalState`（drive 独占）、`QuietConvergence`（detector 独占）、`State.CreatureAbundance`（UpdateFromEEnv）均 ✅；`isPresent`/`location` 为设计多写者（drive 连续 + 规则/关系离散），已文档化。**Track A（所有权表）目标达成**：每个世界字段单写者或文档化的设计多写者。见记忆 `translation-ownership-table-track`。
+- **无状态/有状态入口拆分** (2026-07-15)：`WorldEnvironmentSystem` 拆出幂等零积分的 `ConsumeSignals`（信号 1/2/3/7 镜像）；`UpdateFromEEnv` 收窄为仅 SimulatePass 每 tick 一次（有状态 4/5/6 积分）。修三个病灶：星穹夜门冻结（心跳只刷 rhythm 不重译信号 7，lightIntensity 新值算完即弃）、启动/重置多积一步（Start/Reinit 走 UpdateFromEEnv 把 Soil/Decay 推一天份）、Reinit 不重置 Environment（跨场景脏积分）。
 - **待办（Track B，可选、更深轨道）**：信号 4/5/6 迁入 `TranslationLayer`（tree 格 → `tree.vitality` / `loc.vegetationDensity` 气候基线；animal 格 → `CreatureAbundance`）。不影响所有权表。
 
 ## 关键不变式
