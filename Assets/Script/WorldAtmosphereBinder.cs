@@ -38,7 +38,6 @@ public class WorldAtmosphereBinder : MonoBehaviour
 
         var env    = wm.GetWorldState();
         var rhythm = wm.GetRhythmState();
-        var eEnv   = wm.WorldSave != null ? wm.WorldSave.currentEEnv : null;
         if (env == null || rhythm == null) return;
 
         // —— 目标值计算（映射表见 Docs/AmbientAtmosphereBinding.md）——
@@ -56,8 +55,6 @@ public class WorldAtmosphereBinder : MonoBehaviour
 
         float dimnessTarget = env.FogDensity;
         float starVisTarget = env.StarVisibility;
-        float valenceTarget = eEnv != null ? eEnv.V : 0f;
-        float arousalTarget = eEnv != null ? eEnv.A : 0.3f;
 
         // —— 展示层平滑（指数趋近，帧率无关）——
         if (!_initialized)
@@ -83,8 +80,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
     {
         if (!_initialized) return;
         var wm = WorldManager.Instance;
-        var env = wm.GetWorldState();
         if (wm == null) return;
+        var env = wm.GetWorldState();
 
         if (weatherController != null && weatherController.allowExternalDrive)
         {
