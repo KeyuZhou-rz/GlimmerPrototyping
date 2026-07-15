@@ -110,7 +110,9 @@ namespace GlimmerDiary.Core
         }
 
 
-        private static Season GetSeason(int month)
+        // month→季节的唯一映射（世界日历 12 月制）。驱动层/检测器拿不到 rhythm 快照时也走这里，
+        // 不得在别处用 month 区间重算季节——那会在改季节定义时留下分叉副本。
+        public static Season GetSeason(int month)
         {
             return month switch
             {

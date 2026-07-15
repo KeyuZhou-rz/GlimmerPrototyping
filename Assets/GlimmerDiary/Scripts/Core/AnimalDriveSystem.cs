@@ -67,6 +67,12 @@ namespace GlimmerDiary.Core
             _rhythm = rhythm;
         }
 
+        // 季节单一来源：优先读节律快照（每日 AdvanceCalendar 已从 gameTime 刷新），
+        // 测试路径 SetEnvironment(null,null) 时回退到同一映射 GetSeason(gameTime.month)。
+        // 不得在本系统内用 month 区间重算季节——那是已被此属性收敛掉的分叉副本。
+        private Season CurrentSeason =>
+            _rhythm != null ? _rhythm.season : NaturalRhythmSystem.GetSeason(_save.gameTime.month);
+
         private class Snap
         {
             public bool                isPresent;
@@ -289,9 +295,9 @@ namespace GlimmerDiary.Core
         private void TickMigratoryBird(AnimalEntity a, Dictionary<string, Snap> snap, GameDateTime time)
         {
             var cur = snap[a.speciesId].st;
-            int month = _save.gameTime.month;
-            bool autumn = month >= 9 && month <= 11;
-            bool spring = month >= 3 && month <= 5;
+            Season season = CurrentSeason;
+            bool autumn = season == Season.Autumn;
+            bool spring = season == Season.Spring;
             float V = _save.currentEEnv?.V ?? 0f;
 
             // 迁来 → 离去边沿：刚迁来（rule 翻转 isPresent）时重置冲动
@@ -375,7 +381,6 @@ namespace GlimmerDiary.Core
             var tree = _registry.GetPlant("baobab_main");
             if (tree?.internalState == null) return;
             var st = tree.internalState;
-            int month = _save.gameTime.month;
             float V = _save.currentEEnv?.V ?? 0f;
 
             // vitality：E_env.V 长期积分
@@ -401,7 +406,7 @@ namespace GlimmerDiary.Core
             }
 
             // 开花：vitality 高且春季 → 累积；越阈触发
-            bool spring = month >= 3 && month <= 5;
+            bool spring = CurrentSeason == Season.Spring;
             if (st.vitality > 0.6f && spring)
                 st.floweringReadiness += TREE_FLOWER_GAIN;
             if (st.floweringReadiness >= 1f && !tree.isFlowering)

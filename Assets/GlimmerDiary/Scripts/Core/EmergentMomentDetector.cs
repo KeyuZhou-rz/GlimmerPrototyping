@@ -93,19 +93,20 @@ namespace GlimmerDiary.Core
         // ── 完整检测：冷却（确定性稀有） → 谓词 → 概率门（是概率不是保证） → emit。──
         public void Detect(GameDateTime now)
         {
-            if (ToDays(now) - _lastFiredDay < _tuning.cooldownDays) return;
+            if (now.ToAbsoluteDays() - _lastFiredDay < _tuning.cooldownDays) return;
             if (!WouldFire(out string zone, out string speciesCsv)) return;
 
             float p = IsLongestNight(now) ? _tuning.winterP : _tuning.baseP;
             if (Random.value >= p) return;
 
             Emit(zone, speciesCsv, now);
-            _lastFiredDay = ToDays(now);
+            _lastFiredDay = now.ToAbsoluteDays();
         }
 
-        // 最长的夜 = 冬季（仅用 gameTime.month，单一日历，不读真实墙钟 / rhythm.season）
+        // 最长的夜 = 冬季（仅用 gameTime.month，单一日历，不读真实墙钟；
+        // month→季节映射走 NaturalRhythmSystem.GetSeason 单一来源，不在此重列月份区间）
         private static bool IsLongestNight(GameDateTime now) =>
-            now.month == 12 || now.month == 1 || now.month == 2;
+            NaturalRhythmSystem.GetSeason(now.month) == Season.Winter;
 
         // 字段约定同 AnimalDriveSystem.Emit：sourceId=施动者、targetId=zone、payload=细节(物种csv)
         private void Emit(string zone, string speciesCsv, GameDateTime now)
@@ -120,8 +121,5 @@ namespace GlimmerDiary.Core
             });
             Debug.Log($"[WorldEvent] {WorldEventType.QuietConvergence}  @{zone}  [{speciesCsv}]");
         }
-
-        private static int ToDays(GameDateTime d) =>
-            (d.year - 1) * 360 + (d.month - 1) * 30 + d.day;
     }
 }
