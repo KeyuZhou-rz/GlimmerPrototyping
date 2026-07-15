@@ -523,19 +523,8 @@ public class WorldTraceBinder : MonoBehaviour
         }
     }
 
-    /// <summary>解析 "Y1-M3-D12"（镜像 NarrativeRuleEngine.ParseDate；容错返回第 1 天）。</summary>
-    private static GameDateTime ParseKeyDate(string key)
-    {
-        var d = new GameDateTime();
-        if (string.IsNullOrEmpty(key)) return d;
-        var parts = key.Split('-');
-        if (parts.Length != 3) return d;
-        int.TryParse(parts[0].TrimStart('Y'), out d.year);
-        int.TryParse(parts[1].TrimStart('M'), out d.month);
-        int.TryParse(parts[2].TrimStart('D'), out d.day);
-        return d;
-    }
+    // 日期解析/日序公式收敛到 GameDateTime（单一来源），此处只留空值容错
+    private static GameDateTime ParseKeyDate(string key) => GameDateTime.ParseKey(key);
 
-    private static int ToDays(GameDateTime d) =>
-        d == null ? 0 : (d.year - 1) * 360 + (d.month - 1) * 30 + d.day;
+    private static int ToDays(GameDateTime d) => d == null ? 0 : d.ToAbsoluteDays();
 }

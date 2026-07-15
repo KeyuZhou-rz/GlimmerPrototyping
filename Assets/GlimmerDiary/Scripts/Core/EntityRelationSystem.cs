@@ -53,8 +53,8 @@ namespace GlimmerDiary.Core
         {
             if (!_lastTriggered.TryGetValue(rel.relationId, out var lastDate))
                 return true;
-            var last = ParseDate(lastDate);
-            return ToDays(now) - ToDays(last) >= rel.cooldownDays;
+            var last = GameDateTime.ParseKey(lastDate);
+            return now.ToAbsoluteDays() - last.ToAbsoluteDays() >= rel.cooldownDays;
         }
 
         // ── 条件判断 ─────────────────────────────────
@@ -266,7 +266,7 @@ namespace GlimmerDiary.Core
             string result = template;
             result = result.Replace("{date}",   gameTime.ToDisplayString());
             result = result.Replace("{season}", _rhythm?.season.ToString() ?? "");
-            result = result.Replace("{sky}",    PickSkyDescription(gameTime));
+            result = result.Replace("{sky}",    SkyPhrase.Pick(gameTime, _envState));
 
             if (variables != null)
             {
@@ -281,36 +281,5 @@ namespace GlimmerDiary.Core
             return result;
         }
 
-        private string PickSkyDescription(GameDateTime gameTime)
-        {
-            float moonPhase = (gameTime.day - 1) / 29f;
-            float rain = _envState?.Rainfall  ?? 0f;
-            float fog  = _envState?.FogDensity ?? 0f;
-
-            if (fog  > 0.6f) return PickRandom("雾气漫上来", "雾还没散", "看不见远处");
-            if (rain > 0.5f) return PickRandom("雨还在下",   "雨声很密", "积水反着光");
-            if (moonPhase < 0.1f) return PickRandom("新月，天很黑", "星群清晰",   "没有月亮");
-            if (moonPhase > 0.9f) return PickRandom("满月",         "月光很亮",   "影子很清楚");
-            if (moonPhase < 0.5f) return PickRandom("月牙高悬",     "月牙偏西",   "细细的一弯月");
-            return PickRandom("月亮将圆未圆", "星群偏移", "夜风很轻");
-        }
-
-        private static string PickRandom(params string[] options) =>
-            options[UnityEngine.Random.Range(0, options.Length)];
-
-        // ── 日期工具 ─────────────────────────────────
-        private static GameDateTime ParseDate(string key)
-        {
-            var parts = key.Split('-');
-            return new GameDateTime
-            {
-                year  = int.Parse(parts[0].Substring(1)),
-                month = int.Parse(parts[1].Substring(1)),
-                day   = int.Parse(parts[2].Substring(1))
-            };
-        }
-
-        private static int ToDays(GameDateTime d) =>
-            (d.year - 1) * 360 + (d.month - 1) * 30 + d.day;
     }
 }

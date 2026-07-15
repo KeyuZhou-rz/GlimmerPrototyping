@@ -64,7 +64,7 @@ namespace GlimmerDiary.Core
             if (!CooldownPassed(key, time, BEHAVIOR_COOLDOWN_DAYS)) return;
 
             Emit($"behavior_{key}", Pick(templates), time);
-            _lastNarratedDay[key] = ToDays(time);
+            _lastNarratedDay[key] = time.ToAbsoluteDays();
         }
 
         private void NarrateEvent(WorldEvent e, GameDateTime time)
@@ -321,22 +321,7 @@ namespace GlimmerDiary.Core
         {
             return template
                 .Replace("{date}", time.ToDisplayString())
-                .Replace("{sky}",  PickSky(time));
-        }
-
-        // 文本天气与画面天气同源：_env 即 WorldAtmosphereBinder 渲染所读的
-        // WorldEnvironmentState（Rainfall→雨粒子、FogDensity→dimness），措辞与画面一致；
-        // 月相项按 day 推导，是纯文本风味，无渲染对应。
-        private string PickSky(GameDateTime time)
-        {
-            float moon = (time.day - 1) / 29f;
-            float rain = _env?.Rainfall  ?? 0f;
-            float fog  = _env?.FogDensity ?? 0f;
-            if (fog  > 0.6f) return Pick("雾气漫上来", "雾还没散", "看不见远处");
-            if (rain > 0.5f) return Pick("雨还在下", "雨声很密", "积水反着光");
-            if (moon < 0.1f) return Pick("新月，天很黑", "星群清晰", "没有月亮");
-            if (moon > 0.9f) return Pick("满月", "月光很亮", "影子很清楚");
-            return Pick("月亮将圆未圆", "夜风很轻", "星群偏移");
+                .Replace("{sky}",  SkyPhrase.Pick(time, _env));
         }
 
         private static string Pick(params string[] options) =>
@@ -345,10 +330,7 @@ namespace GlimmerDiary.Core
         private bool CooldownPassed(string key, GameDateTime now, int cooldownDays)
         {
             if (!_lastNarratedDay.TryGetValue(key, out int last)) return true;
-            return ToDays(now) - last >= cooldownDays;
+            return now.ToAbsoluteDays() - last >= cooldownDays;
         }
-
-        private static int ToDays(GameDateTime d) =>
-            (d.year - 1) * 360 + (d.month - 1) * 30 + d.day;
     }
 }

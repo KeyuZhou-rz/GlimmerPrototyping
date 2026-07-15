@@ -14,6 +14,23 @@ namespace GlimmerDiary.Data
         public string ToDisplayString() => $"第{year}年 {month}月{day}日";
         public string ToKeyString()     => $"Y{year}-M{month}-D{day}";
 
+        // 世界绝对日序（Y1-M1-D1 = 1）。冷却/年龄/日期差的唯一公式——
+        // 各系统不得私抄 (year-1)*360+... 副本，改日历制式只改这里。
+        public int ToAbsoluteDays() => (year - 1) * 360 + (month - 1) * 30 + day;
+
+        // 解析 ToKeyString 产出的 "Y1-M3-D12"（唯一解析器，容错：格式不符返回默认日期）
+        public static GameDateTime ParseKey(string key)
+        {
+            var d = new GameDateTime();
+            if (string.IsNullOrEmpty(key)) return d;
+            var parts = key.Split('-');
+            if (parts.Length != 3) return d;
+            int.TryParse(parts[0].TrimStart('Y'), out d.year);
+            int.TryParse(parts[1].TrimStart('M'), out d.month);
+            int.TryParse(parts[2].TrimStart('D'), out d.day);
+            return d;
+        }
+
         public void Advance(int days = 1)
         {
             day += days;
