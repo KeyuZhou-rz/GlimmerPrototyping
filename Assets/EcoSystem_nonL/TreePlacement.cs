@@ -97,8 +97,19 @@ namespace GlimmerDiary.Ecosystem_nonL
         // ---Instantiate---
         [Header("Instantiation")]
         private readonly List<GameObject> _spawnedTrees = new();
+        private readonly List<float> _showAtThresholds = new();
         public Transform treeParent;
         public bool populateOnStart = true;
+
+        public void SetRainfall(float rainfall)
+        {
+            for (int i = 0; i < _spawnedTrees.Count; i++)
+            {
+                if (_spawnedTrees[i] == null) continue;
+
+                _spawnedTrees[i].SetActive(rainfall >= _showAtThresholds[i]);
+            }
+        }
 
 
         private void Awake()
@@ -108,17 +119,21 @@ namespace GlimmerDiary.Ecosystem_nonL
         }
 
         // instantiate
-        private void SpawnFromData(List<TreeData> trees)
+        private void SpawnfromData(List<TreeData> trees)
         {
             foreach(var t in trees)
             {
                 if (t.speciesIndex < 0 || t.speciesIndex >= _allSpecies.Count) continue;
+
                 var prefab = _allSpecies[t.speciesIndex];
                 if (prefab == null) continue;
 
+
+                // instantiate
                 var go = Instantiate(prefab, t.position, Quaternion.identity, treeParent != null ? treeParent : transform);
 
                 _spawnedTrees.Add(go);
+                _showAtThresholds.Add(t.showAt);
             }
         }
 
@@ -146,11 +161,18 @@ namespace GlimmerDiary.Ecosystem_nonL
 
                 if (Random.value < density && !TooClose(point, trees))
                 {
+                    float baseThreshold = Random.value;
+                    float zonebias = zone switch
+                    {
+                        Zone.Water => 0.5f, //水边
+                        Zone.Cliff => 1.3f,
+                        _ => 1.0f, 
+                    };
                     trees.Add(new TreeData
                     {
                         position = point,
                         speciesIndex = PickSpecies(zone),
-                        showAt = Random.value   // fixed birth-time threshold for later gating
+                        showAt = Mathf.Clamp01(baseThreshold * zonebias)   // fixed birth-time threshold for later gating
                     });
                 }
             }
@@ -326,7 +348,7 @@ namespace GlimmerDiary.Ecosystem_nonL
         private void PopulatewithTree()
         {
             var result = Populate();
-            SpawnFromData(result);
+            SpawnfromData(result);
 
             Debug.Log($"[EcosystemManager] Populated {result.Count} trees from {attempts} attempts " +
                       $"(seed {seed}). Species pool size {_allSpecies.Count}.");
@@ -340,7 +362,7 @@ namespace GlimmerDiary.Ecosystem_nonL
             }
             _spawnedTrees.Clear();
         }
-        
+         
 
         private void OnDrawGizmosSelected()
         {
