@@ -91,12 +91,15 @@ public class WorldManager : MonoBehaviour
 
     void Start()
     {
-        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
+        // 初始化天气快照：只消费无状态信号，不走 UpdateFromEEnv 的有状态积分——
+        // 启动不是一天，重启 app 不应让 Soil/Decay 多走一步（Awake catch-up 已按天模拟过）。
+        Environment.ConsumeSignals(
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
     }
 
     // 空闲心跳：会话内无日记输入时也定期重算节律快照（dayProgress/lightIntensity 跟随真实墙钟），
-    // 只刷新 NaturalRhythm，不碰 worldEvents/animals/plants/emotionHistory，不是 SimulatePass。
+    // 并重译无状态天气信号（信号 7 苍穹含 lightIntensity 因子，不重译则星空冻结在上次模拟时刻）。
+    // 只刷新 NaturalRhythm + 无状态信号，不碰 worldEvents/animals/plants/emotionHistory，不是 SimulatePass。
     [SerializeField, Tooltip("节律心跳间隔（真实秒）。dayProgress 一天走一圈，30 秒的变化量已低于肉眼阈值。")]
     private float rhythmHeartbeatSeconds = 30f;
     private float _rhythmHeartbeatTimer;
@@ -107,6 +110,8 @@ public class WorldManager : MonoBehaviour
         if (_rhythmHeartbeatTimer < rhythmHeartbeatSeconds) return;
         _rhythmHeartbeatTimer = 0f;
         NaturalRhythm.Tick(_saveData.gameTime);
+        Environment.ConsumeSignals(
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
     }
 
     // 自主软上限：catch-up 总是按完整墙钟天数推进 gameTime 日历，
@@ -226,8 +231,11 @@ public class WorldManager : MonoBehaviour
         EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory);
         Registry.Initialize(_saveData);
         NaturalRhythm.Tick(_saveData.gameTime);
-        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
+        // 环境积分器随存档一起归零（Soil/Decay/Vegetation 等有状态字段），
+        // 再只消费无状态信号刷新天气快照——重置不是一天，不走 UpdateFromEEnv 积分。
+        Environment = new WorldEnvironmentSystem();
+        Environment.ConsumeSignals(
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
         _ruleEngine = new NarrativeRuleEngine(Registry, _saveData);
         _ruleEngine.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem = new EntityRelationSystem(Registry, _saveData);
@@ -246,10 +254,14 @@ public class WorldManager : MonoBehaviour
     // 放在规则评估之前调用，让规则看到最新的地点状态
     // 信号 1 Wetness 已由翻译层落地（State.Rainfall = signals.Wetness）；本传播函数仍经 State.Rainfall
     // 消费，改读 signals.Wetness 的消费者迁移延后。soilMoisture 读者（植被）待翻译层复合式决定。
-    private void PropagateEnvironmentToLocations()
+    private void PropagateEnvironmentToLocations() =>
+        PropagateRainfallToLocations(_saveData, Environment.State.Rainfall);
+
+    // 静态入口：EditMode 管线镜像（AnimalDriveSmokeTest）直接复用，
+    // 速率表只此一份——不得在测试里手抄副本。
+    public static void PropagateRainfallToLocations(WorldSaveData save, float rain)
     {
-        float rain = Environment.State.Rainfall;
-        foreach (var loc in _saveData.locations)
+        foreach (var loc in save.locations)
         {
             // 各地点积水速率不同：低洼地最慢排水，东侧高地最快
             float accRate = loc.locationId switch

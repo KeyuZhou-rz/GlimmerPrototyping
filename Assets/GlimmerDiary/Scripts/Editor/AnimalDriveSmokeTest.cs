@@ -167,37 +167,16 @@ namespace GlimmerDiary.Editor
             allRelations.RemoveAll(r => r != null && retired.Contains(r.relationId));
 
             rhythm.Tick(save.gameTime);
-            env.UpdateFromEEnv(inertia.CurrentEEnv, translation.Translate(inertia.CurrentEEnv, rhythm.State));
+            // 初始化只消费无状态信号（镜像 WorldManager.Start）：启动不是一天，不多走积分
+            env.ConsumeSignals(translation.Translate(inertia.CurrentEEnv, rhythm.State));
 
             // 一次完整模拟（不推进日历），对应 WorldManager.SimulatePass
             void Simulate()
             {
                 var signals = translation.Translate(inertia.CurrentEEnv, rhythm.State);
                 env.UpdateFromEEnv(inertia.CurrentEEnv, signals);
-                float rain = env.State.Rainfall;
-                foreach (var loc in save.locations)
-                {
-                    float accRate = loc.locationId switch
-                    {
-                        "lowland"       => 0.30f,
-                        "riverbank"     => 0.22f,
-                        "center"        => 0.15f,
-                        "highland_east" => 0.10f,
-                        "stone_area"    => 0.08f,
-                        _               => 0.15f
-                    };
-                    loc.waterLevel = Mathf.Clamp01(loc.waterLevel + rain * accRate - 0.03f);
-                    float soakRate = loc.locationId switch
-                    {
-                        "lowland"       => 0.15f,
-                        "riverbank"     => 0.12f,
-                        "center"        => 0.10f,
-                        "highland_east" => 0.07f,
-                        "stone_area"    => 0.04f,
-                        _               => 0.10f
-                    };
-                    loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * soakRate - 0.02f);
-                }
+                // 水位/湿度传播直接复用 WorldManager 的静态实现——速率表单一来源
+                WorldManager.PropagateRainfallToLocations(save, env.State.Rainfall);
                 vegetation.Tick(save.gameTime);   // loc.vegetationDensity 单一写者（虫害）；驱动层只读
                 save.currentEEnv    = inertia.CurrentEEnv;
                 save.emotionHistory = inertia.History;
@@ -266,8 +245,8 @@ namespace GlimmerDiary.Editor
             public EmergentMomentTuning             emergentTuning; // 可改 baseP/winterP=1 做确定性
         }
 
-        // 世界绝对日序（用于断言推进天数）：每月30天、每年12月
-        private static int AbsDay(GameDateTime t) => (t.year - 1) * 360 + (t.month - 1) * 30 + t.day;
+        // 世界绝对日序（用于断言推进天数）——公式收敛到 GameDateTime 单一来源
+        private static int AbsDay(GameDateTime t) => t.ToAbsoluteDays();
 
         [MenuItem("GlimmerDiary/Test Full Pipeline (Flood)")]
         public static void RunFullPipelineFlood()
