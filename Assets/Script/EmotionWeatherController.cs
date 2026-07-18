@@ -54,17 +54,17 @@ public class EmotionWeatherController : MonoBehaviour
 
     [Header("天空与能见度 (Fog)")]
     public Color stormFogColor = new Color(0.20f, 0.22f, 0.26f);
-    public Color sunnyFogColor = new Color(0.66f, 0.62f, 0.55f);
+    public Color sunnyFogColor = new Color(0.70f, 0.66f, 0.56f);   // 暖尘霾(草原正午的空气:尘埃暖意,非奶白)
     [Tooltip("夜晚雾亮度跟随的平行光（留空自动取 RenderSettings.sun）")]
     public Light sunForFogBrightness;
     [Range(0f, 1f), Tooltip("光照全灭时雾保留的亮度比例——夜里雾应沉入夜色而非发白")]
     public float nightFogFloor = 0.18f;
 
     [Header("线性雾可见距离")]
-    public float fogLinearSunnyStart = 45f;
-    public float fogLinearSunnyEnd = 210f;
-    public float fogLinearStormStart = 16f;
-    public float fogLinearStormEnd = 95f;
+    public float fogLinearSunnyStart = 60f;
+    public float fogLinearSunnyEnd = 300f;   // 推出地形对角线(~226m):远山只柔化不溶解
+    public float fogLinearStormStart = 30f;
+    public float fogLinearStormEnd = 140f;   // 风暴仍重,但中景可读
 
     [Header("对外输出（植物生长）")]
     [Range(0f, 1f)] public float currentWaterSaturation;
@@ -86,15 +86,15 @@ public class EmotionWeatherController : MonoBehaviour
 
     // 四相色板（TLD/KRZ 完成度轮）：每相 zenith 天顶 / mid 中天 / glow 地平辉带。
     // 相位权重由真实太阳仰角导出，天空不再依赖"单一色板×乘法压暗"。
-    [Header("天空 · 白天（尘蓝苍白，保 demo 基调）")]
-    public Color daySkyZenith = new Color(0.36f, 0.46f, 0.56f);
-    public Color daySkyMid    = new Color(0.56f, 0.60f, 0.62f);
-    public Color daySkyGlow   = new Color(0.78f, 0.74f, 0.66f);
+    [Header("天空 · 白天（草原碧空:深碧天顶/澄蓝中天/暖尘辉线,2026-07-18 脱离苍白 demo 基调）")]
+    public Color daySkyZenith = new Color(0.22f, 0.44f, 0.70f);
+    public Color daySkyMid    = new Color(0.45f, 0.64f, 0.78f);
+    public Color daySkyGlow   = new Color(0.86f, 0.78f, 0.60f);
 
-    [Header("天空 · 黄昏/黎明（戏剧带）")]
-    public Color goldSkyZenith = new Color(0.30f, 0.38f, 0.46f);
-    public Color goldSkyMid    = new Color(0.62f, 0.52f, 0.48f);
-    public Color goldSkyGlow   = new Color(0.95f, 0.62f, 0.38f);
+    [Header("天空 · 黄昏/黎明（戏剧带·残阳参考：紫天顶/玫瑰中天/热珊瑚辉带）")]
+    public Color goldSkyZenith = new Color(0.40f, 0.33f, 0.50f);   // 灰紫(残阳参考上天空)
+    public Color goldSkyMid    = new Color(0.82f, 0.44f, 0.50f);   // 玫瑰
+    public Color goldSkyGlow   = new Color(1.00f, 0.52f, 0.30f);   // 热珊瑚橙
 
     [Header("天空 · 夜（深海军，有色相立场）")]
     public Color nightSkyZenith = new Color(0.09f, 0.12f, 0.19f);
@@ -113,6 +113,16 @@ public class EmotionWeatherController : MonoBehaviour
     [Range(0f, 1f)] public float goldenWashStrength = 0.45f;
     public Color dayWashColor = new Color(0.90f, 0.82f, 0.68f);
     [Range(0f, 1f)] public float dayWashStrength = 0.15f;
+
+    [Header("天空 · 残阳晕染（低日角点燃:日侧白热核+珊瑚宽带,反日粉紫维纳斯带）")]
+    public Color dayHaloColor  = new Color(0.95f, 0.75f, 0.55f);  // 白天低日角(罕见)
+    public Color goldHaloColor = new Color(1.00f, 0.48f, 0.28f);  // 热珊瑚
+    [Range(0f, 1f)] public float haloStrength = 0.90f;
+    public Color antiGlowColor = new Color(0.80f, 0.42f, 0.52f);  // 粉紫余晖拱
+    [Range(0f, 1f)] public float antiGlowStrength = 0.65f;
+    [Tooltip("日盘颜料:平时赭橙,低日角白热化(沉日的白热核)")]
+    public Color sunTintDay = new Color(1.0f, 0.72f, 0.42f);
+    public Color sunTintLow = new Color(1.0f, 0.88f, 0.70f);
 
     [Header("天空 · 色带与笔触（相位驱动）")]
     [Range(0f, 1f), Tooltip("色带量化强度；storm 相自动减半防等值线感")]
@@ -427,6 +437,16 @@ public class EmotionWeatherController : MonoBehaviour
         float washAmt = (dayWashStrength * wDay + goldenWashStrength * wGold) * (1f - badT);
         skyboxMaterial.SetColor("_SunWashCol", washCol);
         skyboxMaterial.SetFloat("_SunWashAmt", washAmt);
+
+        // —— 残阳晕染:太阳贴地平线才燃(|sunY|<~0.2),金相拉满,坏天气熄灭 ——
+        //    日出入画(北);日落太阳在镜头背后,北天只剩反日维纳斯带 ——
+        float elevMask = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.015f, 0.22f, Mathf.Abs(sunY)));
+        skyboxMaterial.SetColor("_HaloCol", Color.Lerp(dayHaloColor, goldHaloColor, wGold));
+        skyboxMaterial.SetFloat("_HaloAmt", elevMask * (0.30f + 0.70f * wGold) * haloStrength * (1f - badT));
+        skyboxMaterial.SetColor("_AntiGlowCol", antiGlowColor);
+        skyboxMaterial.SetFloat("_AntiGlowAmt", elevMask * antiGlowStrength * (1f - badT));
+        // 日盘颜料:低日角白热化(沉日的白热核)
+        skyboxMaterial.SetColor("_SunTint", Color.Lerp(sunTintDay, sunTintLow, elevMask));
 
         // —— 色带与笔触：storm 低对比色板上色带减半防等值线感 ——
         skyboxMaterial.SetFloat("_BandingAmount", bandingAmount * (1f - badT * 0.5f));

@@ -8,6 +8,10 @@ Shader "Glimmer/SkyGradient"
     //   夜空 = 点描撒灰银河（ǀXam 神话：少女掷灰成河 —— 骨白灰烬点 + 赭红余烬
     //          + 炭黑暗裂谷纵贯）+ 骨白/赭红双色星点，
     //          整个星穹绕斜轴缓慢旋转 —— 世界自己的生命，与输入无关。
+    //   残阳 = 低日角时水平展宽、竖向压缩的颜料晕染（日侧白热核+珊瑚宽带、
+    //          反日侧粉紫维纳斯带，全部过 BandT 色带 —— 2026-07-18 设计者
+    //          修订"废连续光晕"决议：光晕回归，但以岩画色带语言而非摄影语言）；
+    //          日出入画（北），日落走反日余晖（rig 物理：日落太阳在镜头背后）。
     // 零贴图、单 pass、无光照 include；_SunDir/_StarBlend/_SkyHorizon 由
     // EmotionWeatherController 独家驱动（单写者），shader 不读 URP 光源数据。
     Properties
@@ -28,6 +32,12 @@ Shader "Glimmer/SkyGradient"
         [Header(Sunward warm wash. TLD style azimuthal asymmetry)]
         _SunWashCol ("Wash Color",    Color) = (0.90, 0.82, 0.68, 1)
         _SunWashAmt ("Wash Strength", Range(0, 1)) = 0.15
+
+        [Header(Afterglow bleed. low sun only, banded pigment not photo glow)]
+        _HaloCol       ("Halo Color",          Color) = (1.0, 0.48, 0.28, 1)
+        _HaloAmt       ("Halo Strength",       Range(0, 1)) = 0
+        _AntiGlowCol   ("Anti Sun Afterglow",  Color) = (0.80, 0.42, 0.52, 1)
+        _AntiGlowAmt   ("Anti Glow Strength",  Range(0, 1)) = 0
 
         [Header(Totem sun. dir written by controller from the real light)]
         _SunDir        ("Sun Direction",        Vector) = (0, 1, 0, 0)
@@ -87,6 +97,8 @@ Shader "Glimmer/SkyGradient"
                 float  _BandingAmount;
                 half4  _SunWashCol;
                 float  _SunWashAmt;
+                half4  _HaloCol, _AntiGlowCol;
+                float  _HaloAmt, _AntiGlowAmt;
                 float4 _SunDir;
                 half4  _SunTint;
                 float  _SunSize, _SunGlow, _SunDiscStrength, _SunEdgeRagged;
@@ -226,10 +238,13 @@ Shader "Glimmer/SkyGradient"
                 }
                 else
                 {
-                    // 方位因子提前算：辉带色本身要按日侧/背日侧调制
+                    // 方位因子提前算：辉带色本身要按日侧/背日侧调制。
+                    // saturate 必须留：反日子午线上 dot 会浮点舍入到 -1-ε，
+                    // azim 变负 → 下方三处 pow(azim,…) 产 NaN → Bloom 把
+                    // NaN 涂成贯穿天顶的白色光柱（"第二个太阳"假象）
                     float2 dXZ = normalize(d.xz + float2(1e-5, 0));
                     float2 sXZ = normalize(sunDirW.xz + float2(1e-5, 0));
-                    float azim = dot(dXZ, sXZ) * 0.5 + 0.5;
+                    float azim = saturate(dot(dXZ, sXZ) * 0.5 + 0.5);
 
                     // 辉带/中天方位调制（TLD 关键）：日侧满暖，背日侧收敛向冷色
                     // （否则黄昏琥珀辉带和玫瑰中天全方位铺开，背日侧也被染橙粉）
@@ -260,6 +275,39 @@ Shader "Glimmer/SkyGradient"
                     col = lerp(col, _SunWashCol.rgb, wash);
                     float coolSide = (1.0 - azim) * horizProx * 0.18;
                     col = lerp(col, _SkyZenith.rgb, BandT(coolSide, 3.0, dith));
+
+                    // —— 1c. 残阳晕染：只在低日角点燃（贴地平线才燃，日出/日落）。
+                    //         日侧 = 白热核（窄）+ 珊瑚宽带（宽），水平展宽竖向压缩，
+                    //         像沉日把颜料抹在地平线上；反日侧 = 粉紫维纳斯带
+                    //         （反 twilight 拱，悬在地影蓝灰之上）。全部过 BandT ——
+                    //         颜料晕染不是摄影光晕。太阳略沉入地平线下仍有余晖
+                    //         （abs(sunDirW.y) 判定，不吃 sunUpMask）——
+                    float elevMask = 1.0 - smoothstep(0.015, 0.22, abs(sunDirW.y));
+                    if (elevMask > 0.001 && _HaloAmt + _AntiGlowAmt > 0.001)
+                    {
+                        float vCore = 1.0 - smoothstep(0.0, 0.10, y);    // 核贴地
+                        float vBand = 1.0 - smoothstep(0.02, 0.40, y);   // 带宽:参考图辉带占天高 ~1/4
+                        float aCore = pow(azim, 6.0);                    // 日侧核:窄
+                        float aBand = pow(azim, 2.5);                    // 日侧带:宽
+                        float aAnti = pow(1.0 - azim, 2.0);              // 反日拱:最宽
+
+                        float haloCore = BandT(aCore * vCore, 3.0, dith) * elevMask * _HaloAmt;
+                        float haloBand = BandT(aBand * vBand, 4.0, dith) * elevMask * _HaloAmt;
+                        // 维纳斯带:下缘让位给地影(0.03~0.09 以下不染),上缘 0.24 衰减
+                        float antiBand = BandT(aAnti * smoothstep(0.03, 0.09, y)
+                                             * (1.0 - smoothstep(0.05, 0.24, y)), 3.0, dith)
+                                       * elevMask * _AntiGlowAmt;
+
+                        col = lerp(col, _HaloCol.rgb, haloBand * 0.9);
+                        col = lerp(col, _HaloCol.rgb * 1.35 + half3(0.22, 0.15, 0.06), haloCore);
+                        // 地影:反日点雾线之上的一线蓝灰(地球投进大气的影子),
+                        // 维纳斯带悬在它上面 —— 暮光拱的完整结构。避开 y<0.015
+                        // 雾线锚(远山溶解那条线不许碰)
+                        float earthShadow = BandT(aAnti * (1.0 - smoothstep(0.015, 0.05, y)),
+                                                  2.0, dith) * elevMask * _AntiGlowAmt;
+                        col = lerp(col, half3(0.38f, 0.40f, 0.52f), earthShadow * 0.7);
+                        col = lerp(col, _AntiGlowCol.rgb, antiBand);
+                    }
                 }
 
                 // —— 2. 卷云笔触（先于图腾，颜料盖在笔触上）：水平拉长的
@@ -294,7 +342,13 @@ Shader "Glimmer/SkyGradient"
                     // 日落隐没：太阳沉下地平线，整幅图腾一起走（也修掉旧版
                     // 光晕夜里透到地平线下的问题）
                     float sunUpMask = smoothstep(-0.06, 0.04, sunDir.y);
-                    float ringStr = saturate(_SunGlow) * sunUpMask;
+                    // 残阳姿态：低日角时刻线/射线收敛（晕染接管，图腾退成白热核）——
+                    // 否则 14° 跨度的骨白刻环压在地平辉带上，读作徽章不读作沉日
+                    float lowSun = 1.0 - smoothstep(0.015, 0.22, abs(sunDir.y));
+                    float ringStr = saturate(_SunGlow) * sunUpMask * (1.0 - lowSun * 0.65);
+                    // 地平线遮挡：图腾低于 y=0 的部分被远山/远水裁掉 —— 半沉的太阳
+                    // （残阳的"残"字本体：盘底被地平线吃掉，不是整盘悬在雾线上）
+                    float hOcc = smoothstep(-0.005, 0.015, y);
 
                     // — 日盘（实心颜料饼）+ 盘内暗赭凹槽环 —
                     float disc   = 1.0 - smoothstep(0.97, 1.03, qr);
@@ -325,16 +379,16 @@ Shader "Glimmer/SkyGradient"
                     float shadowA = 1.0 - smoothstep(0.018, 0.045, abs(qr - 1.47));
                     float shadowB = (1.0 - smoothstep(0.015, 0.04, abs(qr - 1.89))) * segOn;
                     float shadowR = (1.0 - smoothstep(0.02, 0.05, abs(slat - 0.13))) * rayRadial * rayOn;
-                    float carve = max(shadowA, max(shadowB, shadowR)) * ringStr;
+                    float carve = max(shadowA, max(shadowB, shadowR)) * ringStr * hOcc;
                     col *= 1.0 - carve * _CarveShadow;
 
                     // — 填彩（平涂覆盖，非加法 —— 图腾平涂感的关键）—
-                    col = lerp(col, _SunTint.rgb * 1.06, disc * 0.92 * _SunDiscStrength * sunUpMask);
-                    col = lerp(col, _SunTint.rgb * 0.55, ringIn * disc * 0.85 * _SunDiscStrength * sunUpMask);
-                    col = lerp(col, _StarColorA.rgb, ringA * 0.85 * ringStr);
-                    col = lerp(col, _StarColorB.rgb, ringB * 0.80 * ringStr);
+                    col = lerp(col, _SunTint.rgb * 1.06, disc * 0.92 * _SunDiscStrength * sunUpMask * hOcc);
+                    col = lerp(col, _SunTint.rgb * 0.55, ringIn * disc * 0.85 * _SunDiscStrength * sunUpMask * hOcc);
+                    col = lerp(col, _StarColorA.rgb, ringA * 0.85 * ringStr * hOcc);
+                    col = lerp(col, _StarColorB.rgb, ringB * 0.80 * ringStr * hOcc);
                     half3 rayCol = lerp(_StarColorA.rgb, _StarColorB.rgb, fmod(rayIdx, 2.0));
-                    col = lerp(col, rayCol, rayBody * 0.75 * ringStr);
+                    col = lerp(col, rayCol, rayBody * 0.75 * ringStr * hOcc);
 
                     // 一丝暖染：q 基二次衰减，在图腾影响圈边界前归零（严禁用
                     // pow(cosA,n)——它在 q 空间衰减太慢，会在分支边界切出可见圆盘）

@@ -79,19 +79,19 @@ public static class ClaudeSkyVerify
         Debug.Log("[ClaudeSkyVerify] done");
     }
 
-    // 白天相预览（正午截图用）：与控制器 day 色板同值
+    // 白天相预览（正午截图用）：与控制器 day 色板同值（2026-07-18 草原色板）
     static void PreviewDaySky()
     {
         var mat = AssetDatabase.LoadAssetAtPath<Material>(SkyMatPath);
         if (mat == null) return;
-        Color dayFog = new Color(0.66f, 0.62f, 0.55f);
+        Color dayFog = new Color(0.70f, 0.66f, 0.56f);
         RenderSettings.fogColor = dayFog;
         RenderSettings.ambientSkyColor = new Color(0.55f, 0.62f, 0.72f);
-        RenderSettings.ambientEquatorColor = new Color(0.48f, 0.46f, 0.40f);
-        RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
-        mat.SetColor("_SkyZenith", new Color(0.36f, 0.46f, 0.56f));
-        mat.SetColor("_SkyMid", new Color(0.56f, 0.60f, 0.62f));
-        mat.SetColor("_HorizonGlowCol", new Color(0.78f, 0.74f, 0.66f));
+        RenderSettings.ambientEquatorColor = new Color(0.52f, 0.48f, 0.40f);
+        RenderSettings.ambientGroundColor = new Color(0.28f, 0.23f, 0.17f);
+        mat.SetColor("_SkyZenith", new Color(0.22f, 0.44f, 0.70f));
+        mat.SetColor("_SkyMid", new Color(0.45f, 0.64f, 0.78f));
+        mat.SetColor("_HorizonGlowCol", new Color(0.86f, 0.78f, 0.60f));
         mat.SetColor("_SkyHorizon", dayFog);
         mat.SetColor("_GroundCol", dayFog);
         mat.SetColor("_SunWashCol", new Color(0.90f, 0.82f, 0.68f));
