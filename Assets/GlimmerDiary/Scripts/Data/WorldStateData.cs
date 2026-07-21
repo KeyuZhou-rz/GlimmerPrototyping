@@ -63,6 +63,18 @@ namespace GlimmerDiary.Data
 
         // 世界事件日志（离散跃迁，append-only，永不删除）
         public List<WorldEvent> worldEvents = new();
+
+        // 规则冷却表（NarrativeRuleEngine 唯一写者；重启重建，冷却跨 session 存活——
+        // 原内存字典重启清零，久未登录会立即重触发，见矩阵补全文档 §5 横切注记）
+        public List<RuleCooldownRecord> ruleCooldowns = new();
+    }
+
+    // 一条规则冷却记录：lastFiredDateKey 用 GameDateTime.ToKeyString() 格式
+    [Serializable]
+    public class RuleCooldownRecord
+    {
+        public string ruleId;
+        public string lastFiredDateKey;
     }
 
     // 一条世界志条目

@@ -14,6 +14,7 @@ namespace GlimmerDiary.Core
         private WorldEnvironmentState               _envState;
         private NaturalRhythmState                  _rhythm;
         private readonly Dictionary<string, string> _lastTriggered = new();
+        private bool                                _cooldownsLoaded;
 
         public NarrativeRuleEngine(EntityRegistry registry, WorldSaveData save)
         {
@@ -30,6 +31,7 @@ namespace GlimmerDiary.Core
         // 每次玩家提交日记后调用
         public void Evaluate(List<NarrativeRuleSO> rules, GameDateTime gameTime)
         {
+            EnsureCooldownsLoaded();
             var triggered = new List<NarrativeRuleSO>();
             foreach (var rule in rules)
             {
@@ -47,6 +49,26 @@ namespace GlimmerDiary.Core
         }
 
         // ── 冷却判断 ─────────────────────────────────
+        // 冷却持久化（矩阵补全 §5 横切注记）：存档 ruleCooldowns 是唯一持久形态，
+        // 内存字典只是它的运行时缓存。本引擎是该存档字段的唯一写者。
+        private void EnsureCooldownsLoaded()
+        {
+            if (_cooldownsLoaded) return;
+            _cooldownsLoaded = true;
+            _lastTriggered.Clear();
+            foreach (var rec in _save.ruleCooldowns)
+                _lastTriggered[rec.ruleId] = rec.lastFiredDateKey;
+        }
+
+        private void PersistCooldown(string ruleId, string dateKey)
+        {
+            var rec = _save.ruleCooldowns.Find(r => r.ruleId == ruleId);
+            if (rec == null)
+                _save.ruleCooldowns.Add(new RuleCooldownRecord { ruleId = ruleId, lastFiredDateKey = dateKey });
+            else
+                rec.lastFiredDateKey = dateKey;
+        }
+
         private bool CooldownPassed(NarrativeRuleSO rule, GameDateTime now)
         {
             if (!_lastTriggered.TryGetValue(rule.ruleId, out var lastDate))
@@ -181,6 +203,7 @@ namespace GlimmerDiary.Core
             });
 
             _lastTriggered[rule.ruleId] = gameTime.ToKeyString();
+            PersistCooldown(rule.ruleId, gameTime.ToKeyString());
             Debug.Log($"[NarrativeRuleEngine] Triggered: {rule.ruleId} → {text}");
         }
 

@@ -85,7 +85,8 @@ public class WorldManager : MonoBehaviour
         if (string.IsNullOrEmpty(_saveData.lastTickRealTime))
         {
             Debug.Log($"[WorldManager] 新世界：先跑 {NewWorldPreRunDays} 天中性预跑。");
-            WorldTick(NewWorldPreRunDays, isCatchUp: true);
+            // 预跑不是"缺席"——玩家还没到达，不产生缺席信
+            WorldTick(NewWorldPreRunDays, isCatchUp: true, writeAbsenceLetter: false);
             SaveSystem.SaveWorldState(_saveData);   // 锚定到现在，避免紧接的墙钟 catch-up 重跑同一天
         }
 
@@ -173,11 +174,14 @@ public class WorldManager : MonoBehaviour
     }
 
     // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
-    public void WorldTick(int deltaDays, bool isCatchUp = false)
+    // writeAbsenceLetter：catch-up 结束后把区间世界志聚合成一封缺席信（矩阵补全 §5.5 第 1 行）；
+    // 新世界预跑传 false——预跑不是缺席。
+    public void WorldTick(int deltaDays, bool isCatchUp = false, bool writeAbsenceLetter = true)
     {
         if (deltaDays <= 0) return;
 
-        int chronicleMark = _saveData.pendingChronicles.Count;   // Phase 3 摘要接缝
+        int chronicleMark = _saveData.pendingChronicles.Count;   // 缺席信接缝
+        int startAbsDays  = _saveData.gameTime.ToAbsoluteDays(); // 缺席窗口起点（含）
         int simulateFrom  = isCatchUp ? Mathf.Max(0, deltaDays - MaxSimulatedCatchupDays) : 0;
 
         for (int d = 0; d < deltaDays; d++)
@@ -188,13 +192,52 @@ public class WorldManager : MonoBehaviour
 
         if (isCatchUp)
         {
-            // Phase 0：丢弃 catch-up 期间产生的逐日世界志噪音。
-            // worldEvents（append-only 永久日志）原样保留。
-            // Phase 3 HOOK：把下方丢弃替换为从同一区间聚合的「你离开的这些天…」摘要。
+            // 逐日世界志噪音仍丢弃；worldEvents（append-only 永久日志）原样保留。
+            // 缺席信：从同一区间按 salience 聚合 ≤5 条 + 点名窗内新增永久痕迹，
+            // 一封信顶替整段（AbsenceLetterComposer 纯函数，不值得写信时返回 null）。
             int extra = _saveData.pendingChronicles.Count - chronicleMark;
+            WorldChronicleEntry letter = null;
+            if (writeAbsenceLetter)
+            {
+                // segment 可能为空但窗内仍有永久事件（TreeBranchBroke 无文案，死端事实）——
+                // 此时信只剩点名句，恰是缺席期最重要的归因桥，仍要生成
+                var segment = extra > 0
+                    ? _saveData.pendingChronicles.GetRange(chronicleMark, extra)
+                    : new List<WorldChronicleEntry>();
+                letter = AbsenceLetterComposer.Compose(
+                    segment,
+                    CountWindowEvents(startAbsDays, WorldEventType.TreeBranchBroke),
+                    CollectWindowCollapses(startAbsDays),
+                    _saveData.gameTime.ToDisplayString());
+            }
             if (extra > 0)
                 _saveData.pendingChronicles.RemoveRange(chronicleMark, extra);
+            if (letter != null)
+                _saveData.pendingChronicles.Insert(chronicleMark, letter);
         }
+    }
+
+    // 缺席窗口内某类 worldEvents 的数量（gameDate 为 ToKeyString，按绝对日序过滤）
+    private int CountWindowEvents(int startAbsDays, string eventType)
+    {
+        int n = 0;
+        foreach (var e in _saveData.worldEvents)
+            if (e.type == eventType
+                && GameDateTime.ParseKey(e.gameDate).ToAbsoluteDays() >= startAbsDays)
+                n++;
+        return n;
+    }
+
+    // 缺席窗口内新增塌洞（burrow_collapse）的 location displayName 列表
+    private List<string> CollectWindowCollapses(int startAbsDays)
+    {
+        var names = new List<string>();
+        foreach (var loc in _saveData.locations)
+            foreach (var pc in loc.permanentChanges)
+                if (pc.changeType == "burrow_collapse"
+                    && GameDateTime.ParseKey(pc.date).ToAbsoluteDays() >= startAbsDays)
+                    names.Add(loc.displayName);
+        return names;
     }
 
     // 情绪注入：仅写日记时调用，只更新 E_env，不推进日历
