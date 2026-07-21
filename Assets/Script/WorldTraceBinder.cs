@@ -35,6 +35,20 @@ public class WorldTraceBinder : MonoBehaviour
     public int restMaxAge    = 5;    // T7 歇息压痕
     public int moundKeepCount = 6;   // T1 沉降土堆只留最新 N 个（T2 永久塌洞不受限）
 
+    [Header("天气擦除（链1+风 §5.2：effectiveAge = age × (1 + Rainfall×rF + WindSpeed×wF)）")]
+    [Tooltip("雨洗因子：全雨时痕迹有效老化 +50%。不改最大寿命，改有效年龄——雨天痕迹老得更快")]
+    [Range(0f, 2f)] public float rainTraceFactor = 0.5f;
+    [Tooltip("风吹因子：全风时痕迹有效老化 +30%。与雨洗同属「天气擦除痕迹」的信号")]
+    [Range(0f, 2f)] public float windTraceFactor = 0.3f;
+
+    [Header("新鲜痕迹标记（切片 9：感叹号式占位——悬浮亮点，指向位置，永不暴露数值）")]
+    public float freshAgeThreshold = 1.5f;   // 有效年龄 ≤ 此值视为"新鲜"，头顶出标记
+    public float markerHeight = 1.6f;
+    public float markerSize   = 0.35f;   // 最小世界尺寸
+    [Tooltip("标记随距离放大系数：scale = max(markerSize, 距离×此值)。舞台机位 80m 时 ≈1.6m，保证余光可见")]
+    public float markerScreenScale = 0.02f;
+    public Color markerColor  = new(1.0f, 0.62f, 0.22f);   // 暖橙：与金色草丛拉开对比
+
     [Header("年龄着色")]
     public Color dirtFresh   = new(0.30f, 0.22f, 0.16f);   // 湿的新土
     public Color dirtDry     = new(0.45f, 0.36f, 0.27f);
@@ -66,6 +80,7 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     private readonly Dictionary<string, TraceInstance> _traces = new();
+    private readonly List<Transform> _markers = new();   // 新鲜标记（LateUpdate 呼吸动画用）
     private readonly Vector4[] _trampleArray = new Vector4[TRAMPLE_MAX];
     private readonly List<Vector4> _trampleGather = new();
     private Transform _propRoot;
@@ -113,6 +128,24 @@ public class WorldTraceBinder : MonoBehaviour
         for (int i = 0; i < n; i++) _trampleArray[i] = _trampleGather[i];
         Shader.SetGlobalFloat(TrampleCountId, n);
         Shader.SetGlobalVectorArray(TramplePointsId, _trampleArray);
+
+        // 新鲜标记呼吸动画：上下浮动 + 慢转 + 随距离放大（舞台机位 50-100m，
+        // 0.35m 静球只有几像素且与草顺色；屏幕尺寸近似恒定才是"注意引导"）
+        var cam = Camera.main;
+        for (int i = 0; i < _markers.Count; i++)
+        {
+            var m = _markers[i];
+            if (m == null) continue;   // 重建后旧标记随 root 销毁
+            var lp = m.localPosition;
+            lp.y = markerHeight + Mathf.Sin(Time.time * 2.2f + i * 1.7f) * 0.18f;
+            m.localPosition = lp;
+            m.Rotate(0f, 40f * Time.deltaTime, 0f, Space.World);
+            if (cam != null)
+            {
+                float dist = Vector3.Distance(cam.transform.position, m.position);
+                m.localScale = Vector3.one * Mathf.Max(markerSize, dist * markerScreenScale);
+            }
+        }
     }
 
     void OnDisable()
@@ -133,14 +166,29 @@ public class WorldTraceBinder : MonoBehaviour
         // 鹿鼠活动范围收缩态（实时字段，无历史记录）——跨过阈值也要触发重建
         var dm = wm.Registry?.GetAnimal("deer_mouse");
         sig = sig * 31 + (dm != null && dm.activityRange < 0.5f ? 1 : 0);
+        // 天气混入签名（链1+风）：雨/风变化即重算有效年龄；量化避免逐帧抖动
+        var env = wm.GetWorldState();
+        if (env != null)
+        {
+            sig = sig * 31 + Mathf.RoundToInt(env.Rainfall * 20f);
+            sig = sig * 31 + Mathf.RoundToInt(env.WindSpeed * 20f);
+        }
         return sig;
     }
 
     private void Rebuild(WorldManager wm, WorldSaveData save)
     {
         int today = ToDays(save.gameTime);
+        // 链1+风（§5.2 规格原文）：effectiveAge = age × (1 + Rainfall×rainFactor + WindSpeed×windFactor)。
+        // Rainfall/WindSpeed 取当前值近似；不改最大寿命，改有效年龄——雨天风天痕迹老得更快。
+        var env = wm.GetWorldState();
+        float weatherMul = env != null
+            ? 1f + env.Rainfall * rainTraceFactor + env.WindSpeed * windTraceFactor
+            : 1f;
+        _markers.Clear();   // 旧标记随 root 销毁重建，引用丢弃
         var desired = new Dictionary<string, System.Action<TraceInstance>>();
         var birthDays = new Dictionary<string, int>();
+        var fresh = new HashSet<string>();   // 有效年龄 ≤ freshAgeThreshold 的痕迹键（切片 9 标记）
 
         // —— T1/T2/T3/T6：从动物 history 与 location permanentChanges 派生 ——
         // T1 只从 history 派生（VoleClaimedZone 事件与 vole_expansion 记录同 tick 双发，
@@ -157,7 +205,7 @@ public class WorldTraceBinder : MonoBehaviour
                 {
                     if (rec.field != "location") continue;
                     int day = ToDays(ParseKeyDate(rec.date));
-                    int age = today - day;
+                    float age = (today - day) * weatherMul;   // 有效年龄（链1+风）：雨洗风吹老得更快
                     string baseKey = $"{animal.speciesId}|{rec.date}|{rec.fromValue}->{rec.toValue}|{rec.triggeredBy}";
                     occur.TryGetValue(baseKey, out int n);
                     occur[baseKey] = n + 1;
@@ -172,6 +220,7 @@ public class WorldTraceBinder : MonoBehaviour
                         moundKeys.Add(mk);
                         birthDays[mk] = day;
                         desired[mk] = t => SpawnMound(t, trigger, to, age, seed);
+                        if (age <= freshAgeThreshold) fresh.Add(mk);
                     }
 
                     // T6 狐狸巡逻记号（领地边界，语料："石头区和中央之间…留了几个记号"）
@@ -180,6 +229,7 @@ public class WorldTraceBinder : MonoBehaviour
                         string sk = "marks|" + key;
                         birthDays[sk] = day;
                         desired[sk] = t => SpawnMarks(t, from, to, age, seed);
+                        if (age <= freshAgeThreshold) fresh.Add(sk);
                     }
 
                     // T3 脚印串：一切位置迁移都留一串脚印
@@ -188,6 +238,7 @@ public class WorldTraceBinder : MonoBehaviour
                         string tk = "trail|" + key;
                         birthDays[tk] = day;
                         desired[tk] = t => SpawnTrail(t, from, to, age, seed);
+                        if (age <= freshAgeThreshold) fresh.Add(tk);
                     }
                 }
             }
@@ -213,8 +264,11 @@ public class WorldTraceBinder : MonoBehaviour
                     string key = $"collapse|{loc.locationId}|{pc.date}|{pc.changeType}";
                     int seed = Fnv1a(key);
                     string zone = loc.locationId;
-                    birthDays[key] = ToDays(ParseKeyDate(pc.date));
+                    int cday = ToDays(ParseKeyDate(pc.date));
+                    birthDays[key] = cday;
                     desired[key] = t => SpawnCollapsedBurrow(t, zone, seed);
+                    // 新出现的塌洞也标记几天——永久地貌的"诞生"同样是值得注意的变化
+                    if ((today - cday) * weatherMul <= freshAgeThreshold) fresh.Add(key);
                 }
             }
         }
@@ -231,7 +285,7 @@ public class WorldTraceBinder : MonoBehaviour
                 string key = n == 0 ? baseKey : $"{baseKey}#{n}";
                 int seed = Fnv1a(key);
                 int day = ToDays(ParseKeyDate(e.gameDate));
-                int age = today - day;
+                float age = (today - day) * weatherMul;   // 有效年龄（链1+风）
 
                 // T5 羽毛：候鸟离境（payload="reason:fromZone"）/ 织巢鸟离巢（家园=center）
                 if (age <= featherMaxAge &&
@@ -247,6 +301,7 @@ public class WorldTraceBinder : MonoBehaviour
                     string fk = "feathers|" + key;
                     birthDays[fk] = day;
                     desired[fk] = t => SpawnFeathers(t, zone, age, seed);
+                    if (age <= freshAgeThreshold) fresh.Add(fk);
                 }
 
                 // T7 歇息压痕：涌现时刻（targetId=zone）——主表达是草被压弯
@@ -256,6 +311,7 @@ public class WorldTraceBinder : MonoBehaviour
                     string rk = "rest|" + key;
                     birthDays[rk] = day;
                     desired[rk] = t => SpawnRestPatch(t, zone, age, seed);
+                    if (age <= freshAgeThreshold) fresh.Add(rk);
                 }
             }
         }
@@ -269,6 +325,7 @@ public class WorldTraceBinder : MonoBehaviour
             const string key = "rangehalt|deer_mouse";
             birthDays[key] = today;
             desired[key] = t => SpawnRangeHalt(t, Fnv1a(key));
+            fresh.Add(key);   // 实时态恒新鲜——它出现本身就是"刚发生的变化"
         }
 
         // —— 同步：移除消失的，生成新增的 ——
@@ -292,12 +349,14 @@ public class WorldTraceBinder : MonoBehaviour
                 var again = new TraceInstance { spawnRealTime = keepSpawnTime };
                 kv.Value(again);
                 _traces[kv.Key] = again;
+                FinishTrace(again, fresh.Contains(kv.Key));
             }
             else
             {
                 var t = new TraceInstance { spawnRealTime = Time.time };
                 kv.Value(t);
                 _traces[kv.Key] = t;
+                FinishTrace(t, fresh.Contains(kv.Key));
             }
         }
     }
@@ -309,7 +368,7 @@ public class WorldTraceBinder : MonoBehaviour
     /// 扩张土在石头区与中央之间（语料："石头区和中央之间…新翻的土"）；
     /// 洪水搬家的新洞口开在目的地 zone（规则可能指向 highland_east 等，跟数据走）。
     /// </summary>
-    private void SpawnMound(TraceInstance t, string trigger, string toZone, int age, int seed)
+    private void SpawnMound(TraceInstance t, string trigger, string toZone, float age, int seed)
     {
         t.type = TraceType.Mound; t.seed = seed;
         bool ok = trigger == "vole_expansion"
@@ -346,7 +405,7 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     /// <summary>T3 脚印串：沿 from→to 边 4-6 片小椭圆，左右交替，随龄缩小褪色。</summary>
-    private void SpawnTrail(TraceInstance t, string from, string to, int age, int seed)
+    private void SpawnTrail(TraceInstance t, string from, string to, float age, int seed)
     {
         t.type = TraceType.Trail; t.seed = seed;
         var rng = new System.Random(seed);
@@ -376,7 +435,7 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     /// <summary>T5 羽毛：离境 zone 内 2-3 片，随龄压平褪色。</summary>
-    private void SpawnFeathers(TraceInstance t, string zone, int age, int seed)
+    private void SpawnFeathers(TraceInstance t, string zone, float age, int seed)
     {
         t.type = TraceType.Feathers; t.seed = seed;
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
@@ -401,7 +460,7 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     /// <summary>T6 狐狸记号：巡逻边上 1-3 个暗斑，慢淡出。</summary>
-    private void SpawnMarks(TraceInstance t, string from, string to, int age, int seed)
+    private void SpawnMarks(TraceInstance t, string from, string to, float age, int seed)
     {
         t.type = TraceType.ScentMarks; t.seed = seed;
         var rng = new System.Random(seed);
@@ -421,7 +480,7 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     /// <summary>T7 歇息压痕：两片相挨的压草椭圆（"两个影子挨得近了些"），主表达靠 trample。</summary>
-    private void SpawnRestPatch(TraceInstance t, string zone, int age, int seed)
+    private void SpawnRestPatch(TraceInstance t, string zone, float age, int seed)
     {
         t.type = TraceType.RestPatch; t.seed = seed;
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 p0)) return;
@@ -467,6 +526,47 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     // ── prop 组装 ────────────────────────────────────────────────
+
+    // 切片 9：生成后收尾——挂可点击 collider（B 方案推近的命中体），新鲜痕迹头顶出占位标记。
+    // 红线：标记指向场景位置，永不暴露数值。
+    private void FinishTrace(TraceInstance t, bool isFresh)
+    {
+        if (t.root == null) return;
+
+        // 命中体：包住全部子 prop 的盒（加高加一点，扁平脚印也好点）
+        var b = new Bounds(t.root.transform.position, Vector3.one * 0.5f);
+        foreach (var r in t.renderers) b.Encapsulate(r.bounds);
+        var col = t.root.AddComponent<BoxCollider>();
+        col.center = t.root.transform.InverseTransformPoint(b.center);
+        col.size = Vector3.Max(b.size, new Vector3(1.2f, 0.8f, 1.2f));
+        var click = t.root.AddComponent<TraceClickable>();
+        click.focusPoint = b.center;
+
+        if (isFresh) SpawnFreshMarker(t, b.center);
+    }
+
+    // 占位感叹号：痕迹上方一个悬浮亮点（markerPrefab 待设计稿；点 marker 等于点痕迹）
+    private void SpawnFreshMarker(TraceInstance t, Vector3 at)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        go.name = "Marker_Fresh";
+        Destroy(go.GetComponent<Collider>());
+        go.transform.SetParent(t.root.transform, false);
+        go.transform.position = at + Vector3.up * markerHeight;
+        go.transform.localScale = Vector3.one * markerSize;
+        var mr = go.GetComponent<MeshRenderer>();
+        // 用资产材质而非运行时 FallbackMaterial（运行时 new Material 疑似触发 keyword space 报错）
+        mr.sharedMaterial = dirtMaterial != null ? dirtMaterial : FallbackMaterial();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        _mpb.Clear();
+        _mpb.SetColor("_BaseColor", markerColor);
+        mr.SetPropertyBlock(_mpb);
+        var click = go.AddComponent<SphereCollider>();
+        click.radius = 1.2f;   // 命中半径（标记随距离放大，实际覆盖 ~1-2m，好点击）
+        var tc = go.AddComponent<TraceClickable>();
+        tc.focusPoint = at;
+        _markers.Add(go.transform);   // LateUpdate 呼吸动画
+    }
 
     private GameObject NewRoot(string name, Vector3 at)
     {

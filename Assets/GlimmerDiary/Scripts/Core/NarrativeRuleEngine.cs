@@ -145,6 +145,7 @@ namespace GlimmerDiary.Core
                         "A" => _save.currentEEnv.A.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
                         "C" => _save.currentEEnv.C.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
                         "S" => _save.currentEEnv.S.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                        "T" => _save.currentEEnv.T.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
                         _   => null
                     };
 

@@ -30,7 +30,11 @@
       "Bash(git branch *)",
       "Bash(dir C:UsersZ2005Glimmer_Prototyping *)",
       "Bash(git *)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(dotnet build *)",
+      "Bash(grep *)",
+      "mcp__UnityMCP__find_gameobjects",
+      "mcp__UnityMCP__execute_menu_item"
     ]
   }
 }

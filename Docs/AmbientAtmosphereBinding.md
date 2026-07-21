@@ -35,6 +35,7 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
 | `dimness`（新字段） | `State.FogDensity` | 直接映射 | 信号 3 晦明此前无消费者，本切片接上 |
 | `LightManager.SetTimePercent` | `rhythm.dayProgress` | 直接传入，不平滑 | dayProgress 本身连续微变；平滑会在午夜 1→0 回绕处出错 |
 | `EcosystemManager.SetEmotionState` | `eEnv.V`, `eEnv.A` | 平滑后传入 | 内部已级联 WindSystem/PlantController/GrassSystem，链路本就通 |
+| `WaterGenerator.SetDisplayLevel01`（Water transform Y） | `Registry.GetLocation("riverbank").waterLevel` [0,1] | 两段线性（0→dryY −2.2，0.3→kneeY 0.6，1→fullY 1.3，高度场单位 ×terrain.scale） | 平滑 0.05（τ≈20s），比天气慢一个量级；loc 缺失静默跳过；dryY 低于河床 −2.06 → 允许完全断流；锚定 waterLevel≈0.69→Y≈1.0（= 旧烘焙视觉，开机无跳变）；深度渐变 shader 自动呈现变浅/收窄，shader 零改动（2026-07-18） |
 
 ## 数据结构变更（提案 20260702-01，COMPATIBLE）
 
@@ -54,6 +55,7 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
 | `EmotionWeatherController.rainIntensity/windIntensity/thunderIntensity/dimness` | `WorldAtmosphereBinder.LateUpdate` | 组件自身 | 否 |
 | `EcosystemManager.globalValence/globalArousal` | `WorldAtmosphereBinder`（经 `SetEmotionState`） | 组件内级联 | 否 |
 | `LightManager.TimeOfDay` | `driveExternally=true` 时：binder 经 `SetTimePercent`；false 时：内部时钟 | 组件自身 | 否 |
+| `Water.transform.localPosition.y` | `WorldAtmosphereBinder.LateUpdate`（经 `WaterGenerator.SetDisplayLevel01`） | `ZoneMap.WaterY` 实时读 renderer bounds——动物/植树离水判定自动跟随水位 | 否 |
 
 ## 改动清单
 
@@ -79,6 +81,11 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
   - `LightManager.TimeOfDay` 与真实墙钟吻合（22:53 ≈ 1373 分钟），`driveExternally`=true ✅
   - 空闲心跳：静置后 `TimeOfDay`/`dayProgress` 随墙钟前进 ✅（见下）
   - 雷暴门控：Wind=0.32 < 0.6，thunder 保持 0 ✅（稀有性生效）
+- **2026-07-18**：新增水面升降通路——`loc.waterLevel` 此前只活在 JSON（宪法⑤：无痕不成环），
+  现由 binder 读 `riverbank.waterLevel` → 平滑（0.05）→ `WaterGenerator.SetDisplayLevel01`
+  升降 Water transform（不重建网格）。两段线性映射，允许旱季完全断流；
+  StylizedWater 的深度渐变自动呈现变浅/收窄，shader 零改动。
+  `WaterGenerator` 附 ContextMenu 干/满预览（仅展示层，不碰世界状态）。
 
 ## 明确留到下一轮
 

@@ -22,7 +22,8 @@ namespace GlimmerDiary.Utils
             MigratoryBirdArrival,    // 秋季+正面情绪 → 候鸟迁来
             LongTermDecay,           // 14天负面 → 衰败积累
             FullWeekCycle,           // 7天推进 → 验证时间和历史记录
-            EmergentAnxietyChain     // 狐狸临近 → 鹿鼠焦虑 → 收缩 → 田鼠扩张（状态涌现）
+            EmergentAnxietyChain,    // 狐狸临近 → 鹿鼠焦虑 → 收缩 → 田鼠扩张（状态涌现）
+            LongChainForLetter       // 30 天长链：断枝→离巢→退守→扩张→巡逻+候鸟+雨语料 → 攒一批世界志给"信"
         }
 
         void Start()
@@ -41,6 +42,7 @@ namespace GlimmerDiary.Utils
                 case TestScenario.LongTermDecay:          Test_LongTermDecay();          break;
                 case TestScenario.FullWeekCycle:          Test_FullWeekCycle();          break;
                 case TestScenario.EmergentAnxietyChain:   Test_EmergentAnxietyChain();   break;
+                case TestScenario.LongChainForLetter:     Test_LongChainForLetter();     break;
             }
         }
 
@@ -233,6 +235,54 @@ namespace GlimmerDiary.Utils
                 AssertEqual($"田鼠扩张(第{expandDay}天)成因为跨实体项", expandCause, "DeerMouseWithdrew");
             Log($"  末态: 鹿鼠 range={dm.activityRange:F2} | 田鼠 @{vole.location} " +
                 $"drive={vole.behavior.drive} cause={vole.behavior.cause}");
+            LogWorldState();
+        }
+
+        // ─────────────────────────────────────────────
+        // 场景七：长链叙事（为"信"攒一批世界志）
+        //
+        // 链：12 天极端风暴 → 断枝 → 织巢鸟离巢 → 鹿鼠焦虑退守 → center 腾空
+        //     → 田鼠扩张 → 狐狸巡逻宣示；再 5 天温和正面 → 秋季候鸟迁来；
+        //     末 3 天暴雨 → WeatherHarsh 语料。
+        // 预期：pendingChronicles 留下 ~8+ 条，按 L 在信里逐批读完。
+        // ─────────────────────────────────────────────
+        void Test_LongChainForLetter()
+        {
+            Log("=== 场景七：长链叙事（信的世界志来源）===");
+            ResetWorld();
+
+            // 阶段一（1-12 天）：极端负面+高唤醒 → 断枝 + 可能的洪水搬家
+            for (int i = 0; i < 12; i++)
+            {
+                SubmitEmotion(V: -0.9f, A: 0.85f, C: 0.3f);
+                var dm = GetAnimal("deer_mouse");
+                Log($"  D{i + 1}: 织巢鸟在场={GetAnimal("weaver_bird").isPresent} " +
+                    $"鹿鼠[anx={dm.internalState.anxiety:F2} range={dm.activityRange:F2} {dm.behavior.drive}]");
+            }
+
+            // 阶段二（13-22 天）：中性 → 鹿鼠退守 → center 腾空 → 田鼠扩张 → 狐狸巡逻
+            for (int i = 0; i < 10; i++)
+            {
+                SubmitEmotion(V: 0f, A: 0.3f, C: 0.45f);
+                var vole = GetAnimal("vole");
+                Log($"  D{13 + i}: 田鼠[{vole.behavior.drive} @{vole.location}] " +
+                    $"狐狸[{GetAnimal("fox").behavior.drive}]");
+            }
+
+            // 阶段三（23-27 天）：温和正面 → 秋季候鸟迁来（初始 month=9 满足 9-11 月窗口）
+            for (int i = 0; i < 5; i++)
+                SubmitEmotion(V: 0.6f, A: 0.4f, C: 0.7f);
+            var bird = GetAnimal("migratory_bird");
+            Log($"  D27: 候鸟在场={bird.isPresent} @{bird.location}");
+
+            // 阶段四（28-30 天）：暴雨 → WeatherHarsh 语料（狐狸歇窝/候鸟低伏）
+            for (int i = 0; i < 3; i++)
+                SubmitEmotion(V: -0.8f, A: 0.7f, C: 0.4f);
+
+            var pending = WorldManager.Instance._saveData.pendingChronicles;
+            Log($"  ── 信的世界志：{pending.Count} 条待显示（按 L 阅读）──");
+            foreach (var c in pending)
+                Log($"    · [{c.eventId}] {c.text}");
             LogWorldState();
         }
 

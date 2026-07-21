@@ -11,7 +11,8 @@ using UnityEngine.Rendering.Universal;
 ///   2. 地形 → Glimmer/Terrain 材质（草原高度带调色板），重建网格写入高度
 ///   3. Rainsystem → RainStreak 材质 + 拉伸公告板参数（修掉"水材质当雨"）
 ///   4. 全局 Volume（Tonemapping/Bloom/Vignette/ColorAdjustments）+ 相机后处理开关
-///   5. 场景里 EmotionWeatherController 的旧序列化雾/雨参数刷成新默认
+///   5. 场景里 EmotionWeatherController 的旧序列化雾/雨参数刷成新默认（含 rainIntensity/starVisibility 残留清零）
+///   6. WorldAtmosphereBinder 防丢（场景重做后 binder 曾丢失、7 条绑定断电，2026-07；并入一键落地）
 /// </summary>
 public static class GlimmerVisualSetup
 {
@@ -42,11 +43,190 @@ public static class GlimmerVisualSetup
         SetupPostFX();
         SetupWeatherDefaults();
         DisableLSystemVegetation();
+        GlimmerBinderSetup.Setup();   // 6. 大气绑定器防丢（幂等：有则补空引用，无则创建）
 
         AssetDatabase.SaveAssets();
         EditorSceneManager.MarkAllScenesDirty();
         EditorSceneManager.SaveOpenScenes();
         Debug.Log("[GlimmerVisualSetup] Done — trees/terrain/rain/postfx unified.");
+    }
+
+    // ---- 材质关键字空间修复（"State comes from an incompatible keyword space" 报错用） ----
+    // 成因：shader 换/改关键字后，材质里序列化的关键字状态 blob 与新 keywordSpace 不匹配
+    // （如 Setup 把 BrokenVector 树材质从 URP Lit 换到 Glimmer/Toon，旧状态残留）。
+    // 做法：删掉不在 shader 关键字空间里的关键字，并重赋 shader 强制重建内部状态。
+    [MenuItem("Tools/Glimmer/Repair Shader Keywords")]
+    public static void RepairShaderKeywords()
+    {
+        int touched = 0;
+        foreach (var guid in AssetDatabase.FindAssets("t:Material"))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            if (!path.StartsWith("Assets/")) continue;   // 包缓存材质随包还原，不写
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat == null || mat.shader == null) continue;
+
+            // 1) 删掉不在 shader 关键字空间里的关键字
+            var space = mat.shader.keywordSpace;
+            var kws = mat.shaderKeywords;
+            var kept = new System.Collections.Generic.List<string>(kws.Length);
+            bool stripped = false;
+            foreach (var k in kws)
+            {
+                bool valid = false;
+                foreach (var lk in space.keywords)
+                    if (lk.name == k) { valid = true; break; }
+                if (valid) kept.Add(k); else stripped = true;
+            }
+            if (stripped) mat.shaderKeywords = kept.ToArray();
+
+            // 2) 无命名关键字 ≠ 状态干净：state blob 可能仍按旧 keywordSpace 尺寸序列化
+            //    （"state size mismatch" 的真正来源）——重赋 shader 强制重建内部状态
+            var sh = mat.shader;
+            mat.shader = sh;
+            EditorUtility.SetDirty(mat);
+            touched++;
+            if (stripped)
+                Debug.Log($"[RepairShaderKeywords] {path}: stripped {kws.Length - kept.Count} stale keyword(s)");
+        }
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[RepairShaderKeywords] done, touched {touched} material(s).");
+    }
+
+    // 关键字空间漂移的根治：重导 shader 重建其 keywordSpace，并让所有依赖材质随之重算状态。
+    // （材质侧重赋 shader 不清内部 state blob 时，只剩这条路。）
+    [MenuItem("Tools/Glimmer/Reimport Glimmer Shaders")]
+    public static void ReimportGlimmerShaders()
+    {
+        int n = 0;
+        foreach (var guid in AssetDatabase.FindAssets("t:Shader", new[] { "Assets/Shaders", "Assets/ImportedAssets" }))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            n++;
+        }
+        Debug.Log($"[ReimportGlimmerShaders] reimported {n} shader(s).");
+    }
+
+    // 诊断：列出挂在大关键字空间（≥60）shader 上的全部材质，定位 "67 vs 66" 报错来源
+    [MenuItem("Tools/Glimmer/Diagnose Keyword Spaces")]
+    public static void DiagnoseKeywordSpaces()
+    {
+        foreach (var guid in AssetDatabase.FindAssets("t:Material"))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat == null || mat.shader == null) continue;
+            int kc = (int)mat.shader.keywordSpace.keywordCount;
+            if (kc >= 60)
+                Debug.Log($"[KwDiag] kc={kc} mat={path} shader={AssetDatabase.GetAssetPath(mat.shader)} enabledKw={mat.shaderKeywords.Length}");
+        }
+        Debug.Log("[KwDiag] done");
+    }
+
+    // 逐一点名诊断：遍历内存中全部材质（含场景内嵌/运行时，FindAssets 扫不到的），
+    // 每个先打日志再重赋 shader 触发状态迁移——blob 不匹配的那个会在它自己的日志行后
+    // 立刻抛 "incompatible keyword space"，控制台里报错上面那行日志就是元凶。
+    [MenuItem("Tools/Glimmer/Diagnose Keyword Poke")]
+    public static void DiagnoseKeywordPoke()
+    {
+        int n = 0;
+        foreach (var mat in Resources.FindObjectsOfTypeAll<Material>())
+        {
+            if (mat == null || mat.shader == null) continue;
+            string path = AssetDatabase.GetAssetPath(mat);
+            Debug.Log($"[KwPoke] {(string.IsNullOrEmpty(path) ? "<embedded/runtime>" : path)} :: {mat.name} :: shader={mat.shader.name}");
+            var sh = mat.shader;
+            mat.shader = sh;
+            n++;
+        }
+        Debug.Log($"[KwPoke] poked {n} material(s).");
+    }
+
+    // 定点修复：mat.shader = 同 shader 是 no-op（Unity 去重），必须 null 往返才真重建关键字状态。
+    [MenuItem("Tools/Glimmer/Repair Two Culprits")]
+    public static void RepairTwoCulprits()
+    {
+        foreach (var p in new[]
+        {
+            "Assets/ImportedAssets/BrokenVector/LowPolyTreePack/Materials/Normal.mat",
+            "Assets/Materials/Glimmer/Terrain_Glimmer.mat",
+        })
+        {
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(p);
+            if (mat == null) { Debug.LogWarning($"[RepairTwo] not found: {p}"); continue; }
+            mat.shaderKeywords = new string[0];
+            var sh = mat.shader;
+            mat.shader = null;      // null 往返：强制彻底重建内部关键字状态
+            mat.shader = sh;
+            EditorUtility.SetDirty(mat);
+            Debug.Log($"[RepairTwo] rebuilt {p}");
+        }
+        AssetDatabase.SaveAssets();
+    }
+
+    // 硬修复：大关键字空间（≥60）shader 的材质，用同 shader 新建干净材质 + 手动复制暴露属性
+    // （不复制关键字 blob）+ CopySerialized 覆盖原对象——GUID/引用不动，state blob 按当前
+    // keywordSpace 尺寸重建。专治 "state size mismatch (67 vs 66)"（URP Lit 66 → GlimmerToon 67）。
+    [MenuItem("Tools/Glimmer/Repair Keyword State Hard")]
+    public static void RepairKeywordStateHard()
+    {
+        int n = 0;
+        foreach (var guid in AssetDatabase.FindAssets("t:Material", new[] { "Assets" }))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat == null || mat.shader == null) continue;
+            if (mat.shader.keywordSpace.keywordCount < 60) continue;   // 只处理受害组
+
+            var shader = mat.shader;
+            var fresh = new Material(shader);
+            int pc = ShaderUtil.GetPropertyCount(shader);
+            for (int i = 0; i < pc; i++)
+            {
+                string name = ShaderUtil.GetPropertyName(shader, i);
+                switch (ShaderUtil.GetPropertyType(shader, i))
+                {
+                    case ShaderUtil.ShaderPropertyType.Color:  fresh.SetColor(name, mat.GetColor(name)); break;
+                    case ShaderUtil.ShaderPropertyType.Vector: fresh.SetVector(name, mat.GetVector(name)); break;
+                    case ShaderUtil.ShaderPropertyType.Float:
+                    case ShaderUtil.ShaderPropertyType.Range:  fresh.SetFloat(name, mat.GetFloat(name)); break;
+                    case ShaderUtil.ShaderPropertyType.TexEnv:
+                        fresh.SetTexture(name, mat.GetTexture(name));
+                        fresh.SetTextureOffset(name, mat.GetTextureOffset(name));
+                        fresh.SetTextureScale(name, mat.GetTextureScale(name));
+                        break;
+                }
+            }
+            fresh.renderQueue = mat.renderQueue;
+            fresh.shaderKeywords = mat.shaderKeywords;   // 名字级保留仍有效的关键字
+
+            EditorUtility.CopySerialized(fresh, mat);    // 干净状态覆盖，GUID/引用不动
+            Object.DestroyImmediate(fresh);
+            EditorUtility.SetDirty(mat);
+            n++;
+            Debug.Log($"[KwHard] rebuilt {path}");
+        }
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[KwHard] done, rebuilt {n} material(s).");
+    }
+
+    // ---- 存档重置（T8 预跑验证用；带时间戳备份，可恢复） -----------------
+    // AppData 默认隐藏，免去找目录：一键把 world_state.json 改名备份，
+    // 下次进 Play 即触发"新世界 30 天预跑"；恢复时把 .bak 改名回 world_state.json。
+    [MenuItem("Tools/Glimmer/Reset World Save (Backup + Delete)")]
+    public static void ResetWorldSave()
+    {
+        string dir  = System.IO.Path.Combine(Application.persistentDataPath, "GlimmerDiary");
+        string save = System.IO.Path.Combine(dir, "world_state.json");
+        if (!System.IO.File.Exists(save))
+        {
+            Debug.Log("[ResetWorldSave] 无存档文件，本来就是新世界（目录：" + dir + "）");
+            return;
+        }
+        string bak = save + "." + System.DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".bak";
+        System.IO.File.Move(save, bak);
+        Debug.Log($"[ResetWorldSave] 存档已移作备份 → {bak}\n下次进 Play 触发新世界 30 天预跑；恢复时把该 .bak 改回 world_state.json");
     }
 
     // ---- 1. 树 ----------------------------------------------------------
@@ -200,8 +380,8 @@ public static class GlimmerVisualSetup
         mat.SetColor("_SkyZenith", new Color(0.36f, 0.46f, 0.56f));    // 尘蓝苍白
         mat.SetColor("_SkyMid", new Color(0.56f, 0.60f, 0.62f));
         mat.SetColor("_HorizonGlowCol", new Color(0.78f, 0.74f, 0.66f));
-        mat.SetColor("_SkyHorizon", new Color(0.66f, 0.62f, 0.55f));   // ≈ sunnyFogColor，天地一体
-        mat.SetColor("_GroundCol", new Color(0.66f, 0.62f, 0.55f));    // 雾色派生
+        mat.SetColor("_SkyHorizon", new Color(0.60f, 0.65f, 0.72f));   // ≈ sunnyFogColor，天地一体
+        mat.SetColor("_GroundCol", new Color(0.60f, 0.65f, 0.72f));    // 雾色派生
         mat.SetFloat("_GlowHeight", 0.14f);
         mat.SetFloat("_MidHeight", 0.50f);
         mat.SetFloat("_Exposure", 1.0f);
@@ -323,11 +503,11 @@ public static class GlimmerVisualSetup
         if (wc == null) { Debug.LogWarning("[GlimmerVisualSetup] No EmotionWeatherController"); return; }
 
         wc.stormFogColor = new Color(0.20f, 0.22f, 0.26f);
-        wc.sunnyFogColor = new Color(0.66f, 0.62f, 0.55f);   // 暖灰，=_SkyHorizon 基线
-        wc.fogLinearSunnyStart = 45f;
-        wc.fogLinearSunnyEnd = 210f;     // ≈ 地形对角线，远山可溶进天空
-        wc.fogLinearStormStart = 16f;
-        wc.fogLinearStormEnd = 95f;
+        wc.sunnyFogColor = new Color(0.60f, 0.65f, 0.72f);   // 空气蓝灰，=_SkyHorizon 基线
+        wc.fogLinearSunnyStart = 60f;
+        wc.fogLinearSunnyEnd = 300f;     // 推出地形对角线，远山只柔化不溶解
+        wc.fogLinearStormStart = 30f;
+        wc.fogLinearStormEnd = 140f;
         wc.dimnessFogWeight = 0.45f;
 
         wc.maxRainEmission = 2200f;
@@ -336,6 +516,13 @@ public static class GlimmerVisualSetup
         wc.maxRainWindForce = 9f;
         wc.maxRainTurbulenceZ = 1.2f;
         wc.turbulenceFrequency = 0.2f;
+
+        // 清序列化残留：这两个滑条在 allowExternalDrive 下由 binder 每帧覆写，
+        // 但残留值（rainIntensity=-1 永久暴雨、starVisibility=1 恒满天星）会在
+        // binder 缺席/未进 Play 时读作假默认。中性归零，驱动权交还 binder。
+        wc.allowExternalDrive = true;
+        wc.rainIntensity = 0f;
+        wc.starVisibility = 0f;
 
         EditorUtility.SetDirty(wc);
         Debug.Log("[GlimmerVisualSetup] Weather serialized values refreshed");
@@ -384,10 +571,10 @@ public static class GlimmerVisualSetup
         RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = new Color(0.66f, 0.62f, 0.55f);
-        RenderSettings.fogStartDistance = 45f;
-        RenderSettings.fogEndDistance = 210f;
-        PreviewSky(sun, new Color(0.66f, 0.62f, 0.55f), 0f);
+        RenderSettings.fogColor = new Color(0.60f, 0.65f, 0.72f);
+        RenderSettings.fogStartDistance = 60f;
+        RenderSettings.fogEndDistance = 300f;
+        PreviewSky(sun, new Color(0.60f, 0.65f, 0.72f), 0f);
         SceneView.RepaintAll();
         Debug.Log("[GlimmerVisualSetup] Golden hour preview lighting set");
     }
@@ -414,8 +601,8 @@ public static class GlimmerVisualSetup
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
         RenderSettings.fogColor = new Color(0.20f, 0.22f, 0.26f);
-        RenderSettings.fogStartDistance = 16f;
-        RenderSettings.fogEndDistance = 95f;
+        RenderSettings.fogStartDistance = 30f;
+        RenderSettings.fogEndDistance = 140f;
         PreviewSky(sun, new Color(0.20f, 0.22f, 0.26f), 1f);
         SceneView.RepaintAll();
         Debug.Log("[GlimmerVisualSetup] Storm preview lighting set");

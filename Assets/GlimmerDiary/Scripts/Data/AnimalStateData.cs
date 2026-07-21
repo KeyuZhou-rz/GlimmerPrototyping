@@ -68,6 +68,7 @@ namespace GlimmerDiary.Data
         public const string LowVitality      = "LowVitality";
         public const string SeasonShift      = "SeasonShift";
         public const string EmotionBleak     = "EmotionBleak";
+        public const string WeatherHarsh     = "WeatherHarsh";   // 雨/雾压低了活动（§5.1 语料提醒）
         // 跨实体项（优先）
         public const string FoxNearby        = "FoxNearby";
         public const string BirdAbsent       = "BirdAbsent";

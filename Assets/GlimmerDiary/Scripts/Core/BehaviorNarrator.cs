@@ -45,6 +45,9 @@ namespace GlimmerDiary.Core
             NarrateBehavior("vole",           "Expand",      CauseFactor.DeerMouseWithdrew, VoleExpand,          time);
             NarrateBehavior("fox",            "Patrol",      CauseFactor.RodentExpansion,   FoxPatrolRodent,     time);
             NarrateBehavior("migratory_bird", "EarlyDepart", CauseFactor.FoxNearby,         BirdEarlyDepartFox,  time);
+            // 天气成因（§5.1：雨/雾压低活动——语料提醒，仅在真实下雨/起雾时由驱动层认领）
+            NarrateBehavior("fox",            "Rest",        CauseFactor.WeatherHarsh,      FoxRestHarsh,        time);
+            NarrateBehavior("migratory_bird", "Settle",      CauseFactor.WeatherHarsh,      BirdSettleHarsh,     time);
 
             // 2. 离散世界事件（迁移自 Relation_WeaverHabitatLost + 新增）
             int count = _save.worldEvents?.Count ?? 0;
@@ -300,6 +303,28 @@ namespace GlimmerDiary.Core
     "{date} {sky} 它们凑在一处过了一夜。说不上为什么，就是都在那儿。",
 
     "{date} {sky} 那片草塌下去一小块，形状像是有谁靠着睡了一夜。",
+};
+
+        // 天气 · 狐狸歇窝：雨/雾压低活动——写「没有出门」这件事，不点破原因
+        private static readonly string[] FoxRestHarsh =
+{
+    "{date} {sky} 狐狸一整天没有出洞。气味都被压低了，出门不划算。",
+
+    "{date} {sky} 东侧高地今天没有狐狸的脚印。这种天气，谁也懒得动。",
+
+    "{date} {sky} 狐狸就今日狩猎计划取消一事，未作说明。洞口有它卧过的痕迹。",
+
+    "{date} {sky} 狐狸趴在洞里，耳朵朝着外面。等天气过去。",
+};
+
+        // 天气 · 候鸟低伏：雨/雾压低活动频率
+        private static readonly string[] BirdSettleHarsh =
+{
+    "{date} {sky} 候鸟今天没有怎么飞。它们挤在河岸的草里，等天气过去。",
+
+    "{date} {sky} 河岸的鸟群安静了一天。虫子被打下去了，它们的动静也小了。",
+
+    "{date} {sky} 候鸟就今日活动减少一事，未作任何说明。草叶上全是水。",
 };
 
         // ── 工具 ───────────────────────────────────────────────────

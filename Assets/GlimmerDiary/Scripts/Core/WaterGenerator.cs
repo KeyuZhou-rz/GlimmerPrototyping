@@ -29,6 +29,21 @@ public class WaterGenerator : MonoBehaviour
     [Tooltip("留空则自动用 Custom/StylizedWater 创建一个材质")]
     public Material waterMaterial;
 
+    [Header("Runtime Water Level (display-only)")]
+    [Tooltip("展示层水量 0~1(由绑定层驱动,不是世界状态)。映射到高度场 Y 后经 transform 升降,不重建网格")]
+    [Range(0f, 1f)] public float displayLevel01 = 0.5f;
+    [Tooltip("level=0 的水面高度(高度场单位)。低于河床最深 -riverDepth(场景 2.06)→ 完全断流")]
+    public float dryY = -2.2f;
+    [Tooltip("两段线性的拐点水量:低于此值进入退水快跌段(V 形河道:水少时水位对水量更敏感)")]
+    [Range(0.05f, 0.95f)] public float kneeLevel = 0.3f;
+    [Tooltip("拐点处的水面高度(高度场单位)。锚定:waterLevel≈0.69 时 Y≈1.0 = 当前烘焙视觉")]
+    public float kneeY = 0.6f;
+    [Tooltip("level=1 的水面高度(高度场单位),比当前烘焙 1.0 略满即可")]
+    public float fullY = 1.3f;
+
+    private float _bakedWaterLevel;   // Generate() 时的 waterLevel 快照 = 顶点烘焙基准
+    private bool _hasBakedLevel;
+
     void Start()
     {
         Generate();
@@ -48,6 +63,10 @@ public class WaterGenerator : MonoBehaviour
         int d = terrain.depth;
         float scale = terrain.scale;
         Vector3 offset = terrain.centerMesh ? new Vector3(w * 0.5f, 0f, d * 0.5f) : Vector3.zero;
+
+        // 记录烘焙基准:顶点以当前 waterLevel 生成,之后的升降都是相对它的 transform 偏移
+        _bakedWaterLevel = waterLevel;
+        _hasBakedLevel = true;
 
         // 纵向分段数 = 地形深度 * 密度比例（地形每格一段，这里更稀疏）
         int zSeg = Mathf.Max(2, Mathf.RoundToInt(d * lengthDensity));
@@ -120,5 +139,42 @@ public class WaterGenerator : MonoBehaviour
         }
         if (waterMaterial != null)
             GetComponent<MeshRenderer>().sharedMaterial = waterMaterial;
+
+        // 重建后基准可能已变(编辑器 Regenerate),立即按当前展示水量重新对齐,防止跳回烘焙高度
+        ApplyDisplayLevel();
     }
+
+    /// <summary>
+    /// 绑定层入口(Layer 3 展示,只动 transform,不碰世界状态):
+    /// 0~1 水量 → 高度场 Y(两段线性) → localPosition.y 偏移。
+    /// </summary>
+    public void SetDisplayLevel01(float level01)
+    {
+        displayLevel01 = Mathf.Clamp01(level01);
+        ApplyDisplayLevel();
+    }
+
+    private void ApplyDisplayLevel()
+    {
+        if (terrain == null) terrain = GetComponentInParent<TerrainGenerator>();
+        if (terrain == null) return;
+
+        // 两段线性:kneeLevel 以上是"健康水位"缓变段,以下是退水快跌段(细流→断流约 10 天可见)
+        float l = displayLevel01;
+        float targetY = (l >= kneeLevel)
+            ? Mathf.Lerp(kneeY, fullY, (l - kneeLevel) / (1f - kneeLevel))
+            : Mathf.Lerp(dryY, kneeY, l / kneeLevel);
+
+        // 顶点烘焙在 waterLevel(高度场单位,已 ×scale);未 Generate 过(编辑模式预览)则以当前字段为基准
+        float baked = _hasBakedLevel ? _bakedWaterLevel : waterLevel;
+        var lp = transform.localPosition;
+        lp.y = (targetY - baked) * terrain.scale;
+        transform.localPosition = lp;
+    }
+
+    [ContextMenu("Water: Preview Dry (level=0)")]
+    private void PreviewDry() => SetDisplayLevel01(0f);
+
+    [ContextMenu("Water: Preview Flood (level=1)")]
+    private void PreviewFlood() => SetDisplayLevel01(1f);
 }

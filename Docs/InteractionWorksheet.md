@@ -186,31 +186,34 @@ C→[雾] / [鹿鼠基线焦虑] / [情绪注入速率 α]
 
 ## 4. 断线与死端清单（连接机会——按接线成本分级）
 
+> 状态刷新 2026-07-20（代码实证）：A1/A2/A5、B1/B5、C1 已接；D 级 T 规则消费已修。
+> 详见 §6 切片清单逐项状态。
+
 ### A 级 · 两端都在，只差一根线（最便宜）
 
 | # | 源（有数据） | 目标（有钩子） | 备注 |
 |---|---|---|---|
-| A1 | env.StarVisibility | 天空 `_StarBlend` | **=链2，切片必做** |
-| A2 | WorldAtmosphereBinder prefab | 场景 | **挂上即通电 7 条绑定** |
-| A3 | rhythm.dayProgress | LightManager | A2 的一部分 |
-| A4 | E_env.V/A | Flora 生态扇出（风/树/草） | A2 的一部分；注意 Flora 轨道已禁用，需决定扇出给谁 |
-| A5 | pendingChronicles | （信 UI——待建） | 消费者不存在，但生产端全通 |
+| A1 | env.StarVisibility | 天空 `_StarBlend` | ✅ 已接（binder→starVisibility→`_StarBlend`，EmotionWeatherController.cs:464）；随 A2 场景保存通电 |
+| A2 | WorldAtmosphereBinder prefab | 场景 | 🔄 binder 在场景但未存盘；已并入 `GlimmerVisualSetup.Run()` 防丢（2026-07-20），保存场景即闭合 |
+| A3 | rhythm.dayProgress | LightManager | ✅ 随 A2（binder:124-126） |
+| A4 | E_env.V/A | Flora 生态扇出（风/树/草） | ✅ 随 A2；Flora L-System 轨道已禁用，扇出走 nonL SetRainfall + 风 shader |
+| A5 | pendingChronicles | （信 UI——待建） | ✅ 信占位消费者已建（`ChronicleLetter.cs`，L 键，hasBeenShown/shownChronicles 唯一写者） |
 
 ### B 级 · 有数据源，视觉端要新写表达
 
 | # | 源 | 缺什么 | 
 |---|---|---|
-| B1 | location.waterLevel | 水面几何/材质不读它——涨水看不见 |
+| B1 | location.waterLevel | ✅ 已接（`WaterGenerator.SetDisplayLevel01` 两段线性 + binder 驱动，2026-07-18） |
 | B2 | DecayLevel | 无凋萎/枯败可视化 |
 | B3 | loc.vegetationDensity | 虫害啃掉的植被无视觉（草密度不联动） |
 | B4 | season/lightIntensity | 无季节视觉表达 |
-| B5 | Rainfall | 痕迹老化公式不读它（**=链1，切片必做**） |
+| B5 | Rainfall | ✅ 已接（链1+风：`effectiveAge = age × (1 + Rainfall×0.5 + WindSpeed×0.3)`，WorldTraceBinder，2026-07-20） |
 
 ### C 级 · 有钩子，数据源/逻辑要新建
 
 | # | 钩子 | 缺什么 |
 |---|---|---|
-| C1 | TreePlacement.showAt | 门控逻辑从未实现 + 无 emotionDensity 数据源 |
+| C1 | TreePlacement.showAt | ✅ 已接（`SetRainfall` + `_showAtThresholds` 运行时门控，binder 每帧推送；非原设想的 emotionDensity，切片 1 拍板改道） |
 | C2 | TreeData.vitality + MPB | 整条 MPB 凋萎通路未落地 |
 | C3 | currentWaterSaturation/SunlightIntensity | 输出悬空，植物系统不读 |
 | C4 | GrassPreset（valenceToHealth 等曲线） | 整个 SO 无读者 |
@@ -220,7 +223,8 @@ C→[雾] / [鹿鼠基线焦虑] / [情绪注入速率 α]
 
 ### D 级 · 机制本身不存在（要新造）
 
-雪（无任何代码）；旱（无独立状态，只有水位自然衰减）；蒲公英/石边草的任何行为；E_env.T 的规则消费；E_env.S 的实质消费。
+雪（无任何代码）；旱（无独立状态，只有水位自然衰减）；蒲公英/石边草的任何行为；E_env.S 的实质消费。
+~~E_env.T 的规则消费~~ ✅ 已修（2026-07-20，NarrativeRuleEngine eenv 上下文补 T）。
 
 ---
 
@@ -233,42 +237,42 @@ C→[雾] / [鹿鼠基线焦虑] / [情绪注入速率 α]
 
 | 交互对 | 现状（事实） | 设计（你填） | 每环痕迹（你填） |
 |---|---|---|---|
-| 雨 → 田鼠 | 仅经 lowland 水位间接（庇护↓/搬家规则） | | |
-| 雨 → 狐狸 | rain<0.3 时 safety 恢复（唯一直连） | | |
-| 雨 → 鹿鼠 | 无 | | |
-| 雨 → 候鸟 | 仅经河岸水位间接（舒适度） | | |
-| 雨 → 织巢鸟 | 无 | | |
-| 雨 → 猴面包树 | 无（vitality 只读 V） | | |
-| 雨 → 蒲公英/石边草 | 植物本身惰性 | | |
-| 旱（长期低雨） | 机制不存在（仅水位每日 −0.03 自然消退） | | |
-| 雪 | 机制不存在（含冬季无任何视觉/模拟表达） | | |
-| 雾 → 动物 | 无（雾只进 {sky} 文案和画面） | | |
-| 风 → 痕迹/树/草 | 视觉有（shader 风），模拟零 | | |
+| 雨 → 田鼠 | 仅经 lowland 水位间接（庇护↓/搬家规则） | 雨造成土壤湿度 水位变化 mouse每tick读取相关值并作出反应 结构与其他焦虑值等相仿| 雨摧毁巢穴->相关痕迹 |
+| 雨 → 狐狸 | rain<0.3 时 safety 恢复（唯一直连） | 雨造成土壤湿度 水位变化 导致狐狸活动度&&捕猎意愿下降 | 除了活动频率 语料可出现 +|
+| 雨 → 鹿鼠 | 无 | 同田鼠 主要发散为活动度下降 考虑巢穴 相关痕迹  | |
+| 雨 → 候鸟 | 仅经河岸水位间接（舒适度） | 同上考虑 活动频率下降 + 语料提醒| |
+| 雨 → 织巢鸟 | 无 | 同 | |
+| 雨 → 猴面包树 | 无（vitality 只读 V） | 【切片做数据】vitality 公式加 Rainfall 调制：雨季 vitality 恢复加速、旱季减速。视觉（叶子颜色/密度/开花）等 MPB 通路落地后再接——数据是视觉的前提 | 当前无（等 MPB 落地后：雨季更绿/开花，旱季落叶） |
+| 雨 → 蒲公英/石边草 | 植物本身惰性 | 【切片不做】实体惰性，先不动 | — |
+| 旱（长期低雨） | 机制不存在（仅水位每日 −0.03 自然消退） | 【切片不做】需要新累积状态 + 阈值定义，成本 D 级。但它是未来季节/水位视觉/草色的统一上游，等基础视觉通路齐了再做 | 当前无 |
+| 雪 | 机制不存在（含冬季无任何视觉/模拟表达） | 【不做】非洲草原无雪 | — |
+| 雾 → 动物 | 无（雾只进 {sky} 文案和画面） | 【切片做】dimness > 阈值时动物 activityModifier *= 0.5，跟雨→动物同一模式批量做 | 雾天动物痕迹减少（同雨天的逻辑——活动少了痕迹就少） |
+| 风 → 痕迹/树/草 | 视觉有（shader 风），模拟零 | 【切片做】和链1一起：痕迹有效年龄叠加 WindSpeed 因子，风大时脚印/羽毛被吹散更快 | 大风后痕迹比平常更模糊——与雨洗痕迹同属"天气擦除痕迹"的信号 |
 
 ### 5.2 已拍板的两条横向连接（规格你填）
 
 | 交互对 | 现状 | 设计（你填：公式/阈值/例外） |
 |---|---|---|
-| 雨 → 痕迹寿命（链1） | 痕迹老化只看游戏日龄 | |
-| StarVisibility → 天空星穹（链2） | 天空自算 wNight×badT，L2 的 T 维白算 | |
+| 雨 → 痕迹寿命（链1） | 痕迹老化只看游戏日龄 | `effectiveAge = age × (1 + Rainfall × rainFactor + WindSpeed × windFactor)`，其中 Rainfall/WindSpeed 取痕迹存在期间的日均值（或直接用当前值近似）。不改最大寿命，改有效年龄——雨天风天痕迹老得更快。rainFactor≈0.5, windFactor≈0.3，具体数值 playtest 调 | 
+| StarVisibility → 天空星穹（链2） | 天空自算 wNight×badT，L2 的 T 维白算 | Binder（或 sky 脚本）读 `env.StarVisibility` → 写 `_StarBlend`。两行。映射方向：高 T（紧迫）→ 星更亮/更多？低 T（停滞）→ 星更暗/更少？语义等设计者定 |
 
 ### 5.3 生命 × 生命（现有网的加密）
 
 | 交互对 | 现状 | 设计（你填） | 每环痕迹（你填） |
 |---|---|---|---|
-| 开花 → 更多动物 | 仅田鼠 center 加食 | | |
-| 虫害 → 视觉/更多下游 | 只削高地植被数值 | | |
-| 蒲公英 → ? | 完全惰性 | | |
-| 石边草 → ? | 完全惰性 | | |
-| 候鸟在场 → ?（在场期间的正效应） | 仅狐狸 safety↓ | | |
-| 主枝个体（integrity） → ? | 字段闲置 | | |
+| 开花 → 更多动物 | 仅田鼠 center 加食 | 【切片不做】等树的开花视觉落地后一起做。方向：开花→吸引昆虫→织巢鸟更活跃→更多痕迹近树 | 当前无（等视觉后：树周多虫/鸟迹） |
+| 虫害 → 视觉/更多下游 | 只削高地植被数值 | 【切片不做】需要草 shader 支持区域颜色/密度，成本 C 级 | 当前无（等草 shader 后：枯黄斑块） |
+| 蒲公英 → ? | 完全惰性 | 【切片不做】实体惰性 | — |
+| 石边草 → ? | 完全惰性 | 【切片不做】实体惰性 | — |
+| 候鸟在场 → ?（在场期间的正效应） | 仅狐狸 safety↓ | 【切片不做】可加：候鸟在→吃虫→虫害减，等虫害视觉有了再一起做 | 语料为主 |
+| 主枝个体（integrity） → ? | 字段闲置 | 【切片不做】断枝规则已经产生 permanentDamages + 离巢级联，integrity 的粒度（4 根主枝各自状态）等树的视觉精度够了再启用 | 断枝本身可见（枝少了），但哪根断了当前无区分 |
 
 ### 5.4 情绪维度死端（T 与 S 的去处）
 
 | 维度 | 现状 | 设计（你填） |
 |---|---|---|
-| T（时间性） | 仅星空信号；规则引擎读不到 | |
-| S（社会性） | 仅 CreatureAbundance（死端） | |
+| T（时间性） | 仅星空信号；规则引擎读不到 | 【切片做链2】StarVisibility→`_StarBlend` 接上。规则引擎读不到 T 是 bug（`NarrativeRuleEngine.cs:143`）——修掉，让规则也能用 T。额外消费暂时不加 |
+| S（社会性） | 仅 CreatureAbundance（死端） | 【切片不做】Glimmer 设定里玩家是唯一的人——社会性维度在这个世界本来就该是低的。暂不退役但也不激活，等将来有多角色/社群概念时再重新设计 |
 
 ### 5.5 空白行（自由添加）
 
@@ -279,12 +283,31 @@ C→[雾] / [鹿鼠基线焦虑] / [情绪注入速率 α]
 
 ---
 
-## 6. 切片工程清单（设计定稿后的施工顺序——供参考，可调）
+## 6. 切片工程清单（2026-07-14 定稿；2026-07-20 实施轮：1-9 全部代码落地，待 playtest 验证）
 
-1. **接电**：WorldAtmosphereBinder 挂进场景（A2），修正 rainIntensity 序列化残留
-2. **链2**：StarVisibility→`_StarBlend`（A1，两行）
-3. **链1**：Rainfall→痕迹老化（B5，按你 5.2 的规格）
-4. **信**：pendingChronicles 首个展示消费者（A5）+ hasBeenShown/shownChronicles 迁移逻辑
-5. **标记与运镜**：痕迹感叹号 + B 方案点击推近
-6. **回填**：CreateNewWorld 后 30 天中性 WorldTick
-7. 你在 §5 填好的交互，按 A→B→C→D 成本排队入库
+1. **接电**：WorldAtmosphereBinder 挂进场景（A2），修正 rainIntensity 序列化残留；第三条腿从 `SetEmotionState(V,A)` 改为 `SetRainfall(rainfall)` → nonL EcosystemManager（TreePlacement）showAt 门控
+   ✅ binder 在场（待场景存盘闭合）+ 残留清零 + showAt 门控已通；防丢已并入 `GlimmerVisualSetup.Run()`
+2. **链2**：StarVisibility→`_StarBlend`（A1，两行）+ 修 NarrativeRuleEngine 读不到 T 的 bug
+   ✅ 星空通路代码已在（binder→starVisibility→`_StarBlend`）；规则引擎 eenv 上下文已补 T
+3. **雨→动物活动度 ×5**（田鼠/狐狸/鹿鼠/候鸟/织巢鸟）：Rainfall 调制 activityModifier，批量同模式
+   ✅ `ActivityModifier(zone)`：读所在 zone 水位/湿度（雨经 M6 间接作用，按 §5.1 矩阵）；狐狸/候鸟加 WeatherHarsh 语料（仅真实下雨/起雾时认领）；田鼠巢穴痕迹按裁定缓做
+4. **链1 + 风→痕迹**：`effectiveAge = age × (1 + Rainfall × rainFactor + WindSpeed × windFactor)`（B5 + B 级风）
+   ✅ WorldTraceBinder：weatherMul 全类型痕迹生效，rainFactor 0.5 / windFactor 0.3 inspector 可调
+5. **雾→动物活动度**：dimness 阈值 → activityModifier，跟第 3 项同模式
+   ✅ 并入 `ActivityModifier`（FogDensity > 0.5 → ×(1−0.5)，阈值/强度 tuning 可调）
+6. **雨→猴面包树 vitality**：vitality 公式加 Rainfall 调制（先数据，视觉等 MPB 落地）
+   ✅ TickTree：vitality 目标值加 center 湿度偏置（treeRainVitalityBias 0.2）
+7. **信**：pendingChronicles 首个展示消费者（A5）+ hasBeenShown/shownChronicles 迁移逻辑
+   ✅ 占位实现 `ChronicleLetter.cs`：L 键开关，每次 ≤3 条，无通知压力；形态待设计稿换皮
+8. **回填**：CreateNewWorld 后 30 天中性 WorldTick
+   ✅ WorldManager.Awake：lastTickRealTime 为空 → WorldTick(30, isCatchUp:true)（世界志噪音丢弃，worldEvents 保留作痕迹历史）
+9. **标记与运镜**：痕迹感叹号 + B 方案点击推近
+   ✅ 占位实现：新鲜痕迹（有效年龄 ≤1.5 日）头顶悬浮亮点 + TraceClickable/CameraPusher/TraceInput（推近-停留-返回）；场景机位设置待编辑器内保存
+
+以下切片不做，排到后续：
+- 旱（D 级，需新累积状态）
+- 生命×生命加密（等视觉基础设施 C1-C4 先落地）
+- 开花/虫害/断枝主枝视觉
+- S 维度激活
+- 蒲公英/石边草激活
+- 田鼠巢穴雨毁痕迹（§5.1 痕迹栏，形态待设计者定）

@@ -52,5 +52,12 @@ namespace GlimmerDiary.Data
         [Range(0f, 0.3f)] public float treeFlowerGain     = 0.05f; // 花期 → readiness/d
         [Range(1, 120)]   public int   weaverReturnTicks   = 30;    // 织巢鸟归巢所需无断枝 tick
         [Range(0f, 0.05f)] public float insectVegDecay     = 0.003f; // 织巢鸟不在 → 东侧植被/d 衰减
+        [Range(0f, 0.5f)] public float treeRainVitalityBias = 0.2f; // vitality 目标的本地湿度偏置上限（§5.1：湿季恢复加速/旱季减速）
+
+        [Header("天气→活动度（Worksheet §5.1：雨经所在 zone 水位/湿度间接作用；雾直读全局信号）")]
+        [Range(0f, 1f)] public float wetActivityDamp      = 0.5f;  // 所在 zone 全湿时活动类 urgency 乘数降到 1-damp
+        [Range(0f, 1f)] public float fogActivityDamp      = 0.5f;  // 浓雾时活动度乘数降到 1-damp
+        [Range(0f, 1f)] public float fogActivityThreshold = 0.5f;  // FogDensity 超过才生效
+        [Range(0f, 1f)] public float rainHarshThreshold   = 0.4f;  // Rainfall 超过才允许雨天语料（文本须对齐画面天气）
     }
 }

@@ -31,7 +31,8 @@ namespace GlimmerDiary.Core
         private readonly float VOLE_FOOD_DECAY, VOLE_FOOD_REGEN, VOLE_FORAGE_RELIEF, VOLE_EXPAND_RELIEF, VOLE_EXPAND_FOOD, VOLE_DM_RANGE_FREE;
         private readonly float FOX_HUNGER_GAIN, FOX_FORAGE_RELIEF, FOX_SAFETY_RECOVER, FOX_TERR_RECOVER, FOX_PATROL_REASSERT, FOX_TERR_ENCROACH;
         private readonly float BIRD_URGE_SEASON, BIRD_URGE_OFF, BIRD_URGE_BLEAK, BIRD_COMFORT_LERP, BIRD_FOX_DISCOMFORT;
-        private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN;
+        private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN, TREE_RAIN_VITALITY_BIAS;
+        private readonly float WET_ACTIVITY_DAMP, FOG_ACTIVITY_DAMP, FOG_ACTIVITY_THRESHOLD, RAIN_HARSH_THRESHOLD;
         private readonly int   WEAVER_RETURN_TICKS;
 
         static readonly HashSet<string> FOX_TERRITORY = new() { "highland_east", "center" };
@@ -58,6 +59,9 @@ namespace GlimmerDiary.Core
             BIRD_URGE_SEASON = t.birdUrgeSeason; BIRD_URGE_OFF = t.birdUrgeOff; BIRD_URGE_BLEAK = t.birdUrgeBleak;
             BIRD_COMFORT_LERP = t.birdComfortLerp; BIRD_FOX_DISCOMFORT = t.birdFoxDiscomfort;
             TREE_VITALITY_ALPHA = t.treeVitalityAlpha; TREE_FLOWER_GAIN = t.treeFlowerGain;
+            TREE_RAIN_VITALITY_BIAS = t.treeRainVitalityBias;
+            WET_ACTIVITY_DAMP = t.wetActivityDamp; FOG_ACTIVITY_DAMP = t.fogActivityDamp;
+            FOG_ACTIVITY_THRESHOLD = t.fogActivityThreshold; RAIN_HARSH_THRESHOLD = t.rainHarshThreshold;
             WEAVER_RETURN_TICKS = t.weaverReturnTicks;
         }
 
@@ -133,12 +137,13 @@ namespace GlimmerDiary.Core
             if (foxNear) anx += DM_FOX_SPIKE;
             anx = Mathf.Clamp01(anx);
 
-            float range = Mathf.Clamp01(Mathf.Lerp(a.activityRange, 1f - anx, DM_RANGE_LERP));
+            float mod = ActivityModifier(myZone);   // 雨（经本地水位/湿度）+ 雾 → 活动度（§5.1）
+            float range = Mathf.Clamp01(Mathf.Lerp(a.activityRange, (1f - anx) * mod, DM_RANGE_LERP));
             a.activityRange = range;
 
             string drive = Argmax(cur.lastDrive,
                 ("Retreat", Smooth(anx, 0.6f)),
-                ("Explore", Smooth(1f - anx, 0.7f) * 0.8f),
+                ("Explore", Smooth(1f - anx, 0.7f) * 0.8f * mod),
                 ("Routine", BASE_DRIVE),
                 out float intensity);
 
@@ -186,9 +191,10 @@ namespace GlimmerDiary.Core
             // 由 NarrativeRule `vole_relocate_flood` 拥有，本系统不再用 Relocate 移动田鼠，
             // 否则会抢先改 vole.location、使该规则的前置条件 (location==lowland) 失效。
             // shelterSecurity 仍计入状态向量（供叙事/未来用），但不驱动移动。
+            float mod = ActivityModifier(myZone);   // 雨（经本地水位/湿度）+ 雾 → 活动度（§5.1；巢穴痕迹另案）
             string drive = Argmax(cur.lastDrive,
-                ("Expand",   centerFree ? Smooth(exp, 0.6f) : 0f),
-                ("Forage",   Smooth(1f - food, 0.6f)),
+                ("Expand",   centerFree ? Smooth(exp, 0.6f) * mod : 0f),
+                ("Forage",   Smooth(1f - food, 0.6f) * mod),
                 ("Burrow",   BASE_DRIVE),
                 out float intensity);
 
@@ -252,9 +258,10 @@ namespace GlimmerDiary.Core
             terr += voleInTerritory ? -FOX_TERR_ENCROACH : FOX_TERR_RECOVER;
             terr = Mathf.Clamp01(terr);
 
+            float mod = ActivityModifier(myZone);   // 雨（经本地水位/湿度）+ 雾 → 活动度&&捕猎意愿下降（§5.1）
             string drive = Argmax(cur.lastDrive,
-                ("Foraging",  Smooth(hunger, 0.7f)),
-                ("Patrol",    Smooth(1f - terr, 0.6f)),
+                ("Foraging",  Smooth(hunger, 0.7f) * mod),
+                ("Patrol",    Smooth(1f - terr, 0.6f) * mod),
                 ("Avoidance", Smooth(1f - safety, 0.7f)),
                 ("Rest",      BASE_DRIVE),
                 out float intensity);
@@ -280,6 +287,10 @@ namespace GlimmerDiary.Core
                 case "Avoidance":
                     if (myZone != "highland_east") MoveAnimal(a, "highland_east", "fox_avoid", time);
                     if (waterAbnormal) { cause = CauseFactor.WaterRising; }
+                    break;
+                case "Rest":
+                    // 雨天懒得出门（§5.1 语料可出现）——只在真的下雨/起雾时认领，文本对齐画面
+                    if (HarshNow) { cause = CauseFactor.WeatherHarsh; causeTarget = "weather"; }
                     break;
             }
 
@@ -316,7 +327,8 @@ namespace GlimmerDiary.Core
             comfort = Mathf.Clamp01(comfort);
 
             string drive, cause = CauseFactor.None, causeTarget = "";
-            float intensity = BASE_DRIVE;
+            float mod = ActivityModifier(a.location);   // 雨（经河岸水位/湿度）+ 雾 → 活动频率下降（§5.1）
+            float intensity = BASE_DRIVE * mod;
 
             if (!present)
             {
@@ -336,7 +348,9 @@ namespace GlimmerDiary.Core
             else
             {
                 drive = "Settle";
-                comfort = Mathf.Clamp01(comfort + 0.03f);
+                comfort = Mathf.Clamp01(comfort + 0.03f * mod);
+                // 语料提醒（§5.1）——只在真的下雨/起雾时认领，文本对齐画面
+                if (HarshNow) { cause = CauseFactor.WeatherHarsh; causeTarget = "weather"; }
             }
 
             cur.migrationUrge = urge; cur.settlementComfort = comfort; cur.lastDrive = drive;
@@ -372,6 +386,8 @@ namespace GlimmerDiary.Core
             a.behavior.zone  = a.location;
             a.behavior.drive = a.isPresent ? "Nest" : "Away";
             a.behavior.cause = CauseFactor.None;
+            // 雨/雾 → 活动频率下降（§5.1"同"）；织巢鸟无状态向量，intensity 是唯一活动信号
+            a.behavior.intensity = a.isPresent ? 0.3f * ActivityModifier(a.location) : 0f;
         }
 
         // ── 猴面包树：vitality / 开花 / 断枝边沿 → 织巢鸟离场 ──
@@ -383,9 +399,15 @@ namespace GlimmerDiary.Core
             var st = tree.internalState;
             float V = _save.currentEEnv?.V ?? 0f;
 
-            // vitality：E_env.V 长期积分
+            // vitality：E_env.V 长期积分 + 本地湿度偏置（§5.1 雨→猴面包树：
+            // 雨经 center 水位/湿度间接作用——湿季恢复加速、旱季减速。先数据，视觉等 MPB）
             float vNorm = (V + 1f) * 0.5f;
-            st.vitality = Mathf.Clamp01(st.vitality + TREE_VITALITY_ALPHA * (vNorm - st.vitality));
+            var treeLoc = _registry.GetLocation("center");
+            float moisture = treeLoc != null
+                ? Mathf.Clamp01((treeLoc.waterLevel + treeLoc.soilMoisture) * 0.5f)
+                : 0.5f;
+            float vitTarget = Mathf.Clamp01(vNorm + (moisture - 0.5f) * 2f * TREE_RAIN_VITALITY_BIAS);
+            st.vitality = Mathf.Clamp01(st.vitality + TREE_VITALITY_ALPHA * (vitTarget - st.vitality));
 
             st.ticksSinceBranchBreak++;
 
@@ -421,6 +443,30 @@ namespace GlimmerDiary.Core
         }
 
         // ── 工具 ───────────────────────────────────────────────────
+
+        // 天气→活动度（Worksheet §5.1 已拍板）：雨不直连动物，经"所在 zone 的水位/湿度"
+        // 间接作用（雨→M6 水位传播→动物每 tick 读相关值，结构与其他焦虑值相仿）；
+        // 雾为全局信号直读。返回乘数 ∈ [1-damp, 1]，乘在活动类 drive 的 urgency /
+        // activityRange / intensity 上。纯调制因子，每 tick 重算，无自身积分状态。
+        // 读：loc.waterLevel/soilMoisture（写者 WorldManager）、env.FogDensity（写者环境系统）。
+        private float ActivityModifier(string zone)
+        {
+            if (_env == null) return 1f;
+            float mod = 1f;
+            var loc = _registry.GetLocation(zone);
+            if (loc != null)
+            {
+                float wet = Mathf.Clamp01((loc.waterLevel + loc.soilMoisture) * 0.5f);
+                mod *= Mathf.Lerp(1f, 1f - WET_ACTIVITY_DAMP, wet);
+            }
+            if (_env.FogDensity > FOG_ACTIVITY_THRESHOLD)
+                mod *= 1f - FOG_ACTIVITY_DAMP;
+            return mod;
+        }
+
+        // 语料门控：只有"现在正在下雨/起雾"才允许天气语料——文本必须与画面里的天气对齐
+        private bool HarshNow =>
+            _env != null && (_env.Rainfall > RAIN_HARSH_THRESHOLD || _env.FogDensity > FOG_ACTIVITY_THRESHOLD);
 
         private float Smooth(float x, float k) =>
             Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((x - (k - SOFT_BAND)) / (2f * SOFT_BAND)));

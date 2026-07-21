@@ -79,6 +79,16 @@ public class WorldManager : MonoBehaviour
         // 节律对齐到已载入的世界日历（季节/yearProgress 取自 gameTime）
         NaturalRhythm.Tick(_saveData.gameTime);
 
+        // 新世界预跑：玩家到达的应该是一个"已经活过的世界"（Worksheet §0 拍板）——
+        // 先跑 30 天中性 WorldTick 再交给玩家。isCatchUp:true 丢弃逐日世界志噪音，
+        // worldEvents（append-only）原样保留，成为痕迹的历史来源。
+        if (string.IsNullOrEmpty(_saveData.lastTickRealTime))
+        {
+            Debug.Log($"[WorldManager] 新世界：先跑 {NewWorldPreRunDays} 天中性预跑。");
+            WorldTick(NewWorldPreRunDays, isCatchUp: true);
+            SaveSystem.SaveWorldState(_saveData);   // 锚定到现在，避免紧接的墙钟 catch-up 重跑同一天
+        }
+
         // 启动 catch-up：按真实墙钟流逝天数把世界静默推进到现在
         int catchUpDays = WallClockDeltaDays();
         if (catchUpDays > 0)
@@ -118,6 +128,10 @@ public class WorldManager : MonoBehaviour
     // 但每日重模拟只跑最后 N 天，避免长缺席时启动卡顿（深层历史留给 Phase 3 摘要）
     const int MaxSimulatedCatchupDays = 90;
 
+    // 新世界预跑天数（Worksheet §0：玩家到达一个已经活过的世界）。
+    // ≤ MaxSimulatedCatchupDays，预跑的每一天都跑完整 SimulatePass。
+    const int NewWorldPreRunDays = 30;
+
     // 推进一个日历日：gameTime+1 → 情绪向基线回落 → 刷新季节
     private void AdvanceCalendar()
     {
@@ -130,8 +144,8 @@ public class WorldManager : MonoBehaviour
     private void SimulatePass()
     {
         // Step 0：翻译层产出无状态信号 1/2/3/7（在天气消费之前）
-        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State);
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals);
+        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State); //通过情绪向量和现有状态输出新世界信号
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals); // 新的环境
         PropagateEnvironmentToLocations();
         _vegetationSystem.Tick(_saveData.gameTime);   // loc.vegetationDensity 单一写者；驱动层只读
 

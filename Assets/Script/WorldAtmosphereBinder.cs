@@ -23,6 +23,13 @@ public class WorldAtmosphereBinder : MonoBehaviour
     [Range(0f, 1f)] public float thunderWindThreshold = 0.6f;
     [Range(0f, 1f)] public float thunderRainThreshold = 0.6f;
 
+    [Header("水面升降(riverbank 水量 → Water transform)")]
+    public WaterGenerator waterSurface;
+    [Tooltip("驱动水面的 location id(河道空间上贴着河岸区)")]
+    public string waterSourceLocationId = "riverbank";
+    [Tooltip("水位是日积分慢变量,比天气 0.5 慢一个量级(τ≈20s):水面垂直位移比颜色更扎眼,必须爬不能跳")]
+    public float waterSmoothingSpeed = 0.05f;
+
     // 展示层平滑后的当前值（目标值来自世界状态快照）
     private float _rain;      // [-1 雨, +1 晴]，与 weatherController.rainIntensity 同语义
     private float _wind;      // [0,1]
@@ -30,6 +37,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
     private float _dimness;   // [0,1]
     private float _starVis;   // [0,1]
     private bool _initialized;
+    private float _waterLevel;       // [0,1] 平滑后的水量
+    private bool _waterInitialized;  // 独立首帧对齐:location 可能晚于全局状态就绪
 
     void Update()
     {
@@ -74,15 +83,32 @@ public class WorldAtmosphereBinder : MonoBehaviour
             _dimness = Mathf.Lerp(_dimness, dimnessTarget, k);
             _starVis = Mathf.Lerp(_starVis, starVisTarget, k);
         }
+
+        // —— 水位通路(独立首帧对齐;loc 缺失则静默跳过,保持现值不驱动向假默认)——
+        var loc = wm.Registry.GetLocation(waterSourceLocationId);
+        if (loc != null)
+        {
+            float waterTarget = loc.waterLevel;   // [0,1],L2 日积分慢变量
+            if (!_waterInitialized)
+            {
+                _waterLevel = waterTarget;
+                _waterInitialized = true;
+            }
+            else
+            {
+                float kw = 1f - Mathf.Exp(-waterSmoothingSpeed * Time.deltaTime);
+                _waterLevel = Mathf.Lerp(_waterLevel, waterTarget, kw);
+            }
+        }
     }
 
     void LateUpdate()
     {
+        
         if (!_initialized) return;
         var wm = WorldManager.Instance;
         if (wm == null) return;
         var env = wm.GetWorldState();
-
         if (weatherController != null && weatherController.allowExternalDrive)
         {
             weatherController.rainIntensity    = _rain;
@@ -105,5 +131,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
             if (env != null)
                 treePlacement.SetRainfall(env.Rainfall);
         }
+
+        if (waterSurface != null && _waterInitialized)
+            waterSurface.SetDisplayLevel01(_waterLevel);
     }
 }

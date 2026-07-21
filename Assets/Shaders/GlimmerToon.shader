@@ -2,6 +2,7 @@ Shader "Glimmer/Toon"
 {
     // 树木/道具统一着色器：贴图 × 主色 → Glimmer toon 光照 → URP 雾。
     // 与 Glimmer/Terrain 共享 GlimmerToonCore，保证全场景光照语言一致。
+    // cache-bump: 2026-07-21 强制全量变体按当前 67 关键字空间重编译（清 66 态陈旧缓存）
     Properties
     {
         _BaseMap   ("Albedo", 2D) = "white" {}
@@ -129,4 +130,6 @@ Shader "Glimmer/Toon"
         UsePass "Universal Render Pipeline/Lit/ShadowCaster"
         UsePass "Universal Render Pipeline/Lit/DepthOnly"
     }
+
+    FallBack "Universal Render Pipeline/Lit"
 }
