@@ -83,6 +83,29 @@ Assets/
 - Emotion vector fields: lowercase full words (valence, arousal, temporality)
 - Permanent events: past tense (TreeBranchBroke, AnimalArrived)
 
+## Communication
+
+- When explaining work items or progress, ALWAYS use player-facing
+  language: state what the change looks/feels like from the player's
+  seat before (or instead of) the internal mechanics.
+  e.g. not "WorldArousal now decays via Relax toward 0.5" but
+  "激烈情绪过去后，世界会慢慢平静下来，而不是瞬间复位".
+  The reader must grasp the meaning of a change without knowing the
+  codebase. Technical detail may follow, but never leads.
+
+## Documentation & Commits
+
+- Every change batch (start or completion of a piece of work) gets a
+  changelog doc: `Docs/更改_YYYY-MM-DD.md`, following the established
+  format — 为什么改 (player-facing), 改动清单 (file-by-file table),
+  plus any ownership-table rows. Same day → append to the existing doc.
+- When a change lands, update the relevant plan/design docs in place
+  (e.g. InteractionWorksheet.md entries, 设计工作台 sections) so plans
+  never drift from what was actually built.
+- After finishing each section/chunk of work: review the diff, then
+  `git add` + `git commit` automatically — don't leave work uncommitted.
+- Commit messages: plain, no Claude/AI co-author or attribution lines.
+
 
 ## When In Doubt
 
