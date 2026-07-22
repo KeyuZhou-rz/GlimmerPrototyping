@@ -468,26 +468,21 @@ public class EmotionWeatherController : MonoBehaviour
         float starBlend = allowExternalDrive ? starVisibility : wNight * (1f - badT * stormStarHide);
         skyboxMaterial.SetFloat("_StarBlend", starBlend);
 
-        // —— 月轮图腾：方向按时间推算（无第二盏灯），相位取自世界日历 ——
-        // 世界历每月 30 天 ≈ 一朔望月：每月 1 日朔（月亮消失）、15/16 日望。
-        // 轨迹 = 太阳轨道面时间平移 phase：朔时月与日同升落（全暗不可见），
-        // 望时日落月升，上弦黄昏挂西天 —— 月相与升起时刻自洽，无需第二盏灯
+        // —— 月轮图腾：方向 = 太阳的中心对称点，相位取自世界日历 ——
+        // 轨迹与太阳同角速度、方位中心对称（日落月升、月落日升）——直接镜像
+        // 真实太阳灯，不再经 dayProgress 推算（play 无 tick 时节律冻结，
+        // 推算轨迹会把月亮钉死在一个位置）。相位只改圆缺、不改位置：
+        // 世界历每月 30 天 ≈ 一朔望月，每月 1 日朔（消失）、15/16 日望
         float moonPhase = 0.5f;   // 无 WorldManager 的场景（调参/验证）：恒望
-        float dayProg = -1f;
         var wm = WorldManager.Instance;
         if (wm != null)
         {
-            var rhythm = wm.GetRhythmState();
-            if (rhythm != null) dayProg = rhythm.dayProgress;
             var save = wm.WorldSave;
             if (save != null && save.gameTime != null)
                 moonPhase = ((save.gameTime.ToAbsoluteDays() - 1) % 30) / 30f;
         }
-        if (dayProg < 0f) dayProg = (float)System.DateTime.Now.TimeOfDay.TotalDays;
-        // 轨道面 yaw 跟随真实太阳灯（LightManager.SunDirection 的单一事实来源）
-        float moonYaw = (sun != null) ? sun.transform.localEulerAngles.y : 170f;
-        float moonPitch = Mathf.Repeat(dayProg + moonPhase, 1f) * 360f - 90f;
-        Vector3 moonDir = -(Quaternion.Euler(moonPitch, moonYaw, 0f) * Vector3.forward);
+        // 中心对称：_SunDir = -sun.forward → 月亮取 sun.forward，永远悬在太阳正对面
+        Vector3 moonDir = (sun != null) ? sun.transform.forward : Vector3.down;
         skyboxMaterial.SetVector("_MoonDir", moonDir);
         skyboxMaterial.SetFloat("_MoonPhase", moonPhase);
         // 夜里满月亮度、黄昏残留一弯、暴雨云层遮蔽（与星穹同一遮蔽系数）

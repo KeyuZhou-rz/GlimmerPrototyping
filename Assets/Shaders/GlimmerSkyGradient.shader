@@ -14,9 +14,11 @@ Shader "Glimmer/SkyGradient"
     //          日出入画（北），日落走反日余晖（rig 物理：日落太阳在镜头背后）。
     //   月亮 = 同工艺月轮图腾（2026-07-22）：骨白点描盘 + 炭灰月海斑块
     //          （掷灰语言，与银河点描同一只手），无射线无光环 —— 太阳的词汇是
-    //          "光芒"，月亮的词汇是"斑"。月相随世界日历轮转（一月=一朔望月，
-    //          朔日月亮从天上消失），terminator 用椭圆曲线切弦，弦轴指向太阳。
-    //          _MoonDir/_MoonPhase/_MoonGlow 由控制器按时间推算写入（无第二盏灯）。
+    //          "光芒"，月亮的词汇是"斑"。轨迹 = 太阳的中心对称点（同角速度、
+    //          方位镜像，日落月升）；月相随世界日历轮转（一月=一朔望月，朔日
+    //          月亮从天上消失），terminator 椭圆切弦、弦轴固定在月盘水平切轴
+    //          （不追日——轨迹已镜像，追日会随太阳经过而翻转）。
+    //          _MoonDir/_MoonPhase/_MoonGlow 由控制器写入（无第二盏灯）。
     // 零贴图、单 pass、无光照 include；_SunDir/_MoonDir/_MoonPhase/_StarBlend/
     // _SkyHorizon 由
     // EmotionWeatherController 独家驱动（单写者），shader 不读 URP 光源数据。
@@ -414,19 +416,23 @@ Shader "Glimmer/SkyGradient"
                     col += _SunTint.rgb * airGlow * airGlow * 0.045 * _SunGlow * sunUpMask;
                 }
 
-                // —— 3b. 月轮图腾：与太阳同工艺（q/theta 极坐标、共用毛边、先凿
-                //        后填、三重遮挡），词汇换成"斑"——无射线无光环，骨白
-                //        点描盘 + 炭灰月海。月相用 terminator 椭圆切弦：弦轴指向
-                //        太阳（弦的倾角物理正确——残月抱日），朔日整盘消失 ——
+                // —— 3b. 月轮图腾：方向 = 太阳的中心对称点（控制器写入），与太阳
+                //        同角速度扫天、方位镜像 —— 日落月升。工艺同太阳（q/theta
+                //        极坐标、共用毛边、先凿后填、地平线遮挡），词汇换成"斑"：
+                //        骨白点描盘 + 炭灰月海，无射线无光环。相位只改圆缺：
+                //        terminator 椭圆切弦，弦轴固定在月盘自身水平切轴 ——
+                //        不跟踪太阳（轨迹已镜像，追日会随太阳经过而翻转，
+                //        读作相位乱跳）——
                 float3 moonDirW = normalize(_MoonDir.xyz + float3(0, 1e-5, 0));
                 float moonOcc = 0.0;   // 月盘覆盖度 → 夜空块遮挡星点（亮星不穿月）
                 {
+                    // 稳定正交基（与太阳图腾同一建基法）：mT = 水平切轴，mB = 竖直切轴
                     float3 mUpRef = abs(moonDirW.y) > 0.98 ? float3(1, 0, 0) : float3(0, 1, 0);
                     float3 mT = normalize(cross(mUpRef, moonDirW));
                     float3 mB = cross(moonDirW, mT);
                     float mAng = acos(clamp(dot(d, moonDirW), -1.0, 1.0));
                     float mq = mAng / radians(_MoonSize);          // 1 = 月盘边缘
-                    float mTheta = atan2(dot(d, mB), dot(d, mT));
+                    float mTheta = atan2(dot(d, mB), dot(d, mT));   // theta 从 mT 起量
 
                     if (mq < 1.6 && _MoonGlow > 0.001)   // 影响圈外整段跳过
                     {
@@ -437,17 +443,14 @@ Shader "Glimmer/SkyGradient"
                         float mhOcc = smoothstep(-0.005, 0.015, y);   // 地平线吃底（残月半沉）
                         float mStr = _MoonGlow * moonUpMask * mhOcc;
 
-                        // 月相：盘内坐标 (mu, mv)，mu 轴指向太阳在月盘切面的投影
-                        // （朔时投影退化 → 反正全暗，朝向任意取）；lit = 受光侧。
-                        // terminator: mu > cos(2π·phase)·√(1−mv²) —— 朔(0)全暗、
-                        // 上弦(0.25)右半、望(0.5)全圆、下弦(0.75)左半
-                        float2 sun2D = float2(dot(sunDirW, mT), dot(sunDirW, mB));
-                        sun2D = length(sun2D) > 0.05 ? normalize(sun2D) : float2(1.0, 0.0);
-                        float mu = dot(float2(cos(mTheta), sin(mTheta)) * mqr, sun2D);
-                        float mv = dot(float2(cos(mTheta), sin(mTheta)) * mqr,
-                                       float2(-sun2D.y, sun2D.x));
+                        // 盘内坐标：mu 沿水平切轴、mv 沿竖直切轴（弦轴固定，不随太阳动）
+                        float mu = mqr * cos(mTheta);
+                        float mv = mqr * sin(mTheta);
+                        // terminator 椭圆切弦：朔(0)全暗 → 望(0.5)全圆；
+                        // 上弦/下弦亮不同侧（盈亏镜像，side 翻转亮面）
+                        float side = _MoonPhase < 0.5 ? 1.0 : -1.0;
                         float term = cos(_MoonPhase * TWO_PI) * sqrt(saturate(1.0 - mv * mv));
-                        float lit = smoothstep(-0.04, 0.04, mu - term);
+                        float lit = smoothstep(-0.04, 0.04, mu * side - term);
 
                         float mDisc = (1.0 - smoothstep(0.96, 1.03, mqr)) * lit;
 
