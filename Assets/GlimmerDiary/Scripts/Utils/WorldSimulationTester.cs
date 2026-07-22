@@ -23,7 +23,8 @@ namespace GlimmerDiary.Utils
             LongTermDecay,           // 14天负面 → 衰败积累
             FullWeekCycle,           // 7天推进 → 验证时间和历史记录
             EmergentAnxietyChain,    // 狐狸临近 → 鹿鼠焦虑 → 收缩 → 田鼠扩张（状态涌现）
-            LongChainForLetter       // 30 天长链：断枝→离巢→退守→扩张→巡逻+候鸟+雨语料 → 攒一批世界志给"信"
+            LongChainForLetter,      // 30 天长链：断枝→离巢→退守→扩张→巡逻+候鸟+雨语料 → 攒一批世界志给"信"
+            DroughtRecovery          // 45 天无雨 → debt>0.6（地裂线）；再 18 天暴雨 → debt 回落线下
         }
 
         void Start()
@@ -43,6 +44,7 @@ namespace GlimmerDiary.Utils
                 case TestScenario.FullWeekCycle:          Test_FullWeekCycle();          break;
                 case TestScenario.EmergentAnxietyChain:   Test_EmergentAnxietyChain();   break;
                 case TestScenario.LongChainForLetter:     Test_LongChainForLetter();     break;
+                case TestScenario.DroughtRecovery:        Test_DroughtRecovery();        break;
             }
         }
 
@@ -283,6 +285,38 @@ namespace GlimmerDiary.Utils
             Log($"  ── 信的世界志：{pending.Count} 条待显示（按 L 阅读）──");
             foreach (var c in pending)
                 Log($"    · [{c.eventId}] {c.text}");
+            LogWorldState();
+        }
+
+        // ─────────────────────────────────────────────
+        // 场景八：旱债累积与雨季恢复（Batch 2 droughtDebt 验证）
+        //
+        // 机制：V≥0 → Wetness=0 → 每 tick debt += (季节基准雨 0.30 − 0)×0.05
+        //       45 天无雨 → debt≈0.68 过 0.6 地裂/收敛线；
+        //       再 18 天 V=-0.9 暴雨 → debt 每日扣减，回落线下。
+        // 预期：debt 峰值 > 0.6；雨季后 debt < 0.6（ binder 地裂随之撤出）
+        // ─────────────────────────────────────────────
+        void Test_DroughtRecovery()
+        {
+            Log("=== 场景八：旱债累积与雨季恢复 ===");
+            ResetWorld();
+
+            for (int i = 0; i < 45; i++)
+            {
+                SubmitEmotion(V: 0.5f, A: 0.3f, C: 0.5f);
+                if ((i + 1) % 5 == 0)
+                    Log($"  旱 D{i + 1}: debt={EnvState.DroughtDebt:F3} Rain={EnvState.Rainfall:F2}");
+            }
+            float peak = EnvState.DroughtDebt;
+            AssertTrue($"旱债峰值过地裂线 0.6（实际 {peak:F2}）", peak > 0.6f);
+
+            for (int i = 0; i < 18; i++)
+            {
+                SubmitEmotion(V: -0.9f, A: 0.5f, C: 0.4f);
+                Log($"  雨 D{i + 1}: debt={EnvState.DroughtDebt:F3} Rain={EnvState.Rainfall:F2} E_env.V={EEnv.V:F2}");
+            }
+            AssertTrue($"雨季后旱债回落地裂线下（实际 {EnvState.DroughtDebt:F2}）",
+                EnvState.DroughtDebt < 0.6f);
             LogWorldState();
         }
 
