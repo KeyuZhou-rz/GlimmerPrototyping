@@ -33,6 +33,7 @@ namespace GlimmerDiary.Core
         private readonly float BIRD_URGE_SEASON, BIRD_URGE_OFF, BIRD_URGE_BLEAK, BIRD_COMFORT_LERP, BIRD_FOX_DISCOMFORT;
         private readonly float TREE_VITALITY_ALPHA, TREE_FLOWER_GAIN, TREE_RAIN_VITALITY_BIAS;
         private readonly float WET_ACTIVITY_DAMP, FOG_ACTIVITY_DAMP, FOG_ACTIVITY_THRESHOLD, RAIN_HARSH_THRESHOLD;
+        private readonly float DROUGHT_CONVERGE_THRESHOLD;
         private readonly int   WEAVER_RETURN_TICKS;
 
         static readonly HashSet<string> FOX_TERRITORY = new() { "highland_east", "center" };
@@ -62,6 +63,7 @@ namespace GlimmerDiary.Core
             TREE_RAIN_VITALITY_BIAS = t.treeRainVitalityBias;
             WET_ACTIVITY_DAMP = t.wetActivityDamp; FOG_ACTIVITY_DAMP = t.fogActivityDamp;
             FOG_ACTIVITY_THRESHOLD = t.fogActivityThreshold; RAIN_HARSH_THRESHOLD = t.rainHarshThreshold;
+            DROUGHT_CONVERGE_THRESHOLD = t.droughtConvergeThreshold;
             WEAVER_RETURN_TICKS = t.weaverReturnTicks;
         }
 
@@ -192,8 +194,10 @@ namespace GlimmerDiary.Core
             // 否则会抢先改 vole.location、使该规则的前置条件 (location==lowland) 失效。
             // shelterSecurity 仍计入状态向量（供叙事/未来用），但不驱动移动。
             float mod = ActivityModifier(myZone);   // 雨（经本地水位/湿度）+ 雾 → 活动度（§5.1；巢穴痕迹另案）
+            // 旱债过线：水比机会更紧要——即使 center 未腾空也被河岸牵引（§5.5 旱：动物向 riverbank 收敛）
+            bool droughtDraw = (_env?.DroughtDebt ?? 0f) > DROUGHT_CONVERGE_THRESHOLD && myZone != "riverbank";
             string drive = Argmax(cur.lastDrive,
-                ("Expand",   centerFree ? Smooth(exp, 0.6f) * mod : 0f),
+                ("Expand",   (centerFree || droughtDraw) ? Smooth(exp, 0.6f) * mod : 0f),
                 ("Forage",   Smooth(1f - food, 0.6f) * mod),
                 ("Burrow",   BASE_DRIVE),
                 out float intensity);
@@ -207,11 +211,14 @@ namespace GlimmerDiary.Core
                     break;
 
                 case "Expand":
-                    MoveAnimal(a, "center", "vole_expansion", time);
-                    Emit(WorldEventType.VoleClaimedZone, "vole", "center", "E", time);
+                    string expandTo = droughtDraw ? "riverbank" : "center";
+                    MoveAnimal(a, expandTo, droughtDraw ? "vole_drought_draw" : "vole_expansion", time);
+                    Emit(WorldEventType.VoleClaimedZone, "vole", expandTo, "E", time);
                     exp  = Mathf.Clamp01(exp  - VOLE_EXPAND_RELIEF);
                     food = Mathf.Clamp01(food + VOLE_EXPAND_FOOD);
-                    cause = CauseFactor.DeerMouseWithdrew; causeTarget = "deer_mouse";
+                    // 旱牵引无文本认领——河岸脚印密度本身就是信号（§5.5）；
+                    // 挂 DeerMouseWithdrew 会是误归因（像 bug 不像误读）
+                    if (!droughtDraw) { cause = CauseFactor.DeerMouseWithdrew; causeTarget = "deer_mouse"; }
                     break;
             }
 
@@ -272,6 +279,11 @@ namespace GlimmerDiary.Core
                 case "Foraging":
                 {
                     string target = HighestVegInReach(myZone);
+                    // 旱债过线：水比植被更紧要——河岸在可达范围就改奔水边（§5.5 旱：动物向 riverbank 收敛）
+                    if ((_env?.DroughtDebt ?? 0f) > DROUGHT_CONVERGE_THRESHOLD
+                        && target != "riverbank"
+                        && ZoneTopology.AreSameOrAdjacent(myZone, "riverbank"))
+                        target = "riverbank";
                     float tVeg = _registry.GetLocation(target)?.vegetationDensity ?? 0.5f;
                     if (target != myZone) MoveAnimal(a, target, "fox_forage", time);
                     hunger = Mathf.Clamp01(hunger - FOX_FORAGE_RELIEF * (0.5f + 0.5f * tVeg));
@@ -407,6 +419,9 @@ namespace GlimmerDiary.Core
                 ? Mathf.Clamp01((treeLoc.waterLevel + treeLoc.soilMoisture) * 0.5f)
                 : 0.5f;
             float vitTarget = Mathf.Clamp01(vNorm + (moisture - 0.5f) * 2f * TREE_RAIN_VITALITY_BIAS);
+            // 旱债过线：树恢复停滞——目标封顶当前值，只准降不准升（§5.5 旱阈值 2）
+            if ((_env?.DroughtDebt ?? 0f) > DROUGHT_CONVERGE_THRESHOLD)
+                vitTarget = Mathf.Min(vitTarget, st.vitality);
             st.vitality = Mathf.Clamp01(st.vitality + TREE_VITALITY_ALPHA * (vitTarget - st.vitality));
 
             st.ticksSinceBranchBreak++;

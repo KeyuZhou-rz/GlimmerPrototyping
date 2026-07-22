@@ -8,7 +8,7 @@ using UnityEngine;
 /// </summary>
 public static class TraceKit
 {
-    private static Mesh _mound, _moundCollapsed, _footprint, _feather, _mark, _pressedOval;
+    private static Mesh _mound, _moundCollapsed, _footprint, _feather, _mark, _pressedOval, _earthCrack;
 
     /// <summary>新翻土堆：低矮八面锥丘，顶部略偏斜。</summary>
     public static Mesh Mound => _mound != null ? _mound
@@ -32,6 +32,9 @@ public static class TraceKit
     /// <summary>压草椭圆：大而扁的淡色贴地片（QuietConvergence 歇息处，主表达靠 trample）。</summary>
     public static Mesh PressedOval => _pressedOval != null ? _pressedOval
         : _pressedOval = BuildDisc("Trace_PressedOval", segments: 10, rx: 0.85f, rz: 0.60f);
+
+    /// <summary>地裂：一条主缝 + 两条支缝的锯齿条带（旱痕 §5.5，贴地暗色，摆放层 yaw/缩放打散）。</summary>
+    public static Mesh EarthCrack => _earthCrack != null ? _earthCrack : _earthCrack = BuildEarthCrack();
 
     // ── 网格构造 ─────────────────────────────────────────────────
 
@@ -118,6 +121,49 @@ public static class TraceKit
 
         return Bake("Trace_Feather", verts, tris);
     }
+
+    /// <summary>地裂网格：主缝 6 段锯齿 + 两条支缝，端头收窄。</summary>
+    private static Mesh BuildEarthCrack()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        AddCrackLine(verts, tris, new Vector2(-0.62f, 0.02f), new Vector2(0.66f, 0.10f), 6, 0.055f, 0.5f);  // 主缝
+        AddCrackLine(verts, tris, new Vector2(-0.08f, 0.03f), new Vector2(0.16f, 0.46f), 3, 0.038f, 0.4f);   // 支缝一
+        AddCrackLine(verts, tris, new Vector2(0.10f, 0.01f), new Vector2(0.34f, -0.40f), 3, 0.032f, 0.4f);   // 支缝二
+        return Bake("Trace_EarthCrack", verts, tris);
+    }
+
+    /// <summary>锯齿条带：from→to 分 segs 段逐段交替侧移，宽度随 t 向末端收窄（taper）。</summary>
+    private static void AddCrackLine(System.Collections.Generic.List<Vector3> verts,
+                                     System.Collections.Generic.List<int> tris,
+                                     Vector2 from, Vector2 to, int segs, float width, float taper)
+    {
+        Vector2 dir  = (to - from).normalized;
+        Vector2 perp = new(-dir.y, dir.x);
+        Vector2 prevL = default, prevR = default;
+
+        for (int i = 0; i <= segs; i++)
+        {
+            float t = i / (float)segs;
+            Vector2 c = Vector2.Lerp(from, to, t);
+            // 锯齿：交替侧移 + 确定性微扰（只依赖 i，重启复现）
+            float jag = (i % 2 == 0 ? 1f : -1f) * 0.055f * Mathf.Abs(Mathf.Sin(i * 1.7f + 0.9f));
+            c += perp * jag;
+            float hw = width * Mathf.Lerp(1f, taper, t) * 0.5f;
+            if (i == 0 || i == segs) hw *= 0.35f;   // 端头收尖
+            Vector2 l = c + perp * hw;
+            Vector2 r = c - perp * hw;
+            if (i > 0)
+            {
+                AddTri(verts, tris, Flat(prevL), Flat(l), Flat(prevR));
+                AddTri(verts, tris, Flat(prevR), Flat(l), Flat(r));
+            }
+            prevL = l; prevR = r;
+        }
+    }
+
+    private static Vector3 Flat(Vector2 v) => new(v.x, 0f, v.y);
 
     // 非共享顶点逐三角形追加 → RecalculateNormals 得到平面着色
     private static void AddTri(System.Collections.Generic.List<Vector3> verts,

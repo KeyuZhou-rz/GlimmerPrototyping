@@ -146,7 +146,7 @@ public class WorldManager : MonoBehaviour
     {
         // Step 0：翻译层产出无状态信号 1/2/3/7（在天气消费之前）
         var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State); //通过情绪向量和现有状态输出新世界信号
-        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals); // 新的环境
+        Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals, NaturalRhythm.State); // 新的环境（含旱债积分，需季节基准）
         PropagateEnvironmentToLocations();
         _vegetationSystem.Tick(_saveData.gameTime);   // loc.vegetationDensity 单一写者；驱动层只读
 

@@ -59,5 +59,8 @@ namespace GlimmerDiary.Data
         [Range(0f, 1f)] public float fogActivityDamp      = 0.5f;  // 浓雾时活动度乘数降到 1-damp
         [Range(0f, 1f)] public float fogActivityThreshold = 0.5f;  // FogDensity 超过才生效
         [Range(0f, 1f)] public float rainHarshThreshold   = 0.4f;  // Rainfall 超过才允许雨天语料（文本须对齐画面天气）
+
+        [Header("旱（Worksheet §5.5 第 2 行：debt 过阈值 → 动物向河岸收敛 / 树恢复停滞）")]
+        [Range(0f, 1f)] public float droughtConvergeThreshold = 0.6f; // DroughtDebt 超过才生效（痕迹：河岸脚印密度异常升高，聚集本身即旱的可读信号）
     }
 }

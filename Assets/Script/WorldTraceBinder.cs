@@ -49,6 +49,16 @@ public class WorldTraceBinder : MonoBehaviour
     public float markerScreenScale = 0.02f;
     public Color markerColor  = new(1.0f, 0.62f, 0.22f);   // 暖橙：与金色草丛拉开对比
 
+    [Header("旱痕（§5.5：DroughtDebt>阈值 → 干裂地表，状态驱动仿 T4，回落即撤）")]
+    public float droughtCrackThreshold = 0.6f;
+    [Tooltip("裂缝簇出现的 zone（水位退缩最明显的区域）")]
+    public string[] crackZones = { "lowland", "center" };
+    public Color crackColor = new(0.16f, 0.12f, 0.09f);   // 裂缝阴影色，比任何土色都暗
+
+    [Header("T1 水毁态（§5.1：土堆所在 zone 湿度>阈值 → 塌陷湿泥态，不可逆锁存——水毁是痕迹的状态，塌洞是地貌的疤）")]
+    public float floodDamageMoisture = 0.8f;
+    public Color floodDamagedTint = new(0.22f, 0.17f, 0.13f);   // 泡透的湿泥：更暗偏冷
+
     [Header("年龄着色")]
     public Color dirtFresh   = new(0.30f, 0.22f, 0.16f);   // 湿的新土
     public Color dirtDry     = new(0.45f, 0.36f, 0.27f);
@@ -64,7 +74,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -81,6 +91,7 @@ public class WorldTraceBinder : MonoBehaviour
 
     private readonly Dictionary<string, TraceInstance> _traces = new();
     private readonly List<Transform> _markers = new();   // 新鲜标记（LateUpdate 呼吸动画用）
+    private readonly HashSet<string> _floodDamaged = new();   // T1 水毁锁存（不可逆原则③：一旦泡透不再复原）
     private readonly Vector4[] _trampleArray = new Vector4[TRAMPLE_MAX];
     private readonly List<Vector4> _trampleGather = new();
     private Transform _propRoot;
@@ -172,7 +183,12 @@ public class WorldTraceBinder : MonoBehaviour
         {
             sig = sig * 31 + Mathf.RoundToInt(env.Rainfall * 20f);
             sig = sig * 31 + Mathf.RoundToInt(env.WindSpeed * 20f);
+            // 旱债（地裂出现/撤除）与 T1 水毁判定都要随它重建
+            sig = sig * 31 + Mathf.RoundToInt(env.DroughtDebt * 20f);
         }
+        // 各 zone 湿度量化档：跨过水毁阈值要触发重建（T1 水毁态）
+        if (save.locations != null)
+            foreach (var l in save.locations) sig = sig * 31 + Mathf.RoundToInt(l.soilMoisture * 20f);
         return sig;
     }
 
@@ -219,7 +235,13 @@ public class WorldTraceBinder : MonoBehaviour
                         string mk = "mound|" + key;
                         moundKeys.Add(mk);
                         birthDays[mk] = day;
-                        desired[mk] = t => SpawnMound(t, trigger, to, age, seed);
+                        // 水毁态（§5.1 第四老化态）：按土堆实际所在 zone 的湿度判定——
+                        // 扩张土堆在 center↔stone 边（按 center）；搬家新洞口在目的地 zone。
+                        // （低洼被淹的旧巢是 T2 塌洞的表达范围，两者分工不混）
+                        string moundZone = trigger == "vole_expansion" ? "center"
+                                         : (string.IsNullOrEmpty(to) ? "lowland" : to);
+                        bool damaged = IsFloodDamaged(save, moundZone, mk, day);
+                        desired[mk] = t => SpawnMound(t, trigger, to, age, seed, damaged);
                         if (age <= freshAgeThreshold) fresh.Add(mk);
                     }
 
@@ -328,6 +350,19 @@ public class WorldTraceBinder : MonoBehaviour
             fresh.Add(key);   // 实时态恒新鲜——它出现本身就是"刚发生的变化"
         }
 
+        // 旱痕（§5.5 阈值 2）：debt>0.6 → 干裂地表。状态驱动仿 T4：过线出现，回落即撤。
+        // 不上新鲜标记——裂缝会持续数周，标记只指向"新变化"。
+        if ((env?.DroughtDebt ?? 0f) > droughtCrackThreshold && crackZones != null)
+        {
+            foreach (var zone in crackZones)
+            {
+                if (string.IsNullOrEmpty(zone)) continue;
+                string ck = "cracks|" + zone;
+                birthDays[ck] = today;
+                desired[ck] = t => SpawnCracks(t, zone, Fnv1a(ck));
+            }
+        }
+
         // —— 同步：移除消失的，生成新增的 ——
         var stale = new List<string>();
         foreach (var kv in _traces)
@@ -364,11 +399,12 @@ public class WorldTraceBinder : MonoBehaviour
     // ── 各类型痕迹的生成 ─────────────────────────────────────────
 
     /// <summary>
-    /// T1 新翻土堆：三阶段老化（湿→干→沉降）。
+    /// T1 新翻土堆：三阶段老化（湿→干→沉降）+ 第四态「水毁」（§5.1，2026-07-21 定稿）。
     /// 扩张土在石头区与中央之间（语料："石头区和中央之间…新翻的土"）；
     /// 洪水搬家的新洞口开在目的地 zone（规则可能指向 highland_east 等，跟数据走）。
+    /// 水毁：泡透塌成湿泥——更矮、摊开（边缘糊）、色暗偏冷；锁存不可逆。
     /// </summary>
-    private void SpawnMound(TraceInstance t, string trigger, string toZone, float age, int seed)
+    private void SpawnMound(TraceInstance t, string trigger, string toZone, float age, int seed, bool damaged)
     {
         t.type = TraceType.Mound; t.seed = seed;
         bool ok = trigger == "vole_expansion"
@@ -380,15 +416,53 @@ public class WorldTraceBinder : MonoBehaviour
                 : age <= 12 ? Color.Lerp(dirtFresh, dirtDry, (age - 3) / 9f)
                 : dirtSettled;
         float flatten = age > 12 ? 0.6f : 1f;   // 沉降后变矮
+        var scale = new Vector3(1f, flatten, 1f);
+        if (damaged)
+        {
+            c     = floodDamagedTint;
+            scale = new Vector3(1.15f, 0.42f, 1.15f);   // 塌陷摊开：比沉降态更矮、边缘糊
+        }
 
         t.root = NewRoot($"Mound_{seed:X8}", p);
         var rng = new System.Random(seed);
         AddProp(t, TraceKit.Mound, dirtMaterial, c, p + Vector3.up * 0.01f,
                 Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
-                new Vector3(1f, flatten, 1f));
-        // 新土周围草被扒开：小半径弱压痕，随龄衰减
-        if (age <= 12)
+                scale);
+        // 新土周围草被扒开：小半径弱压痕，随龄衰减（水毁后湿泥与草已交融，无压痕）
+        if (age <= 12 && !damaged)
             t.trampleContribs.Add(new Vector4(p.x, p.z, 0.7f, 0.55f * (1f - age / 12f)));
+    }
+
+    // 水毁判定（T1 第四老化态）：① zone 当前湿度越线 → 锁存（活体路径）；
+    // ② 该 zone 在土堆出生后发生过洪水搬家（vole_relocate_flood from=zone）→
+    //   搬家的原因就是把这片泡透了——土堆被泡过（跨 session 确定性，覆盖 catch-up 后湿度已回落的情形）。
+    // 与 T2 塌洞分工：水毁是痕迹的状态，塌洞是地貌的疤。
+    private bool IsFloodDamaged(WorldSaveData save, string zone, string moundKey, int moundBirthDay)
+    {
+        if (_floodDamaged.Contains(moundKey)) return true;
+
+        if (save.locations != null)
+            foreach (var loc in save.locations)
+                if (loc.locationId == zone && loc.soilMoisture > floodDamageMoisture)
+                {
+                    _floodDamaged.Add(moundKey);
+                    return true;
+                }
+
+        if (save.animals != null)
+            foreach (var a in save.animals)
+            {
+                if (a.speciesId != "vole" || a.history == null) continue;
+                foreach (var rec in a.history)
+                    if (rec.field == "location" && rec.triggeredBy == "vole_relocate_flood"
+                        && rec.fromValue == zone
+                        && ToDays(ParseKeyDate(rec.date)) >= moundBirthDay)
+                    {
+                        _floodDamaged.Add(moundKey);
+                        return true;
+                    }
+            }
+        return false;
     }
 
     /// <summary>T2 塌陷旧洞：出生即沉降态，永不移除。</summary>
@@ -522,6 +596,27 @@ public class WorldTraceBinder : MonoBehaviour
             // 鹿鼠脚印比田鼠/狐狸的更小
             AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh, p + Vector3.up * 0.02f, yaw,
                     Vector3.one * 0.7f);
+        }
+    }
+
+    /// <summary>旱痕：debt 过线期间 zone 内 2-3 条地裂（状态驱动，回落即撤；同一网格 yaw/缩放打散）。</summary>
+    private void SpawnCracks(TraceInstance t, string zone, int seed)
+    {
+        t.type = TraceType.EarthCrack; t.seed = seed;
+        if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
+
+        var rng = new System.Random(seed);
+        int count = 2 + rng.Next(2);
+        t.root = NewRoot($"Cracks_{seed:X8}", c0);
+        for (int i = 0; i < count; i++)
+        {
+            float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
+            float r   = (float)rng.NextDouble() * 2.2f;
+            if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
+                continue;
+            AddProp(t, TraceKit.EarthCrack, dirtMaterial, crackColor, p + Vector3.up * 0.012f,
+                    Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                    Vector3.one * Mathf.Lerp(0.9f, 1.6f, (float)rng.NextDouble()));
         }
     }
 
