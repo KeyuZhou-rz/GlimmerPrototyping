@@ -34,7 +34,9 @@
       "Bash(dotnet build *)",
       "Bash(grep *)",
       "mcp__UnityMCP__find_gameobjects",
-      "mcp__UnityMCP__execute_menu_item"
+      "mcp__UnityMCP__execute_menu_item",
+      "Bash(git commit *)",
+      "Bash(git commit -m 'chore: save working tree — sky gradient, scene, DataFlow doc, drop 副本 *)"
     ]
   }
 }
