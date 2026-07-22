@@ -12,7 +12,13 @@ Shader "Glimmer/SkyGradient"
     //          反日侧粉紫维纳斯带，全部过 BandT 色带 —— 2026-07-18 设计者
     //          修订"废连续光晕"决议：光晕回归，但以岩画色带语言而非摄影语言）；
     //          日出入画（北），日落走反日余晖（rig 物理：日落太阳在镜头背后）。
-    // 零贴图、单 pass、无光照 include；_SunDir/_StarBlend/_SkyHorizon 由
+    //   月亮 = 同工艺月轮图腾（2026-07-22）：骨白点描盘 + 炭灰月海斑块
+    //          （掷灰语言，与银河点描同一只手），无射线无光环 —— 太阳的词汇是
+    //          "光芒"，月亮的词汇是"斑"。月相随世界日历轮转（一月=一朔望月，
+    //          朔日月亮从天上消失），terminator 用椭圆曲线切弦，弦轴指向太阳。
+    //          _MoonDir/_MoonPhase/_MoonGlow 由控制器按时间推算写入（无第二盏灯）。
+    // 零贴图、单 pass、无光照 include；_SunDir/_MoonDir/_MoonPhase/_StarBlend/
+    // _SkyHorizon 由
     // EmotionWeatherController 独家驱动（单写者），shader 不读 URP 光源数据。
     Properties
     {
@@ -49,6 +55,15 @@ Shader "Glimmer/SkyGradient"
         _TotemRayCount ("Totem Ray Count",      Range(6, 32)) = 18
         _TotemRayLen   ("Totem Ray Outer q",    Range(2.1, 4)) = 2.8
         _CarveShadow   ("Carve Groove Shadow",  Range(0, 1)) = 0.30
+
+        [Header(Totem moon. dir and phase written by controller from world calendar)]
+        _MoonDir        ("Moon Direction",      Vector) = (0, -1, 0, 0)
+        _MoonPhase      ("Moon Phase 0-1",      Range(0, 1)) = 0.5   // 0=朔 0.5=望
+        _MoonTint       ("Moon Pigment",        Color) = (0.90, 0.88, 0.82, 1)
+        _MoonMariaCol   ("Moon Maria Pigment",  Color) = (0.52, 0.50, 0.47, 1)
+        _MoonSize       ("Moon Disc Size Deg",  Range(0.5, 15)) = 3.5
+        _MoonGlow       ("Moon Strength",       Range(0, 2)) = 1.0   // 控制器写：夜相×天气
+        _MoonEdgeRagged ("Moon Edge Ragged",    Range(0, 1)) = 0.45
 
         [Header(Rock face weathering and cirrus strokes)]
         _GrainAmount  ("Grain Amount",  Range(0, 0.15)) = 0.028
@@ -103,6 +118,9 @@ Shader "Glimmer/SkyGradient"
                 half4  _SunTint;
                 float  _SunSize, _SunGlow, _SunDiscStrength, _SunEdgeRagged;
                 float  _TotemRayCount, _TotemRayLen, _CarveShadow;
+                float4 _MoonDir;
+                half4  _MoonTint, _MoonMariaCol;
+                float  _MoonPhase, _MoonSize, _MoonGlow, _MoonEdgeRagged;
                 float  _GrainAmount, _GrainScale, _MottleScale, _StrokeAmount;
                 float  _StarBlend;
                 half4  _StarColorA, _StarColorB;
@@ -396,6 +414,62 @@ Shader "Glimmer/SkyGradient"
                     col += _SunTint.rgb * airGlow * airGlow * 0.045 * _SunGlow * sunUpMask;
                 }
 
+                // —— 3b. 月轮图腾：与太阳同工艺（q/theta 极坐标、共用毛边、先凿
+                //        后填、三重遮挡），词汇换成"斑"——无射线无光环，骨白
+                //        点描盘 + 炭灰月海。月相用 terminator 椭圆切弦：弦轴指向
+                //        太阳（弦的倾角物理正确——残月抱日），朔日整盘消失 ——
+                float3 moonDirW = normalize(_MoonDir.xyz + float3(0, 1e-5, 0));
+                float moonOcc = 0.0;   // 月盘覆盖度 → 夜空块遮挡星点（亮星不穿月）
+                {
+                    float3 mUpRef = abs(moonDirW.y) > 0.98 ? float3(1, 0, 0) : float3(0, 1, 0);
+                    float3 mT = normalize(cross(mUpRef, moonDirW));
+                    float3 mB = cross(moonDirW, mT);
+                    float mAng = acos(clamp(dot(d, moonDirW), -1.0, 1.0));
+                    float mq = mAng / radians(_MoonSize);          // 1 = 月盘边缘
+                    float mTheta = atan2(dot(d, mB), dot(d, mT));
+
+                    if (mq < 1.6 && _MoonGlow > 0.001)   // 影响圈外整段跳过
+                    {
+                        // 同一只手：毛边抖动频率/幅度与日盘一致
+                        float mqr = mq + (ValueNoise3(d * 42.0) - 0.5) * _MoonEdgeRagged * 0.16;
+
+                        float moonUpMask = smoothstep(-0.06, 0.04, moonDirW.y);
+                        float mhOcc = smoothstep(-0.005, 0.015, y);   // 地平线吃底（残月半沉）
+                        float mStr = _MoonGlow * moonUpMask * mhOcc;
+
+                        // 月相：盘内坐标 (mu, mv)，mu 轴指向太阳在月盘切面的投影
+                        // （朔时投影退化 → 反正全暗，朝向任意取）；lit = 受光侧。
+                        // terminator: mu > cos(2π·phase)·√(1−mv²) —— 朔(0)全暗、
+                        // 上弦(0.25)右半、望(0.5)全圆、下弦(0.75)左半
+                        float2 sun2D = float2(dot(sunDirW, mT), dot(sunDirW, mB));
+                        sun2D = length(sun2D) > 0.05 ? normalize(sun2D) : float2(1.0, 0.0);
+                        float mu = dot(float2(cos(mTheta), sin(mTheta)) * mqr, sun2D);
+                        float mv = dot(float2(cos(mTheta), sin(mTheta)) * mqr,
+                                       float2(-sun2D.y, sun2D.x));
+                        float term = cos(_MoonPhase * TWO_PI) * sqrt(saturate(1.0 - mv * mv));
+                        float lit = smoothstep(-0.04, 0.04, mu - term);
+
+                        float mDisc = (1.0 - smoothstep(0.96, 1.03, mqr)) * lit;
+
+                        // 月海：低频 fbm 撕出的炭灰斑块，只在受光面显形
+                        // （掷灰同源：频率高于岩面斑驳、低于星点，读作"盘上的灰迹"）
+                        float maria = smoothstep(0.50, 0.64, Fbm3(d * 26.0 + 4.2)) * mDisc;
+                        // 盘缘一线骨白刻边（刻出来的轮廓，受光侧才有）
+                        float mRing = (1.0 - smoothstep(0.03, 0.065, abs(mqr - 0.90))) * lit;
+
+                        moonOcc = mDisc * mStr;
+
+                        // 先凿：受光缘外侧一线刻槽（比太阳浅——月亮是轻刻）
+                        float mCarve = (1.0 - smoothstep(0.02, 0.05, abs(mqr - 1.07))) * lit;
+                        col *= 1.0 - mCarve * mStr * _CarveShadow * 0.6;
+
+                        // 后填：骨白平涂底 + 炭灰月海斑 + 盘缘刻边
+                        col = lerp(col, _MoonTint.rgb, mDisc * 0.92 * mStr);
+                        col = lerp(col, _MoonMariaCol.rgb, maria * 0.75 * mStr);
+                        col = lerp(col, _MoonTint.rgb * 1.10, mRing * 0.45 * mStr);
+                    }
+                }
+
                 // —— 4. 岩壁细颗粒：透过颜料（材料统一），地平线处淡出 ——
                 float grain = (ValueNoise3(d * _GrainScale) - 0.5) * 2.0;
                 col *= 1.0 + grain * _GrainAmount * weatherMask;
@@ -452,6 +526,8 @@ Shader "Glimmer/SkyGradient"
 
                     // 裂谷轻刻天空底色：凿槽比夜空更深一线
                     col *= 1.0 - rift * band * 0.25 * _StarBlend * horizMask;
+                    // 亮星不穿月：月盘覆盖处星点/灰烬被吃掉（月在星前）
+                    night *= 1.0 - moonOcc * 0.9;
                     col += night * horizMask * _StarBlend;
                 }
 

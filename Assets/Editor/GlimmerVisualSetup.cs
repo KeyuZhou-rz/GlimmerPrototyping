@@ -398,6 +398,14 @@ public static class GlimmerVisualSetup
         mat.SetFloat("_TotemRayLen", 2.8f);
         mat.SetFloat("_CarveShadow", 0.30f);
         mat.SetVector("_SunDir", new Vector4(-0.35f, 0.55f, -0.76f, 0f)); // 编辑态默认≈Golden Hour 方位
+        // 月轮图腾（编辑态：沉入地平线下+_MoonGlow=0 不可见；夜景由控制器按世界日历驱动）
+        mat.SetVector("_MoonDir", new Vector4(0f, -1f, 0f, 0f));
+        mat.SetFloat("_MoonPhase", 0.5f);
+        mat.SetColor("_MoonTint", new Color(0.90f, 0.88f, 0.82f));
+        mat.SetColor("_MoonMariaCol", new Color(0.52f, 0.50f, 0.47f));
+        mat.SetFloat("_MoonSize", 3.5f);
+        mat.SetFloat("_MoonGlow", 0f);
+        mat.SetFloat("_MoonEdgeRagged", 0.45f);
         // 岩面颗粒（白天克制档）+ 卷云笔触（相位驱动，编辑态=白天档）
         mat.SetFloat("_GrainAmount", 0.028f);
         mat.SetFloat("_GrainScale", 90f);

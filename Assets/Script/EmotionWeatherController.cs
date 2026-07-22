@@ -124,6 +124,10 @@ public class EmotionWeatherController : MonoBehaviour
     public Color sunTintDay = new Color(1.0f, 0.72f, 0.42f);
     public Color sunTintLow = new Color(1.0f, 0.88f, 0.70f);
 
+    [Header("天空 · 月轮图腾（方向/相位按时间推算，一月=一朔望月）")]
+    [Range(0f, 2f), Tooltip("满月亮度基准；黄昏自动衰减，暴雨按 stormStarHide 遮蔽")]
+    public float moonGlowStrength = 1.0f;
+
     [Header("天空 · 色带与笔触（相位驱动）")]
     [Range(0f, 1f), Tooltip("色带量化强度；storm 相自动减半防等值线感")]
     public float bandingAmount = 0.55f;
@@ -463,6 +467,32 @@ public class EmotionWeatherController : MonoBehaviour
         // 撒灰星穹：夜相渐显，暴雨云层遮蔽大半
         float starBlend = allowExternalDrive ? starVisibility : wNight * (1f - badT * stormStarHide);
         skyboxMaterial.SetFloat("_StarBlend", starBlend);
+
+        // —— 月轮图腾：方向按时间推算（无第二盏灯），相位取自世界日历 ——
+        // 世界历每月 30 天 ≈ 一朔望月：每月 1 日朔（月亮消失）、15/16 日望。
+        // 轨迹 = 太阳轨道面时间平移 phase：朔时月与日同升落（全暗不可见），
+        // 望时日落月升，上弦黄昏挂西天 —— 月相与升起时刻自洽，无需第二盏灯
+        float moonPhase = 0.5f;   // 无 WorldManager 的场景（调参/验证）：恒望
+        float dayProg = -1f;
+        var wm = WorldManager.Instance;
+        if (wm != null)
+        {
+            var rhythm = wm.GetRhythmState();
+            if (rhythm != null) dayProg = rhythm.dayProgress;
+            var save = wm.WorldSave;
+            if (save != null && save.gameTime != null)
+                moonPhase = ((save.gameTime.ToAbsoluteDays() - 1) % 30) / 30f;
+        }
+        if (dayProg < 0f) dayProg = (float)System.DateTime.Now.TimeOfDay.TotalDays;
+        // 轨道面 yaw 跟随真实太阳灯（LightManager.SunDirection 的单一事实来源）
+        float moonYaw = (sun != null) ? sun.transform.localEulerAngles.y : 170f;
+        float moonPitch = Mathf.Repeat(dayProg + moonPhase, 1f) * 360f - 90f;
+        Vector3 moonDir = -(Quaternion.Euler(moonPitch, moonYaw, 0f) * Vector3.forward);
+        skyboxMaterial.SetVector("_MoonDir", moonDir);
+        skyboxMaterial.SetFloat("_MoonPhase", moonPhase);
+        // 夜里满月亮度、黄昏残留一弯、暴雨云层遮蔽（与星穹同一遮蔽系数）
+        skyboxMaterial.SetFloat("_MoonGlow", moonGlowStrength
+            * Mathf.Clamp01(wNight * 1.25f) * (1f - badT * stormStarHide));
     }
     private void ThunderPlay()
     {
