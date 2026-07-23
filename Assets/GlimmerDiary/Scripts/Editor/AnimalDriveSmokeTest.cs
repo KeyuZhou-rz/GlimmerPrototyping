@@ -177,7 +177,7 @@ namespace GlimmerDiary.Editor
                 env.UpdateFromEEnv(inertia.CurrentEEnv, signals);
                 // 水位/湿度传播直接复用 WorldManager 的静态实现——速率表单一来源
                 WorldManager.PropagateRainfallToLocations(save, env.State.Rainfall);
-                vegetation.Tick(save.gameTime);   // loc.vegetationDensity 单一写者（虫害）；驱动层只读
+                vegetation.Tick(save.gameTime, env.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
                 save.currentEEnv    = inertia.CurrentEEnv;
                 save.emotionHistory = inertia.History;
                 drive.SetEnvironment(env.State, rhythm.State);

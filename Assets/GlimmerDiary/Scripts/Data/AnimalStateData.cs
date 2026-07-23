@@ -124,6 +124,7 @@ namespace GlimmerDiary.Data
         public const string WeaverBirdReturned   = "WeaverBirdReturned";
         public const string VoleClaimedZone      = "VoleClaimedZone";
         public const string QuietConvergence     = "QuietConvergence";  // 涌现时刻：宿敌/邻里罕见地挨着歇息
+        public const string DandelionSeedsDrifted = "DandelionSeedsDrifted";  // 风峰日落种：targetId=下风 zone
     }
 
     [Serializable]

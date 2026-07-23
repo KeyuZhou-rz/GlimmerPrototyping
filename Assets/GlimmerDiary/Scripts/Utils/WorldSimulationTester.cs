@@ -24,7 +24,9 @@ namespace GlimmerDiary.Utils
             FullWeekCycle,           // 7天推进 → 验证时间和历史记录
             EmergentAnxietyChain,    // 狐狸临近 → 鹿鼠焦虑 → 收缩 → 田鼠扩张（状态涌现）
             LongChainForLetter,      // 30 天长链：断枝→离巢→退守→扩张→巡逻+候鸟+雨语料 → 攒一批世界志给"信"
-            DroughtRecovery          // 45 天无雨 → debt>0.6（地裂线）；再 18 天暴雨 → debt 回落线下
+            DroughtRecovery,         // 45 天无雨 → debt>0.6（地裂线）；再 18 天暴雨 → debt 回落线下
+            DandelionDrift,          // 蒲公英：干风不落种（湿度门）→ 回湿+风峰 → 落种 lowland（冷却 ≤2 条）
+            WaterRetention           // 植被捂水：雨后低洼（veg 0.7）水退慢、石头区（veg 0.25）干透 + 捂水语料
         }
 
         void Start()
@@ -45,6 +47,8 @@ namespace GlimmerDiary.Utils
                 case TestScenario.EmergentAnxietyChain:   Test_EmergentAnxietyChain();   break;
                 case TestScenario.LongChainForLetter:     Test_LongChainForLetter();     break;
                 case TestScenario.DroughtRecovery:        Test_DroughtRecovery();        break;
+                case TestScenario.DandelionDrift:         Test_DandelionDrift();         break;
+                case TestScenario.WaterRetention:         Test_WaterRetention();         break;
             }
         }
 
@@ -317,6 +321,91 @@ namespace GlimmerDiary.Utils
             }
             AssertTrue($"雨季后旱债回落地裂线下（实际 {EnvState.DroughtDebt:F2}）",
                 EnvState.DroughtDebt < 0.6f);
+            LogWorldState();
+        }
+
+        // ─────────────────────────────────────────────
+        // 场景九：蒲公英风絮落种（Batch 3 §5.3 验证）
+        //
+        // 链：WindSpeed>0.7（A_env≳0.83 → Agitation 过线）∧ 蒲公英在场开花
+        //     ∧ lowland.soilMoisture>0.4 → worldEvents 落种 DandelionSeedsDrifted。
+        // 阶段：A 静风旱化（低洼 0.65→~0.35）→ B 干风 14 天（风峰但干 → 不落种）
+        //       → C 回湿 12 天（湿度回 ~0.8）→ D 湿风 10 天（风峰+湿 → 落种）。
+        // 预期：B 末 0 条；D 末 ≥1 条且 ≤2 条（冷却 5 天）；targetId=lowland。
+        // ─────────────────────────────────────────────
+        void Test_DandelionDrift()
+        {
+            Log("=== 场景九：蒲公英风絮落种 ===");
+            ResetWorld();
+            AssertEqual("初始无落种事件", CountDriftEvents().ToString(), "0");
+
+            for (int i = 0; i < 15; i++) SubmitEmotion(V: 0.5f, A: 0.2f, C: 0.5f);   // 静风旱化
+            Log($"  旱化后: moisture={GetLocation("lowland").soilMoisture:F2} Wind={EnvState.WindSpeed:F2}");
+
+            for (int i = 0; i < 14; i++) SubmitEmotion(V: 0.5f, A: 1.0f, C: 0.5f);   // 干风
+            Log($"  干风后: Wind={EnvState.WindSpeed:F2} moisture={GetLocation("lowland").soilMoisture:F2} " +
+                $"落种数={CountDriftEvents()}");
+            AssertTrue("风峰且低洼干 → 不落种（湿度门）", CountDriftEvents() == 0);
+
+            for (int i = 0; i < 12; i++) SubmitEmotion(V: -0.9f, A: 0.3f, C: 0.4f);  // 回湿
+            Log($"  回湿后: moisture={GetLocation("lowland").soilMoisture:F2}");
+
+            for (int i = 0; i < 10; i++)                                             // 湿风
+            {
+                SubmitEmotion(V: 0.5f, A: 1.0f, C: 0.5f);
+                Log($"  湿风 D{i + 1}: Wind={EnvState.WindSpeed:F2} " +
+                    $"moisture={GetLocation("lowland").soilMoisture:F2} 落种数={CountDriftEvents()}");
+            }
+            int n = CountDriftEvents();
+            AssertTrue($"湿风后落种 ≥1（实际 {n}）", n >= 1);
+            AssertTrue($"冷却 5 天 → 10 天内 ≤2 条（实际 {n}）", n <= 2);
+            var events = WorldManager.Instance._saveData.worldEvents;
+            for (int i = events.Count - 1; i >= 0; i--)
+                if (events[i].type == WorldEventType.DandelionSeedsDrifted)
+                { AssertEqual("落种目标区=lowland（拓扑唯一下风）", events[i].targetId, "lowland"); break; }
+            LogWorldState();
+        }
+
+        int CountDriftEvents()
+        {
+            int n = 0;
+            var events = WorldManager.Instance._saveData.worldEvents;
+            if (events != null)
+                foreach (var e in events)
+                    if (e.type == WorldEventType.DandelionSeedsDrifted) n++;
+            return n;
+        }
+
+        // ─────────────────────────────────────────────
+        // 场景十：植被捂水（Batch 3 §5.5 第 3 行验证）
+        //
+        // 机制：日消退 = 0.03 − 0.015×veg —— 低洼（veg 0.7）退 0.0195/天，
+        //       石头区（veg 0.25）退 0.026/天。
+        // 阶段：10 天暴雨（两区都蓄水）→ 10 天停雨。
+        // 预期：停雨后低洼水位仍 >0.6（≈1.0 顶格），石头区干透 <0.05；
+        //       捂水语料 env_water_retention 进入世界志（雨停+水位高+veg 高）。
+        // ─────────────────────────────────────────────
+        void Test_WaterRetention()
+        {
+            Log("=== 场景十：植被捂水 ===");
+            ResetWorld();
+
+            for (int i = 0; i < 10; i++) SubmitEmotion(V: -0.9f, A: 0.4f, C: 0.4f);
+            Log($"  暴雨后: lowland.water={GetLocation("lowland").waterLevel:F2} " +
+                $"stone.water={GetLocation("stone_area").waterLevel:F2}");
+
+            for (int i = 0; i < 10; i++)
+            {
+                SubmitEmotion(V: 0.5f, A: 0.3f, C: 0.5f);
+                Log($"  停雨 D{i + 1}: lowland={GetLocation("lowland").waterLevel:F2} " +
+                    $"stone={GetLocation("stone_area").waterLevel:F2} Rain={EnvState.Rainfall:F2}");
+            }
+
+            float low = GetLocation("lowland").waterLevel;
+            float st  = GetLocation("stone_area").waterLevel;
+            AssertTrue($"低洼（veg 0.7）水退慢：停雨 10 天仍 >0.6（实际 {low:F2}）", low > 0.6f);
+            AssertTrue($"石头区（veg 0.25）干透：<0.05（实际 {st:F2}）", st < 0.05f);
+            AssertChronicleContains("env_water_retention");
             LogWorldState();
         }
 

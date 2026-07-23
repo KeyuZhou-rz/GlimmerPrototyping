@@ -54,6 +54,24 @@ namespace GlimmerDiary.Core
             for (int i = _eventCursor; i < count; i++)
                 NarrateEvent(_save.worldEvents[i], time);
             _eventCursor = count;
+
+            // 3. 环境状态解释（§5.5 第 3 行：植被捂水的可读出口——暗示而不直说）
+            NarrateWaterRetention(time);
+        }
+
+        // 环境语料：雨后低洼水位仍高 ∧ 植被茂密 → "水退得慢，草把水喝住了"。
+        // 状态+冷却制（同行为叙事）：条件持续期间每 20 天最多一条，不刷屏。
+        private void NarrateWaterRetention(GameDateTime time)
+        {
+            if (_env == null || _env.Rainfall >= 0.2f) return;
+            var lowland = _registry.GetLocation("lowland");
+            if (lowland == null || lowland.waterLevel < 0.5f || lowland.vegetationDensity < 0.6f) return;
+
+            const string key = "env:water_retention";
+            if (!CooldownPassed(key, time, BEHAVIOR_COOLDOWN_DAYS)) return;
+
+            Emit("env_water_retention", Pick(WaterRetention), time);
+            _lastNarratedDay[key] = time.ToAbsoluteDays();
         }
 
         // 行为叙事：实体当前 drive+cause 命中且冷却已过 → 产出一条
@@ -325,6 +343,14 @@ namespace GlimmerDiary.Core
     "{date} {sky} 河岸的鸟群安静了一天。虫子被打下去了，它们的动静也小了。",
 
     "{date} {sky} 候鸟就今日活动减少一事，未作任何说明。草叶上全是水。",
+};
+
+        // 环境 · 植被捂水（§5.5 第 3 行）：写「水退得慢」这件事，草是暗示，不点破机制
+        private static readonly string[] WaterRetention =
+{
+    "{date} {sky} 石头边的地早就干透了，低洼的水却还在。草密的地方，水走得慢。",
+
+    "{date} {sky} 低洼的水退得很慢。岸边的草把水喝住了，一寸一寸地喝。",
 };
 
         // ── 工具 ───────────────────────────────────────────────────

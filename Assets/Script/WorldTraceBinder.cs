@@ -59,6 +59,11 @@ public class WorldTraceBinder : MonoBehaviour
     public float floodDamageMoisture = 0.8f;
     public Color floodDamagedTint = new(0.22f, 0.17f, 0.13f);   // 泡透的湿泥：更暗偏冷
 
+    [Header("新绒苗（§5.3 蒲公英落种 → 下风区 N 日后冒苗；过龄即撤=长进草里，与痕迹寿命体系一致）")]
+    public int sproutDays     = 4;    // 落种后第几天冒苗
+    public int sproutLifespan = 15;   // 苗可见总天数（矩阵未定寿命——默认限期；永久苗属设计拍板）
+    public Color sproutTint   = new(0.82f, 0.84f, 0.70f);   // 绒白偏青，与枯金草丛拉开
+
     [Header("年龄着色")]
     public Color dirtFresh   = new(0.30f, 0.22f, 0.16f);   // 湿的新土
     public Color dirtDry     = new(0.45f, 0.36f, 0.27f);
@@ -74,7 +79,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -334,6 +339,22 @@ public class WorldTraceBinder : MonoBehaviour
                     birthDays[rk] = day;
                     desired[rk] = t => SpawnRestPatch(t, zone, age, seed);
                     if (age <= freshAgeThreshold) fresh.Add(rk);
+                }
+
+                // 新绒苗：蒲公英落种（§5.3，targetId=下风 zone）——落种 sproutDays 日后冒苗，
+                // sproutLifespan 日后"长进草里"撤出。用日历真实年龄（不经 weatherMul：
+                // 雨水擦痕迹但不催芽，发芽是日历事）。
+                if (e.type == WorldEventType.DandelionSeedsDrifted && !string.IsNullOrEmpty(e.targetId))
+                {
+                    int rawAge = today - day;
+                    if (rawAge >= sproutDays && rawAge <= sproutLifespan)
+                    {
+                        string sk = "sprout|" + key;
+                        birthDays[sk] = day;
+                        desired[sk] = t => SpawnSprout(t, e.targetId, seed);
+                        // 冒苗头几天给新鲜标记——"低洼冒了新苗"正是标记该指向的变化
+                        if (rawAge <= sproutDays + freshAgeThreshold) fresh.Add(sk);
+                    }
                 }
             }
         }
@@ -617,6 +638,27 @@ public class WorldTraceBinder : MonoBehaviour
             AddProp(t, TraceKit.EarthCrack, dirtMaterial, crackColor, p + Vector3.up * 0.012f,
                     Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
                     Vector3.one * Mathf.Lerp(0.9f, 1.6f, (float)rng.NextDouble()));
+        }
+    }
+
+    /// <summary>新绒苗：落种 zone 内一小丛 2-3 棵（限期内存在，过龄即撤="长进草里"）。</summary>
+    private void SpawnSprout(TraceInstance t, string zone, int seed)
+    {
+        t.type = TraceType.Sprout; t.seed = seed;
+        if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
+
+        var rng = new System.Random(seed);
+        int count = 2 + rng.Next(2);
+        t.root = NewRoot($"Sprout_{seed:X8}", c0);
+        for (int i = 0; i < count; i++)
+        {
+            float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
+            float r   = (float)rng.NextDouble() * 1.4f;
+            if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
+                continue;
+            AddProp(t, TraceKit.Sprout, featherMaterial, sproutTint, p + Vector3.up * 0.01f,
+                    Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                    Vector3.one * Mathf.Lerp(0.8f, 1.3f, (float)rng.NextDouble()));
         }
     }
 

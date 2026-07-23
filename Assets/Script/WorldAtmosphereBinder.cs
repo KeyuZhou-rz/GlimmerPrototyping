@@ -30,6 +30,10 @@ public class WorldAtmosphereBinder : MonoBehaviour
     [Tooltip("水位是日积分慢变量,比天气 0.5 慢一个量级(τ≈20s):水面垂直位移比颜色更扎眼,必须爬不能跳")]
     public float waterSmoothingSpeed = 0.05f;
 
+    [Header("种子絮（§5.3：风峰 ∧ 蒲公英在场开花 → 河岸絮飘=玩家可见的风）")]
+    [Tooltip("与 VegetationSystem 落种阈值同源数值——L3 展示层阈值，各自独立调")]
+    [Range(0f, 1f)] public float fluffWindThreshold = 0.7f;
+
     // 展示层平滑后的当前值（目标值来自世界状态快照）
     private float _rain;      // [-1 雨, +1 晴]，与 weatherController.rainIntensity 同语义
     private float _wind;      // [0,1]
@@ -39,6 +43,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
     private bool _initialized;
     private float _waterLevel;       // [0,1] 平滑后的水量
     private bool _waterInitialized;  // 独立首帧对齐:location 可能晚于全局状态就绪
+    private float _fluff;            // [0,1] 种子絮速率（平滑后）
 
     void Update()
     {
@@ -65,6 +70,15 @@ public class WorldAtmosphereBinder : MonoBehaviour
         float dimnessTarget = env.FogDensity;
         float starVisTarget = env.StarVisibility;
 
+        // 种子絮（§5.3 风的实体化）：风峰 ∧ 蒲公英在场开花 → 絮飘。
+        // 与落种（L2 VegetationSystem）读同一 WindSpeed 但互不依赖——
+        // 低洼太干不落种时絮照飘："风把絮吹走了，什么也没留下"也是可读的。
+        float fluffTarget = 0f;
+        var dandelion = wm.Registry.GetPlant("dandelion_riverbank");
+        if (dandelion != null && dandelion.isAlive && dandelion.isFlowering
+            && env.WindSpeed > fluffWindThreshold)
+            fluffTarget = Mathf.InverseLerp(fluffWindThreshold, 1f, env.WindSpeed);
+
         // —— 展示层平滑（指数趋近，帧率无关）——
         if (!_initialized)
         {
@@ -72,6 +86,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             _rain = rainTarget; _wind = windTarget; _thunder = thunderTarget;
             _dimness = dimnessTarget;
             _starVis = starVisTarget;
+            _fluff   = fluffTarget;
             _initialized = true;
         }
         else
@@ -82,6 +97,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             _thunder = Mathf.Lerp(_thunder, thunderTarget, k);
             _dimness = Mathf.Lerp(_dimness, dimnessTarget, k);
             _starVis = Mathf.Lerp(_starVis, starVisTarget, k);
+            _fluff   = Mathf.Lerp(_fluff,   fluffTarget,   k);
         }
 
         // —— 水位通路(独立首帧对齐;loc 缺失则静默跳过,保持现值不驱动向假默认)——
@@ -116,6 +132,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             weatherController.thunderIntensity = _thunder;
             weatherController.dimness          = _dimness;
             weatherController.starVisibility   = _starVis;
+            weatherController.seedFluffRate    = _fluff;
         }
 
         if (lightManager != null)

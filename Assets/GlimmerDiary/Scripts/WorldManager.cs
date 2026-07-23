@@ -148,7 +148,7 @@ public class WorldManager : MonoBehaviour
         var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State); //通过情绪向量和现有状态输出新世界信号
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals, NaturalRhythm.State); // 新的环境（含旱债积分，需季节基准）
         PropagateEnvironmentToLocations();
-        _vegetationSystem.Tick(_saveData.gameTime);   // loc.vegetationDensity 单一写者；驱动层只读
+        _vegetationSystem.Tick(_saveData.gameTime, Environment.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
 
         _saveData.currentEEnv    = EmotionInertia.CurrentEEnv;
         _saveData.emotionHistory = EmotionInertia.History;
@@ -330,8 +330,11 @@ public class WorldManager : MonoBehaviour
                 "stone_area"    => 0.08f,
                 _               => 0.15f
             };
-            // 固定每日排水 0.03，降雨按各地积水率蓄水
-            float delta = rain * accRate - 0.03f;
+            // 每日排水 0.03——植被捂水（§5.5 第 3 行：生命→环境第一条反向耦合）：
+            // 茂密区水退更慢（满植被约减半），下限防负消退=无限积水。
+            // loc.waterLevel 单写者即本函数，读 vegetationDensity 是同写者内部读。
+            float drain = Mathf.Max(0.03f - VegDrainReduction * loc.vegetationDensity, MinDailyDrain);
+            float delta = rain * accRate - drain;
             loc.waterLevel = Mathf.Clamp01(loc.waterLevel + delta);
 
             // 土壤湿度：比水位更慢的蓄水库；按区渗透率不同（沙石地渗透快、保水差）
@@ -344,10 +347,15 @@ public class WorldManager : MonoBehaviour
                 "stone_area"    => 0.04f,
                 _               => 0.10f
             };
-            // 固定每日蒸发 0.02，降雨按各地渗透率蓄水（沙石地需大雨才能保湿）
-            loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * soakRate - 0.02f);
+            // 固定每日蒸发 0.02；植被提渗透（同 §5.5 第 3 行，与排水减缓同向）
+            loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * (soakRate + VegSoakBonus * loc.vegetationDensity) - 0.02f);
         }
     }
+
+    // 植被→水保持系数（§5.5 第 3 行，矩阵未给数值——初值按"满植被消退约减半"取，playtest 调）
+    private const float VegDrainReduction = 0.015f;  // 日消退 −ε×veg（0.03 → 满植被 ≈0.019）
+    private const float MinDailyDrain     = 0.005f;  // 消退下限，防满植被时负消退无限积水
+    private const float VegSoakBonus      = 0.05f;   // 渗透 +δ×veg
 
     // 供视觉层随时读取（只读，不写入）
     public WorldEnvironmentState GetWorldState()  => Environment.State;

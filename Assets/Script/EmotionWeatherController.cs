@@ -39,6 +39,15 @@ public class EmotionWeatherController : MonoBehaviour
     public WindZone sceneWindZone;
     public float maxWindMain = 2.0f;
 
+    [Header("种子絮系统（§5.3 蒲公英：玩家可见的风——风峰日絮从河岸往下风飘）")]
+    public ParticleSystem seedFluffParticleSystem;
+    [Range(0f, 1f), Tooltip("由 WorldAtmosphereBinder 按世界状态推送（风峰 ∧ 蒲公英在场开花）")]
+    public float seedFluffRate = 0f;
+    [Tooltip("满率时的发射速率——'一阵絮'不是'一场雨'，稀疏才读得出个别绒点")]
+    public float maxFluffEmission = 24f;
+    [Tooltip("满风时的横向推力（比雨轻得多：絮是飘不是砸）")]
+    public float maxFluffWindForce = 1.6f;
+
 
     [Header("雷电系统")]
     public Light lightingLight;
@@ -197,6 +206,21 @@ public class EmotionWeatherController : MonoBehaviour
                 rainParticleSystem.Play();
         }
 
+        // 种子絮粒子初始化（同雨：清空突发、速率归零、世界空间）
+        if (seedFluffParticleSystem != null)
+        {
+            var fEmission = seedFluffParticleSystem.emission;
+            fEmission.SetBursts(new ParticleSystem.Burst[0]);
+            fEmission.rateOverTime = 0f;
+
+            var fMain = seedFluffParticleSystem.main;
+            fMain.simulationSpace = ParticleSystemSimulationSpace.World;
+            fMain.loop = true;
+
+            if (!seedFluffParticleSystem.isPlaying)
+                seedFluffParticleSystem.Play();
+        }
+
 
         // 初始雾设置：与 UpdateRain 的公式同源（fogT=0 晴天端）
         RenderSettings.fog = true;
@@ -217,6 +241,57 @@ public class EmotionWeatherController : MonoBehaviour
         UpdateWind();
         UpdateThunder();
         UpdateSkybox();
+        UpdateSeedFluff();
+    }
+
+    // -----------------------------
+    //         种子絮系统
+    // -----------------------------
+    // 驱动：seedFluffRate 由 binder 推送（风峰 ∧ 蒲公英在场开花）；风向复用
+    // 雨的风向常量——世界里风只有一个方向，絮飘向与"落种 lowland"的叙事同向。
+    private void UpdateSeedFluff()
+    {
+        if (seedFluffParticleSystem == null) return;
+
+        var emission = seedFluffParticleSystem.emission;
+        emission.rateOverTime = Mathf.Lerp(0f, maxFluffEmission, seedFluffRate);
+
+        // 整幕同向缓推（同 UpdateRain 的风力模式，力度小一个量级）
+        var force = seedFluffParticleSystem.forceOverLifetime;
+        bool wantForce = currentWind > 0.01f;
+        force.enabled = wantForce;
+        if (wantForce)
+        {
+            Vector3 wind = windDirection.sqrMagnitude > 1e-4f
+                ? new Vector3(windDirection.x, 0f, windDirection.z).normalized
+                : Vector3.right;
+            float f = Mathf.Lerp(0f, maxFluffWindForce, currentWind);
+            force.space = ParticleSystemSimulationSpace.World;
+            force.x = wind.x * f;
+            force.y = 0f;
+            force.z = wind.z * f;
+        }
+
+        // 低频缓摆：絮是浮的——比雨更慢更柔，且允许上下浮动
+        var noise = seedFluffParticleSystem.noise;
+        bool wantNoise = currentWind > 0.1f;
+        noise.enabled = wantNoise;
+        if (wantNoise)
+        {
+            noise.separateAxes = true;
+            noise.strengthX = new ParticleSystem.MinMaxCurve(0.5f * currentWind);
+            noise.strengthY = new ParticleSystem.MinMaxCurve(0.25f * currentWind);
+            noise.strengthZ = new ParticleSystem.MinMaxCurve(0.3f * currentWind);
+            noise.frequency = 0.12f;
+            noise.damping = true;
+            noise.scrollSpeed = 0.2f;
+            noise.quality = ParticleSystemNoiseQuality.Medium;
+        }
+
+        if (seedFluffRate > 0.01f && !seedFluffParticleSystem.isPlaying)
+            seedFluffParticleSystem.Play();
+        else if (seedFluffRate <= 0.01f && seedFluffParticleSystem.isPlaying)
+            seedFluffParticleSystem.Stop();
     }
 
     // -----------------------------
@@ -478,9 +553,12 @@ public class EmotionWeatherController : MonoBehaviour
         if (wm != null)
         {
             var save = wm.WorldSave;
+            /*
             if (save != null && save.gameTime != null)
                 moonPhase = ((save.gameTime.ToAbsoluteDays() - 1) % 30) / 30f;
+                */
         }
+        // 该地有一处会影响月亮的出现与否 可能是skymaterial 先勿动
         // 中心对称：_SunDir = -sun.forward → 月亮取 sun.forward，永远悬在太阳正对面
         Vector3 moonDir = (sun != null) ? sun.transform.forward : Vector3.down;
         skyboxMaterial.SetVector("_MoonDir", moonDir);
@@ -488,6 +566,7 @@ public class EmotionWeatherController : MonoBehaviour
         // 夜里满月亮度、黄昏残留一弯、暴雨云层遮蔽（与星穹同一遮蔽系数）
         skyboxMaterial.SetFloat("_MoonGlow", moonGlowStrength
             * Mathf.Clamp01(wNight * 1.25f) * (1f - badT * stormStarHide));
+        skyboxMaterial.SetFloat("_MoonGLow", 1f);
     }
     private void ThunderPlay()
     {

@@ -19,6 +19,7 @@ public static class GlimmerVisualSetup
     const string MatDir = "Assets/Materials/Glimmer";
     const string TerrainMatPath = MatDir + "/Terrain_Glimmer.mat";
     const string RainMatPath = MatDir + "/RainStreak.mat";
+    const string FluffMatPath = MatDir + "/SeedFluff.mat";
     const string SkyMatPath = MatDir + "/SkyGradient.mat";
     const string ProfilePath = "Assets/Settings/GlimmerPostFX.asset";
 
@@ -39,6 +40,7 @@ public static class GlimmerVisualSetup
         SetupTreeMaterials();
         SetupTerrain();
         SetupRain();
+        SetupSeedFluff();
         SetupSky();
         SetupPostFX();
         SetupWeatherDefaults();
@@ -359,6 +361,74 @@ public static class GlimmerVisualSetup
 
         EditorUtility.SetDirty(go);
         Debug.Log("[GlimmerVisualSetup] Rain particle → RainStreak stretch billboard");
+    }
+
+    // ---- 3a. 种子絮（§5.3 蒲公英：玩家可见的风；幂等——有则重配，无则创建） ----
+    static void SetupSeedFluff()
+    {
+        var shader = Shader.Find("Glimmer/SeedFluff");
+        if (shader == null) { Debug.LogError("Glimmer/SeedFluff shader not found"); return; }
+
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(FluffMatPath);
+        if (mat == null)
+        {
+            mat = new Material(shader);
+            AssetDatabase.CreateAsset(mat, FluffMatPath);
+        }
+        mat.shader = shader;
+        mat.SetColor("_FluffColor", new Color(0.90f, 0.88f, 0.78f, 0.85f));
+        mat.SetFloat("_EdgeSoft", 0.55f);
+        EditorUtility.SetDirty(mat);
+
+        // 发射器位置：河岸水面之上（蒲公英家在 riverbank）——取 WaterGenerator 为锚
+        var wg = Object.FindFirstObjectByType<WaterGenerator>(FindObjectsInactive.Include);
+        Vector3 anchor = wg != null ? wg.transform.position : new Vector3(-15f, 0f, -6f);
+
+        var go = GameObject.Find("SeedFluffSystem");
+        if (go == null)
+        {
+            go = new GameObject("SeedFluffSystem");
+            go.AddComponent<ParticleSystem>();
+        }
+        go.transform.position = anchor + Vector3.up * 1.2f;
+
+        var ps  = go.GetComponent<ParticleSystem>();
+        var psr = go.GetComponent<ParticleSystemRenderer>();
+
+        // 渲染器：普通公告板圆绒点（不拉伸——絮是"一团"不是"一丝"）
+        psr.sharedMaterial = mat;
+        psr.renderMode = ParticleSystemRenderMode.Billboard;
+        psr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        psr.receiveShadows = false;
+        psr.sortMode = ParticleSystemSortMode.None;
+
+        var main = ps.main;
+        main.startLifetime = 7f;            // 飘得久才读得出"它们在旅行"
+        main.startSpeed = 0.4f;             // 初速小，靠 forceOverLifetime 被风接住
+        main.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.10f);
+        main.startColor = Color.white;
+        main.gravityModifier = 0.015f;      // 近乎悬浮的缓沉
+        main.maxParticles = 400;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+        var emission = ps.emission;
+        emission.rateOverTime = 0f;         // 运行时控制器驱动
+
+        // 发射区：覆盖河段的扁盒
+        var shape = ps.shape;
+        shape.shapeType = ParticleSystemShapeType.Box;
+        shape.scale = new Vector3(24f, 2.5f, 12f);
+
+        // 接到控制器（幂等：只补空引用）
+        var wc = Object.FindFirstObjectByType<EmotionWeatherController>(FindObjectsInactive.Include);
+        if (wc != null && wc.seedFluffParticleSystem == null)
+        {
+            wc.seedFluffParticleSystem = ps;
+            EditorUtility.SetDirty(wc);
+        }
+
+        EditorUtility.SetDirty(go);
+        Debug.Log("[GlimmerVisualSetup] SeedFluff particle → SeedFluff billboard @riverbank");
     }
 
     // ---- 3b. 天空（桑人岩画渐变，Docs/SkySanRockArt.md） -------------------

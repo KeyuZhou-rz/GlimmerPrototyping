@@ -8,7 +8,7 @@ using UnityEngine;
 /// </summary>
 public static class TraceKit
 {
-    private static Mesh _mound, _moundCollapsed, _footprint, _feather, _mark, _pressedOval, _earthCrack;
+    private static Mesh _mound, _moundCollapsed, _footprint, _feather, _mark, _pressedOval, _earthCrack, _sprout;
 
     /// <summary>新翻土堆：低矮八面锥丘，顶部略偏斜。</summary>
     public static Mesh Mound => _mound != null ? _mound
@@ -35,6 +35,9 @@ public static class TraceKit
 
     /// <summary>地裂：一条主缝 + 两条支缝的锯齿条带（旱痕 §5.5，贴地暗色，摆放层 yaw/缩放打散）。</summary>
     public static Mesh EarthCrack => _earthCrack != null ? _earthCrack : _earthCrack = BuildEarthCrack();
+
+    /// <summary>新绒苗：细茎（十字双卡片，双面）+ 顶点绒球（八面体）。蒲公英落种 N 日后冒出（§5.3）。</summary>
+    public static Mesh Sprout => _sprout != null ? _sprout : _sprout = BuildSprout();
 
     // ── 网格构造 ─────────────────────────────────────────────────
 
@@ -161,6 +164,40 @@ public static class TraceKit
             }
             prevL = l; prevR = r;
         }
+    }
+
+    /// <summary>绒苗网格：十字细茎 + 顶点小八面体绒球（绕序同 Mound 环例，法线朝上/外）。</summary>
+    private static Mesh BuildSprout()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        const float STEM_H = 0.15f, STEM_W = 0.010f, PUFF_R = 0.042f;
+        var tip = new Vector3(0.008f, STEM_H, 0.005f);   // 顶端微偏（同 Mound 偏心手法）
+
+        // 茎：十字交叉两张窄三角卡片（双面绕序，任何角度可见）
+        var l0 = new Vector3(-STEM_W, 0f, 0f); var r0 = new Vector3(STEM_W, 0f, 0f);
+        AddTri(verts, tris, l0, r0, tip); AddTri(verts, tris, r0, l0, tip);
+        var f0 = new Vector3(0f, 0f, -STEM_W); var b0 = new Vector3(0f, 0f, STEM_W);
+        AddTri(verts, tris, f0, b0, tip); AddTri(verts, tris, b0, f0, tip);
+
+        // 绒球：八面体（顶/底 + 赤道上 4 点，半径微扰破对称）
+        var top = tip + new Vector3(0f, PUFF_R, 0f);
+        var bot = tip - new Vector3(0f, PUFF_R * 0.6f, 0f);
+        var eq = new Vector3[4];
+        for (int i = 0; i < 4; i++)
+        {
+            float a = i * Mathf.PI * 0.5f + 0.35f;   // 旋一点，不和茎卡片对齐
+            float r = PUFF_R * (0.85f + 0.15f * Mathf.Sin(i * 2.3f));
+            eq[i] = tip + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            int n = (i + 1) % 4;
+            AddTri(verts, tris, eq[i], eq[n], top);   // 上半（绕序同 Mound：环点→环邻→顶）
+            AddTri(verts, tris, eq[n], eq[i], bot);   // 下半（反绕）
+        }
+        return Bake("Trace_Sprout", verts, tris);
     }
 
     private static Vector3 Flat(Vector2 v) => new(v.x, 0f, v.y);
