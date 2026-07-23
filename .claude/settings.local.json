@@ -38,7 +38,9 @@
       "Bash(git commit *)",
       "Bash(git commit -m 'chore: save working tree — sky gradient, scene, DataFlow doc, drop 副本 *)",
       "Bash(git merge *)",
-      "Bash(git commit -m 'chore: update local settings *)"
+      "Bash(git commit -m 'chore: update local settings *)",
+      "Bash(cd \"C:/Users/Z2005/.claude/projects/c--Users-Z2005-Glimmer-Prototyping/memory\" && grep -n \"sky-san-rockart\" MEMORY.md)",
+      "Read(//c/Users/Z2005/.claude/projects/c--Users-Z2005-Glimmer-Prototyping/memory/**)"
     ]
   }
 }
