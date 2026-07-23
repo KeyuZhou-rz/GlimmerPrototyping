@@ -12,12 +12,13 @@ Shader "Glimmer/SkyGradient"
     //          反日侧粉紫维纳斯带，全部过 BandT 色带 —— 2026-07-18 设计者
     //          修订"废连续光晕"决议：光晕回归，但以岩画色带语言而非摄影语言）；
     //          日出入画（北），日落走反日余晖（rig 物理：日落太阳在镜头背后）。
-    //   月亮 = 同工艺月轮图腾（2026-07-22）：骨白点描盘 + 炭灰月海斑块
-    //          （掷灰语言，与银河点描同一只手），无射线无光环 —— 太阳的词汇是
-    //          "光芒"，月亮的词汇是"斑"。轨迹 = 太阳的中心对称点（同角速度、
-    //          方位镜像，日落月升）；月相随世界日历轮转（一月=一朔望月，朔日
-    //          月亮从天上消失），terminator 椭圆切弦、弦轴固定在月盘水平切轴
-    //          （不追日——轨迹已镜像，追日会随太阳经过而翻转）。
+    //   月亮 = 打制石器月轮（2026-07-22，三轮定稿）：硬朗统一的骨白石面 ——
+    //          轮廓是直边凿口接成的硬多边形（崩口），盘面统一平涂，无描边、
+    //          无凹槽、无中心压暗；质感 = 4 级硬边凿面色块 + 细点凿（点描同源）。
+    //          轨迹 = 太阳的中心对称点（同角速度、方位镜像，日落月升）；
+    //          月相随世界日历轮转（一月=一朔望月，朔日月亮从天上消失），
+    //          terminator 椭圆切弦、弦轴固定在月盘水平切轴（不追日——
+    //          轨迹已镜像，追日会随太阳经过而翻转）。
     //          _MoonDir/_MoonPhase/_MoonGlow 由控制器写入（无第二盏灯）。
     // 零贴图、单 pass、无光照 include；_SunDir/_MoonDir/_MoonPhase/_StarBlend/
     // _SkyHorizon 由
@@ -435,13 +436,14 @@ Shader "Glimmer/SkyGradient"
                     col += _SunTint.rgb * airGlow * airGlow * 0.045 * _SunGlow * sunUpMask;
                 }
 
-                // —— 3b. 月轮图腾：方向 = 太阳的中心对称点（控制器写入），与太阳
-                //        同角速度扫天、方位镜像 —— 日落月升。工艺同太阳（q/theta
-                //        极坐标、共用毛边、先凿后填、地平线遮挡），词汇换成"斑"：
-                //        骨白点描盘 + 炭灰月海，无射线无光环。相位只改圆缺：
-                //        terminator 椭圆切弦，弦轴固定在月盘自身水平切轴 ——
-                //        不跟踪太阳（轨迹已镜像，追日会随太阳经过而翻转，
-                //        读作相位乱跳）——
+                // —— 3b. 月轮图腾：打制石器语言（2026-07-22 设计者参考图定稿）——
+                //        方向 = 太阳的中心对称点（控制器写入），与太阳同角速度
+                //        扫天、方位镜像 —— 日落月升。外观：硬朗统一的骨白石面 ——
+                //        轮廓是直边凿口接成的硬多边形（崩口），盘面统一平涂，
+                //        无描边、无凹槽、无中心压暗；岩画质感靠 4 级硬边凿面
+                //        色块 + 细点凿（桑人点描同源）。相位只改圆缺：terminator
+                //        椭圆切弦，弦轴固定在月盘自身水平切轴 —— 不跟踪太阳
+                //       （轨迹已镜像，追日会随太阳经过而翻转，读作相位乱跳）——
                 float3 moonDirW = normalize(_MoonDir.xyz + float3(0, 1e-5, 0));
                 float moonOcc = 0.0;   // 月盘覆盖度 → 夜空块遮挡星点（亮星不穿月）
                 {
@@ -459,39 +461,38 @@ Shader "Glimmer/SkyGradient"
                         float mu = mq * cos(mTheta);
                         float mv = mq * sin(mTheta);
 
-                        // 毛边极径：RimNoise 粘在盘面上随月同行（方向域噪声会
-                        // 随月亮移动滑过盘缘，读作"边缘在波动"——见 RimNoise 注）
-                        float mqr = mq + (RimNoise(mTheta) - 0.5) * _MoonEdgeRagged * 0.10;
+                        // 凿口轮廓：RimNoise 量成 4 级台阶——直边凿口接成的硬
+                        // 多边形（打制石器的崩口），不是软波浪。粘在盘面上随月
+                        // 同行（方向域噪声会滑过盘缘，见 RimNoise 注）
+                        float rimN = RimNoise(mTheta);
+                        rimN = floor(rimN * 4.0 + 0.5) / 4.0;
+                        float mqr = mq + (rimN - 0.5) * _MoonEdgeRagged * 0.12;
 
                         float moonUpMask = smoothstep(-0.06, 0.04, moonDirW.y);
                         float mhOcc = smoothstep(-0.005, 0.015, y);   // 地平线吃底（残月半沉）
                         float mStr = _MoonGlow * moonUpMask * mhOcc;
 
-                        // terminator 椭圆切弦（几何坐标，弦缘干净）：朔(0)全暗 →
-                        // 望(0.5)全圆；上弦/下弦亮不同侧（盈亏镜像，side 翻转亮面）
+                        // terminator 椭圆切弦（硬弦缘）：朔(0)全暗 → 望(0.5)全圆；
+                        // 上弦/下弦亮不同侧（盈亏镜像，side 翻转亮面）
                         float side = _MoonPhase < 0.5 ? 1.0 : -1.0;
                         float term = cos(_MoonPhase * TWO_PI) * sqrt(saturate(1.0 - mv * mv));
-                        float lit = smoothstep(-0.04, 0.04, mu * side - term);
+                        float lit = smoothstep(-0.02, 0.02, mu * side - term);
 
-                        float mDisc = (1.0 - smoothstep(0.97, 1.03, mqr)) * lit;
-
-                        // 月海：盘面平投坐标 (mu,mv) 上的 fbm 炭灰斑块 —— 粘在盘面
-                        // 随月同行（方向域采样会让月海在盘上漂移），只在受光面显形
-                        float maria = smoothstep(0.50, 0.64,
-                            Fbm3(float3(mu, mv, 0.37) * 2.6 + 4.2)) * mDisc;
-                        // 盘缘一线骨白刻边（刻出来的轮廓，受光侧才有）
-                        float mRing = (1.0 - smoothstep(0.03, 0.065, abs(mqr - 0.90))) * lit;
+                        float mDisc = (1.0 - smoothstep(0.985, 1.015, mqr)) * lit;   // 硬轮廓
 
                         moonOcc = mDisc * mStr;
 
-                        // 先凿：受光缘外侧一线刻槽（比太阳浅——月亮是轻刻）
-                        float mCarve = (1.0 - smoothstep(0.02, 0.05, abs(mqr - 1.07))) * lit;
-                        col *= 1.0 - mCarve * mStr * _CarveShadow * 0.6;
-
-                        // 后填：骨白平涂底 + 炭灰月海斑 + 盘缘刻边
-                        col = lerp(col, _MoonTint.rgb, mDisc * 0.92 * mStr);
-                        col = lerp(col, _MoonMariaCol.rgb, maria * 0.75 * mStr);
-                        col = lerp(col, _MoonTint.rgb * 1.10, mRing * 0.45 * mStr);
+                        // 填彩：统一骨白平涂——硬朗统一的石面，无描边、无盘外
+                        // 凹槽、无中心压暗。岩画质感靠刻面与点凿，不靠明暗渐变
+                        // 凿面：fbm 量成 4 级硬边色块，同色相微差（-6%~+3%）——
+                        // 打制石器的崩面感，块界是硬边不是渐变
+                        float facetN = floor(Fbm3(float3(mu, mv, 0.37) * 2.6 + 4.2) * 4.0) / 4.0;
+                        half3 moonCol = _MoonTint.rgb * (0.94 + 0.12 * facetN);
+                        col = lerp(col, moonCol, mDisc * 0.96 * mStr);
+                        // 点凿：盘本地坐标的细点（桑人点描同源），同色系微暗、
+                        // 低强度 —— 近看是手工凿痕，远看是统一平面
+                        float2 stip = StarLayer(float3(mu, mv, 0.53), 6.5, 0.14, 0.42);
+                        col = lerp(col, _MoonMariaCol.rgb, stip.x * mDisc * 0.20 * mStr);
                     }
                 }
 
