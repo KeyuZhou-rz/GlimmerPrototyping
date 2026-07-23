@@ -200,6 +200,25 @@ Shader "Glimmer/SkyGradient"
                 return frac(52.9829189 * frac(0.06711056 * px.x + 0.00583715 * px.y));
             }
 
+            // 绕盘一周的周期值噪声（theta∈[-π,π] → [0,1] 无接缝）：
+            // 月轮图腾的盘缘毛边专用。方向域噪声（太阳那套 ValueNoise3(d*42)）
+            // 固定在天上，月亮移动时噪声场滑过盘缘、轮廓持续变形 —— 小盘上
+            // 读作"边缘在波动"。这里改用盘本地 theta 域：图案粘在盘面上随月
+            // 同行。两个整数周期八度（7 主起伏 + 16 细齿），首尾相接无接缝
+            float RimNoise(float theta)
+            {
+                float u = theta / TWO_PI + 0.5;
+                float t1 = u * 7.0;
+                float f1 = frac(t1); f1 = f1 * f1 * (3.0 - 2.0 * f1);
+                float n1 = lerp(Hash13(float3(fmod(floor(t1),        7.0), 5.1, 9.7)),
+                                Hash13(float3(fmod(floor(t1) + 1.0,  7.0), 5.1, 9.7)), f1);
+                float t2 = u * 16.0;
+                float f2 = frac(t2); f2 = f2 * f2 * (3.0 - 2.0 * f2);
+                float n2 = lerp(Hash13(float3(fmod(floor(t2),       16.0), 2.3, 7.9)),
+                                Hash13(float3(fmod(floor(t2) + 1.0, 16.0), 2.3, 7.9)), f2);
+                return n1 * 0.65 + n2 * 0.35;
+            }
+
             // 分段色带量化：t∈[0,1] 切 n 带，IGN 抖动半带宽，_BandingAmount 控混合
             float BandT(float t, float n, float dither)
             {
@@ -436,27 +455,30 @@ Shader "Glimmer/SkyGradient"
 
                     if (mq < 1.6 && _MoonGlow > 0.001)   // 影响圈外整段跳过
                     {
-                        // 同一只手：毛边抖动频率/幅度与日盘一致
-                        float mqr = mq + (ValueNoise3(d * 42.0) - 0.5) * _MoonEdgeRagged * 0.16;
+                        // 盘内几何坐标（未抖动）：mu 沿水平切轴、mv 沿竖直切轴
+                        float mu = mq * cos(mTheta);
+                        float mv = mq * sin(mTheta);
+
+                        // 毛边极径：RimNoise 粘在盘面上随月同行（方向域噪声会
+                        // 随月亮移动滑过盘缘，读作"边缘在波动"——见 RimNoise 注）
+                        float mqr = mq + (RimNoise(mTheta) - 0.5) * _MoonEdgeRagged * 0.10;
 
                         float moonUpMask = smoothstep(-0.06, 0.04, moonDirW.y);
                         float mhOcc = smoothstep(-0.005, 0.015, y);   // 地平线吃底（残月半沉）
                         float mStr = _MoonGlow * moonUpMask * mhOcc;
 
-                        // 盘内坐标：mu 沿水平切轴、mv 沿竖直切轴（弦轴固定，不随太阳动）
-                        float mu = mqr * cos(mTheta);
-                        float mv = mqr * sin(mTheta);
-                        // terminator 椭圆切弦：朔(0)全暗 → 望(0.5)全圆；
-                        // 上弦/下弦亮不同侧（盈亏镜像，side 翻转亮面）
+                        // terminator 椭圆切弦（几何坐标，弦缘干净）：朔(0)全暗 →
+                        // 望(0.5)全圆；上弦/下弦亮不同侧（盈亏镜像，side 翻转亮面）
                         float side = _MoonPhase < 0.5 ? 1.0 : -1.0;
                         float term = cos(_MoonPhase * TWO_PI) * sqrt(saturate(1.0 - mv * mv));
                         float lit = smoothstep(-0.04, 0.04, mu * side - term);
 
-                        float mDisc = (1.0 - smoothstep(0.96, 1.03, mqr)) * lit;
+                        float mDisc = (1.0 - smoothstep(0.97, 1.03, mqr)) * lit;
 
-                        // 月海：低频 fbm 撕出的炭灰斑块，只在受光面显形
-                        // （掷灰同源：频率高于岩面斑驳、低于星点，读作"盘上的灰迹"）
-                        float maria = smoothstep(0.50, 0.64, Fbm3(d * 26.0 + 4.2)) * mDisc;
+                        // 月海：盘面平投坐标 (mu,mv) 上的 fbm 炭灰斑块 —— 粘在盘面
+                        // 随月同行（方向域采样会让月海在盘上漂移），只在受光面显形
+                        float maria = smoothstep(0.50, 0.64,
+                            Fbm3(float3(mu, mv, 0.37) * 2.6 + 4.2)) * mDisc;
                         // 盘缘一线骨白刻边（刻出来的轮廓，受光侧才有）
                         float mRing = (1.0 - smoothstep(0.03, 0.065, abs(mqr - 0.90))) * lit;
 
