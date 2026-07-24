@@ -536,21 +536,24 @@ public class WorldTraceBinder : MonoBehaviour
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
 
         var rng = new System.Random(seed);
-        int count = 2 + rng.Next(2);
+        int count = 3 + rng.Next(3);
         float life = 1f - age / (float)featherMaxAge;
-        Color c = Color.Lerp(featherTint * 0.8f, featherTint, life);
+        Color fresh = Color.Lerp(featherTint, Color.white, 0.35f);
+        Color c = Color.Lerp(featherTint * 0.86f, fresh, life);
 
         t.root = NewRoot($"Feathers_{seed:X8}", c0);
         for (int i = 0; i < count; i++)
         {
             float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
-            float r   = 0.3f + (float)rng.NextDouble() * 1.2f;
+            float r   = 0.25f + (float)rng.NextDouble() * 0.85f;
             if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
                 continue;
             // 随龄压平：新落的羽毛翘一点，久了贴平
-            float tilt = Mathf.Lerp(2f, 14f, life);
+            float tilt = Mathf.Lerp(4f, 22f, life);
+            float scale = Mathf.Lerp(1.1f, 1.35f, (float)rng.NextDouble());
             var rot = Quaternion.Euler(tilt, (float)rng.NextDouble() * 360f, 0f);
-            AddProp(t, TraceKit.Feather, featherMaterial, c, p + Vector3.up * 0.02f, rot, Vector3.one);
+            AddProp(t, TraceKit.Feather, featherMaterial, c, p + Vector3.up * 0.025f, rot,
+                    Vector3.one * scale);
         }
     }
 
@@ -587,18 +590,12 @@ public class WorldTraceBinder : MonoBehaviour
             p1 = p0 + offset;
 
         float life = 1f - age / (float)restMaxAge;
-        Color c = Color.Lerp(pressedTint * 0.92f, pressedTint, life);   // 淡出趋近草色
-
         t.root = NewRoot($"Rest_{seed:X8}", p0);
-        AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p0 + Vector3.up * 0.015f,
-                Quaternion.Euler(0f, ang * Mathf.Rad2Deg, 0f), Vector3.one);
-        AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p1 + Vector3.up * 0.015f,
-                Quaternion.Euler(0f, ang * Mathf.Rad2Deg + 25f, 0f), Vector3.one * 0.85f);
 
-        // 两片压痕是这一刻的主视觉：强度最高，随龄衰减
-        float s = 0.9f * life;
-        t.trampleContribs.Add(new Vector4(p0.x, p0.z, 1.5f, s));
-        t.trampleContribs.Add(new Vector4(p1.x, p1.z, 1.3f, s * 0.9f));
+        // 不铺实体色片；沿用脚印的草形变尺度，让压痕看起来发生在草里而不是盖在草上。
+        float s = 0.45f * life;
+        t.trampleContribs.Add(new Vector4(p0.x, p0.z, 1.1f, s));
+        t.trampleContribs.Add(new Vector4(p1.x, p1.z, 1.1f, s));
     }
 
     /// <summary>T4 鹿鼠退守（实时态）：高地→石头区一小串脚印，在边缘停住。</summary>
