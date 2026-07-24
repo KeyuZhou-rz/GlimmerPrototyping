@@ -105,7 +105,7 @@ public static class TraceKit
         var tris  = new System.Collections.Generic.List<int>();
 
         // 远景里仍要能读成羽毛，而不是落在草间的单像素亮点。
-        const float LEN = 0.48f, HALF = 0.065f, RIDGE = 0.035f;
+        const float LEN = 0.96f, HALF = 0.13f, RIDGE = 0.07f;
         var root = new Vector3(0f, 0.005f, 0f);
         var tip  = new Vector3(0f, 0.01f, LEN);
         var midL = new Vector3(-HALF, 0f, LEN * 0.45f);

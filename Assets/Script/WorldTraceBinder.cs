@@ -513,6 +513,7 @@ public class WorldTraceBinder : MonoBehaviour
         float scale = Mathf.Lerp(0.6f, 1f, life);
         Quaternion yaw = Quaternion.LookRotation(dir, Vector3.up);
         Vector3 perp = Vector3.Cross(dir, Vector3.up);
+        float trampleLife = age <= 3 ? 1f - age / 3f : 0f;
 
         t.root = NewRoot($"Trail_{seed:X8}", pts[0]);
         for (int i = 0; i < pts.Count; i++)
@@ -520,12 +521,8 @@ public class WorldTraceBinder : MonoBehaviour
             Vector3 p = pts[i] + perp * ((i % 2 == 0) ? 0.09f : -0.09f);   // 左右脚交替
             AddProp(t, TraceKit.Footprint, dirtMaterial, c, p + Vector3.up * 0.02f, yaw,
                     Vector3.one * scale);
-        }
-        // 新鲜足迹压出一条浅沟：路径中点一个压痕
-        if (age <= 3 && pts.Count > 1)
-        {
-            Vector3 mid = pts[pts.Count / 2];
-            t.trampleContribs.Add(new Vector4(mid.x, mid.z, 1.1f, 0.45f * (1f - age / 3f)));
+            if (trampleLife > 0f)
+                t.trampleContribs.Add(new Vector4(p.x, p.z, 1.1f, 0.9f * trampleLife));
         }
     }
 
@@ -593,7 +590,7 @@ public class WorldTraceBinder : MonoBehaviour
         t.root = NewRoot($"Rest_{seed:X8}", p0);
 
         // 不铺实体色片；沿用脚印的草形变尺度，让压痕看起来发生在草里而不是盖在草上。
-        float s = 0.45f * life;
+        float s = 0.9f * life;
         t.trampleContribs.Add(new Vector4(p0.x, p0.z, 1.1f, s));
         t.trampleContribs.Add(new Vector4(p1.x, p1.z, 1.1f, s));
     }
