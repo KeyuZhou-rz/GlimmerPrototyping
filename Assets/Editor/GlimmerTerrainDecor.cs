@@ -110,7 +110,7 @@ public static class GlimmerTerrainDecor
             mat.SetFloat("_ShadeBands", 3f);
             mat.SetFloat("_Posterize", 0.6f);
             mat.SetFloat("_AmbientBoost", 1.15f);   // 背光面留住体积色（同树材质思路），否则岩石读作黑块
-            mat.SetColor("_ShadowTint", new Color(0.34f, 0.40f, 0.50f));
+            mat.SetColor("_ShadowTint", new Color(0.30f, 0.24f, 0.38f));   // 黄昏紫罗兰影（与地形一致）
             mat.SetFloat("_RimStrength", 0.08f);
             mat.SetFloat("_RimPower", 3.5f);
             mat.SetFloat("_SwayAmount", 0f);   // 岩石绝不摆动

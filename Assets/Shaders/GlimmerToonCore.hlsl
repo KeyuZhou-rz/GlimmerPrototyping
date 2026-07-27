@@ -15,13 +15,23 @@ half3 GlimmerToonLight(float3 normalWS, float3 positionWS, half3 albedo,
     float NdotL = saturate(dot(normalWS, mainLight.direction));
     float lit   = NdotL * mainLight.shadowAttenuation;
 
-    // 色阶量化（toon）：_Posterize 控制硬/软过渡
-    float hard = floor(lit * bands + 0.5) / bands;
+    // 色阶量化（toon）：_Posterize 控制硬/软过渡。
+    // 软台阶：台阶保留（岩画平面感），但每档边缘以像素自适应宽度羽化，
+    // 消除 floor 硬切线的"素材感"色块，明暗过渡读作天鹅绒。
+    float s    = lit * bands;
+    float i    = floor(s);
+    float f    = s - i;
+    float w    = clamp(fwidth(s) * 2.0, 0.08, 0.45);   // 过渡带宽度：近处可见柔化，远处抗闪
+    float hard = (i + smoothstep(0.5 - w, 0.5 + w, f)) / bands;
     float toon = lerp(lit, hard, posterize);
 
     // SH 环境光防止死黑；阴影只做冷色调偏移，不额外压暗环境光
     // （环境光是阴影里唯一的照明来源，再乘暗值会得到死黑色块）
+    // 2026-07-27 修正：投影处环境光按 shadowAttenuation 适度衰减（最多 38%）。
+    // 低日角度下地面 NdotL 极小，直射项弱、环境光占主导，投下的长影会被
+    // 环境光完全淹没（草原黄昏失去长影）；保留 62% 底光避免死黑。
     half3 ambient   = SampleSH(normalWS) * ambientBoost;
+    ambient *= lerp(0.62, 1.0, mainLight.shadowAttenuation);
     half3 shadowCol = lerp(shadowTint, half3(1, 1, 1), toon);
     half3 col = albedo * (ambient * lerp(shadowCol, half3(1,1,1), 0.5) + mainLight.color * toon * shadowCol);
 
@@ -38,7 +48,11 @@ half3 GlimmerToonLight(float3 normalWS, float3 positionWS, half3 albedo,
         Light l = GetAdditionalLight(li, positionWS);
         float nl = saturate(dot(normalWS, l.direction));
         float a  = nl * l.distanceAttenuation * l.shadowAttenuation;
-        float hardA = floor(a * bands + 0.5) / bands;
+        float sa = a * bands;
+        float ia = floor(sa);
+        float fa = sa - ia;
+        float wa = clamp(fwidth(sa) * 2.0, 0.08, 0.45);
+        float hardA = (ia + smoothstep(0.5 - wa, 0.5 + wa, fa)) / bands;
         col += albedo * l.color * lerp(a, hardA, posterize * 0.5);
     }
 #endif

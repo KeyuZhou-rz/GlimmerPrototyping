@@ -118,8 +118,13 @@ Shader "Custom/VertexColorFlat"
                 float NdotL = saturate(dot(normalWS, mainLight.direction));
                 float lit   = NdotL * mainLight.shadowAttenuation;
 
-                // 色阶量化（toon），_Posterize 控制硬/软
-                float hard = floor(lit * _ShadeBands + 0.5) / _ShadeBands;
+                // 色阶量化（toon），_Posterize 控制硬/软。
+                // 软台阶（与 GlimmerToonCore 同一手法）：台阶保留，档间边缘羽化
+                float s    = lit * _ShadeBands;
+                float i    = floor(s);
+                float f    = s - i;
+                float w    = clamp(fwidth(s) * 2.0, 0.08, 0.45);
+                float hard = (i + smoothstep(0.5 - w, 0.5 + w, f)) / _ShadeBands;
                 float toon = lerp(lit, hard, _Posterize);
 
                 // 环境光（SH）：天空/地面渐变，避免阴影死黑，带出体积感

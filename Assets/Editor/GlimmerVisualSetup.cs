@@ -22,6 +22,8 @@ public static class GlimmerVisualSetup
     const string FluffMatPath = MatDir + "/SeedFluff.mat";
     const string SkyMatPath = MatDir + "/SkyGradient.mat";
     const string ProfilePath = "Assets/Settings/GlimmerPostFX.asset";
+    // Batch 4 草色映射表资产（GlimmerBinderSetup 接线到 binder.grassPreset 也读这个路径）
+    internal const string GrassPresetPath = "Assets/Settings/GrassPreset_Glimmer.asset";
 
     static readonly string[] TreeMatPaths =
     {
@@ -41,6 +43,7 @@ public static class GlimmerVisualSetup
         SetupTerrain();
         SetupRain();
         SetupSeedFluff();
+        SetupGrassPreset();
         SetupSky();
         SetupPostFX();
         SetupWeatherDefaults();
@@ -247,7 +250,7 @@ public static class GlimmerVisualSetup
             mat.SetFloat("_ShadeBands", 3f);
             mat.SetFloat("_Posterize", 0.6f);
             mat.SetFloat("_AmbientBoost", 1.25f);   // 树冠背光面也要留住体积色
-            mat.SetColor("_ShadowTint", new Color(0.52f, 0.58f, 0.66f));
+            mat.SetColor("_ShadowTint", new Color(0.44f, 0.38f, 0.56f));   // 黄昏紫罗兰影（印象派补色），比地形亮一档保树冠体积
             mat.SetFloat("_RimStrength", 0.16f);
             mat.SetFloat("_RimPower", 3.0f);
             mat.SetFloat("_SwayAmount", 0.012f);   // 极轻微风摆，整树刚体感不破坏
@@ -287,7 +290,7 @@ public static class GlimmerVisualSetup
         mat.SetFloat("_ShadeBands", 3f);
         mat.SetFloat("_Posterize", 0.6f);
         mat.SetFloat("_AmbientBoost", 0.95f);
-        mat.SetColor("_ShadowTint", new Color(0.34f, 0.40f, 0.50f));
+        mat.SetColor("_ShadowTint", new Color(0.30f, 0.24f, 0.38f));   // 黄昏紫罗兰影（印象派补色）
         EditorUtility.SetDirty(mat);
 
         var tg = Object.FindFirstObjectByType<TerrainGenerator>();
@@ -376,13 +379,19 @@ public static class GlimmerVisualSetup
             AssetDatabase.CreateAsset(mat, FluffMatPath);
         }
         mat.shader = shader;
-        mat.SetColor("_FluffColor", new Color(0.90f, 0.88f, 0.78f, 0.85f));
-        mat.SetFloat("_EdgeSoft", 0.55f);
+        mat.SetColor("_FluffColor", new Color(0.88f, 0.84f, 0.72f, 0.58f));
+        mat.SetFloat("_EdgeSoft", 0.20f);
+        mat.SetFloat("_FarFadeStart", 90f);
+        mat.SetFloat("_FarFadeEnd", 120f);
         EditorUtility.SetDirty(mat);
 
-        // 发射器位置：河岸水面之上（蒲公英家在 riverbank）——取 WaterGenerator 为锚
-        var wg = Object.FindFirstObjectByType<WaterGenerator>(FindObjectsInactive.Include);
-        Vector3 anchor = wg != null ? wg.transform.position : new Vector3(-15f, 0f, -6f);
+        // 发射器与痕迹系统共用同一个 riverbank 空间定义。
+        var zoneMap = Object.FindFirstObjectByType<ZoneMap>(FindObjectsInactive.Include);
+        if (zoneMap == null || !zoneMap.TryGetAnchorCenter("riverbank", out Vector3 anchor, out float radius))
+        {
+            Debug.LogWarning("[GlimmerVisualSetup] ZoneMap riverbank anchor not found");
+            return;
+        }
 
         var go = GameObject.Find("SeedFluffSystem");
         if (go == null)
@@ -390,12 +399,12 @@ public static class GlimmerVisualSetup
             go = new GameObject("SeedFluffSystem");
             go.AddComponent<ParticleSystem>();
         }
-        go.transform.position = anchor + Vector3.up * 1.2f;
+        go.transform.position = anchor + Vector3.up * 3f;
 
         var ps  = go.GetComponent<ParticleSystem>();
         var psr = go.GetComponent<ParticleSystemRenderer>();
 
-        // 渲染器：普通公告板圆绒点（不拉伸——絮是"一团"不是"一丝"）
+        // 渲染器：公告板上的纤维状绒籽，不使用拉伸或加色发光。
         psr.sharedMaterial = mat;
         psr.renderMode = ParticleSystemRenderMode.Billboard;
         psr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -404,31 +413,55 @@ public static class GlimmerVisualSetup
 
         var main = ps.main;
         main.startLifetime = 7f;            // 飘得久才读得出"它们在旅行"
-        main.startSpeed = 0.4f;             // 初速小，靠 forceOverLifetime 被风接住
-        main.startSize = new ParticleSystem.MinMaxCurve(0.05f, 0.10f);
+        main.startSpeed = 0.12f;            // 初速只负责脱离花头，移动方向由风主导
+        main.startSize = new ParticleSystem.MinMaxCurve(0.20f, 0.38f);
         main.startColor = Color.white;
-        main.gravityModifier = 0.015f;      // 近乎悬浮的缓沉
+        main.gravityModifier = 0.004f;      // 近乎悬浮的缓沉
         main.maxParticles = 400;
         main.simulationSpace = ParticleSystemSimulationSpace.World;
 
         var emission = ps.emission;
         emission.rateOverTime = 0f;         // 运行时控制器驱动
 
-        // 发射区：覆盖河段的扁盒
+        // 发射区：XZ 边长取 riverbank 直径的扁盒。
         var shape = ps.shape;
         shape.shapeType = ParticleSystemShapeType.Box;
-        shape.scale = new Vector3(24f, 2.5f, 12f);
+        shape.scale = new Vector3(radius * 2f, 4f, radius * 2f);
 
-        // 接到控制器（幂等：只补空引用）
+        // 接到控制器并同步权威调优，确保重跑 Setup 不会恢复旧密度。
         var wc = Object.FindFirstObjectByType<EmotionWeatherController>(FindObjectsInactive.Include);
-        if (wc != null && wc.seedFluffParticleSystem == null)
+        if (wc != null)
         {
             wc.seedFluffParticleSystem = ps;
+            wc.maxFluffEmission = 8f;
+            wc.maxFluffWindForce = 0.45f;
             EditorUtility.SetDirty(wc);
         }
 
         EditorUtility.SetDirty(go);
         Debug.Log("[GlimmerVisualSetup] SeedFluff particle → SeedFluff billboard @riverbank");
+    }
+
+    // ---- 3c. 草色映射表（Batch 4：{DecayLevel, season, zone 湿度} → 草色） ----
+    // find-or-create GrassPreset 资产；新建时用类字段初值（调好的权威默认），
+    // 已存在则原样保留——用户在 Inspector 里的调参不被覆盖。binder 接线在 GlimmerBinderSetup。
+    static void SetupGrassPreset()
+    {
+        if (!AssetDatabase.IsValidFolder("Assets/Settings"))
+            AssetDatabase.CreateFolder("Assets", "Settings");
+
+        var preset = AssetDatabase.LoadAssetAtPath<GlimmerDiary.Flora.GrassPreset>(GrassPresetPath);
+        if (preset == null)
+        {
+            preset = ScriptableObject.CreateInstance<GlimmerDiary.Flora.GrassPreset>();
+            AssetDatabase.CreateAsset(preset, GrassPresetPath);
+            Debug.Log("[GlimmerVisualSetup] GrassPreset created → " + GrassPresetPath);
+        }
+        else
+        {
+            Debug.Log("[GlimmerVisualSetup] GrassPreset exists (kept user tuning) → " + GrassPresetPath);
+        }
+        EditorUtility.SetDirty(preset);
     }
 
     // ---- 3b. 天空（桑人岩画渐变，Docs/SkySanRockArt.md） -------------------
