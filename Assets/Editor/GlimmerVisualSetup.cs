@@ -613,8 +613,7 @@ public static class GlimmerVisualSetup
         var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
         if (wc == null) { Debug.LogWarning("[GlimmerVisualSetup] No EmotionWeatherController"); return; }
 
-        wc.stormFogColor = new Color(0.20f, 0.22f, 0.26f);
-        wc.sunnyFogColor = new Color(0.60f, 0.65f, 0.72f);   // 空气蓝灰，=_SkyHorizon 基线
+        // 雾色常量已随 B 轮移除（雾色改由天空色板派生）——此处只保留雾距与权重
         wc.fogLinearSunnyStart = 60f;
         wc.fogLinearSunnyEnd = 300f;     // 推出地形对角线，远山只柔化不溶解
         wc.fogLinearStormStart = 30f;

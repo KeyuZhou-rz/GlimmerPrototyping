@@ -10,7 +10,21 @@ using System.Runtime.CompilerServices;
 // GameObject 命名 "WorldManager"，跨场景不销毁
 public class WorldManager : MonoBehaviour
 {
-    public static WorldManager Instance { get; private set; }
+    private static WorldManager _instance;
+    public static WorldManager Instance
+    {
+        get
+        {
+            // play 中改脚本会触发域重载：静态字段被清空，但 GameObject（DontDestroyOnLoad）
+            // 本身还活着、Awake 也不会重跑——Instance 从此永远为 null，binder/注入器
+            // 静默断联且无任何报错。惰性找回让单例自愈。
+            if (_instance == null) _instance = FindFirstObjectByType<WorldManager>();
+            // 找回本体还不够：域重载同样清空了不参与序列化的子系统对象图，需一并重建。
+            if (_instance != null && Application.isPlaying) _instance.InitializeSubsystems();
+            return _instance;
+        }
+        private set => _instance = value;
+    }
 
     public EmotionInertiaSystem   EmotionInertia { get; private set; }
     public NaturalRhythmSystem    NaturalRhythm  { get; private set; }
@@ -45,9 +59,21 @@ public class WorldManager : MonoBehaviour
 
     void Awake()
     {
-        if (Instance != null) { Destroy(gameObject); return; }
-        Instance = this;
+        // 用底层字段而非属性：Awake 时保持原有"先到先得"语义，不触发惰性查找
+        if (_instance != null && _instance != this) { Destroy(gameObject); return; }
+        _instance = this;
         DontDestroyOnLoad(gameObject);
+        InitializeSubsystems();
+    }
+
+    // 子系统初始化（Awake 与域重载自愈共用）。
+    // play 中改脚本触发域重载：GameObject 本体（DontDestroyOnLoad）与静态 _instance
+    // 可以找回，但这些纯 C# 子系统对象不参与序列化，全部被清成 null——
+    // 留下一个"空壳"管理器，调用方拿到 Instance 也会在 GetWorldState() 等处 NRE。
+    // 惰性重建：发现子系统缺失就从存档重建整张对象图。
+    private void InitializeSubsystems()
+    {
+        if (EmotionInertia != null) return;   // 已初始化（Awake 正常路径外的重复调用短路）
 
         EmotionInertia = new EmotionInertiaSystem();
         NaturalRhythm  = new NaturalRhythmSystem();

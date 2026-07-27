@@ -260,7 +260,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
 
     void LateUpdate()
     {
-        
+
         if (!_initialized) return;
         var wm = WorldManager.Instance;
         if (wm == null) return;

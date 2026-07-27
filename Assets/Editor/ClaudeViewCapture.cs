@@ -251,6 +251,55 @@ public static class ClaudeViewCapture
         finally { Object.DestroyImmediate(go); }
     }
 
+    // 光照链路综合探针：反射读 LightManager 私有引用真假、直接调用 SetTimePercent、
+    // 手动调用 binder.LateUpdate——一次运行定位"调用链断在哪一环"。
+    [MenuItem("Tools/Claude/Probe Light Path")]
+    public static void ProbeLightPath()
+    {
+        const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic
+                                               | System.Reflection.BindingFlags.Instance;
+        var lm = Object.FindFirstObjectByType<LightManager>();
+        if (lm == null) { Debug.LogWarning("[LightProbe] no LightManager"); return; }
+        var tlm = typeof(LightManager);
+        var dl     = tlm.GetField("DirectionalLight", F)?.GetValue(lm) as Light;
+        var preset = tlm.GetField("DayNightPreset", F)?.GetValue(lm);
+        var baseI  = tlm.GetField("_baseSunIntensity", F)?.GetValue(lm);
+        var tod    = tlm.GetField("TimeOfDay", F)?.GetValue(lm);
+        Debug.Log($"[LightProbe] lm id={lm.GetInstanceID()} dl={(dl == null ? "NULL" : dl.GetInstanceID().ToString())} " +
+                  $"preset={(preset == null ? "NULL" : "ok")} base={baseI} weatherDim={lm.weatherDim:F3} TimeOfDay={tod}");
+        if (dl != null)
+        {
+            float before = dl.intensity;
+            lm.SetTimePercent(0.5f);
+            Debug.Log($"[LightProbe] direct SetTimePercent(0.5): intensity {before:F3} -> {dl.intensity:F3} " +
+                      $"rot={dl.transform.eulerAngles} TimeOfDay={tlm.GetField("TimeOfDay", F)?.GetValue(lm)}");
+        }
+        var binder = Object.FindFirstObjectByType<WorldAtmosphereBinder>();
+        if (binder == null) { Debug.LogWarning("[LightProbe] no binder"); return; }
+        Debug.Log($"[LightProbe] binder.lightManager={(binder.lightManager == null ? "NULL" : binder.lightManager.GetInstanceID().ToString())} " +
+                  $"same-as-found={(binder.lightManager == lm)}");
+        var lu = typeof(WorldAtmosphereBinder).GetMethod("LateUpdate", F);
+        if (lu != null)
+        {
+            lu.Invoke(binder, null);
+            Debug.Log($"[LightProbe] manual binder.LateUpdate -> TimeOfDay={tlm.GetField("TimeOfDay", F)?.GetValue(lm)} " +
+                      $"intensity={(dl != null ? dl.intensity : -1f):F3}");
+        }
+    }
+
+    // WorldManager 单例探针：play 中域重载后 Instance 是否断链、对象本体是否还活着。
+    [MenuItem("Tools/Claude/Probe WorldManager")]
+    public static void ProbeWorldManager()
+    {
+        var all = Object.FindObjectsByType<WorldManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        Debug.Log($"[WMProbe] found={all.Length}");
+        foreach (var w in all)
+            Debug.Log($"[WMProbe] id={w.GetInstanceID()} active={w.gameObject.activeInHierarchy} " +
+                      $"scene='{w.gameObject.scene.name}' hideFlags={w.gameObject.hideFlags} enabled={w.enabled}");
+        var inst = WorldManager.Instance;
+        Debug.Log($"[WMProbe] Instance={(inst == null ? "<null>" : inst.GetInstanceID().ToString())}");
+    }
+
     // Batch 4 草色通路诊断（临时）：① 反射读 binder 私有缓存，确认数据端是否就位；
     // ② 直接把 _GrassColorEnable=1 + 季节色=红 写进 shader 全局并拍摄（不 Step，
     // 避免 binder 下一帧覆盖）——草变红 = shader 链路通、问题在 binder 数据；
