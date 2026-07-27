@@ -51,6 +51,9 @@ namespace GlimmerDiary.Data
         // 情感历史
         public List<EnvEmotionSnapshot> emotionHistory = new();
         public EmotionVector             currentEEnv;
+        // 情绪脉冲（2026-07-27 双时间尺度）：写日记当日的全强回响，随自主日快衰。
+        // 旧存档无此字段 → null → EmotionInertiaSystem.Restore 按零脉冲处理。
+        public EmotionVector             currentImpulse;
 
         // 所有实体
         public List<AnimalEntity>   animals   = new();

@@ -55,7 +55,7 @@ public class WorldManager : MonoBehaviour
         Translation    = new TranslationLayer();
 
         _saveData = SaveSystem.LoadWorldState() ?? WorldInitializer.CreateNewWorld();
-        EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory);
+        EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory, _saveData.currentImpulse);
 
         Registry = new EntityRegistry();
         Registry.Initialize(_saveData);
@@ -105,7 +105,7 @@ public class WorldManager : MonoBehaviour
         // 初始化天气快照：只消费无状态信号，不走 UpdateFromEEnv 的有状态积分——
         // 启动不是一天，重启 app 不应让 Soil/Decay 多走一步（Awake catch-up 已按天模拟过）。
         Environment.ConsumeSignals(
-            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse));
     }
 
     // 空闲心跳：会话内无日记输入时也定期重算节律快照（dayProgress/lightIntensity 跟随真实墙钟），
@@ -122,7 +122,7 @@ public class WorldManager : MonoBehaviour
         _rhythmHeartbeatTimer = 0f;
         NaturalRhythm.Tick(_saveData.gameTime);
         Environment.ConsumeSignals(
-            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse));
     }
 
     // 自主软上限：catch-up 总是按完整墙钟天数推进 gameTime 日历，
@@ -145,12 +145,13 @@ public class WorldManager : MonoBehaviour
     private void SimulatePass()
     {
         // Step 0：翻译层产出无状态信号 1/2/3/7（在天气消费之前）
-        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State); //通过情绪向量和现有状态输出新世界信号
+        var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse); //通过情绪向量和现有状态输出新世界信号
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals, NaturalRhythm.State); // 新的环境（含旱债积分，需季节基准）
         PropagateEnvironmentToLocations();
         _vegetationSystem.Tick(_saveData.gameTime, Environment.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
 
         _saveData.currentEEnv    = EmotionInertia.CurrentEEnv;
+        _saveData.currentImpulse = EmotionInertia.Impulse;
         _saveData.emotionHistory = EmotionInertia.History;
 
         // 动物状态系统：内部状态演化 → 行为输出（在文本层之前，让其读到最新行为）
@@ -285,14 +286,14 @@ public class WorldManager : MonoBehaviour
     {
         _saveData = newSave;
         EmotionInertia = new EmotionInertiaSystem();
-        EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory);
+        EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory, newSave.currentImpulse);
         Registry.Initialize(_saveData);
         NaturalRhythm.Tick(_saveData.gameTime);
         // 环境积分器随存档一起归零（Soil/Decay/Vegetation 等有状态字段），
         // 再只消费无状态信号刷新天气快照——重置不是一天，不走 UpdateFromEEnv 积分。
         Environment = new WorldEnvironmentSystem();
         Environment.ConsumeSignals(
-            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State));
+            Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse));
         _ruleEngine = new NarrativeRuleEngine(Registry, _saveData);
         _ruleEngine.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem = new EntityRelationSystem(Registry, _saveData);

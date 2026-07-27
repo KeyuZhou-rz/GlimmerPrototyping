@@ -23,7 +23,7 @@ namespace GlimmerDiary.Utils
 
             wm.InjectEmotion(new JournalEntry { emotion = currentVec});
             wm.Environment.ConsumeSignals(
-                wm.Translation.Translate(wm.EmotionInertia.CurrentEEnv, wm.GetRhythmState())
+                wm.Translation.Translate(wm.EmotionInertia.CurrentEEnv, wm.GetRhythmState(), wm.EmotionInertia.Impulse)
 
             );
 

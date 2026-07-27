@@ -703,6 +703,18 @@ namespace GlimmerDiary.Editor
             Debug.Log($"信号7 Firmament: T=1 → {sT1.Firmament:F3}   T=0 → {sT0.Firmament:F3}   大雨T=1 → {sRain.Firmament:F3}");
             Debug.Log($"[{(sT1.Firmament > sT0.Firmament + 1e-4f ? "PASS" : "FAIL")}] 信号7 T 敏感: T=1 ({sT1.Firmament:F3}) > T=0 ({sT0.Firmament:F3})");
             Debug.Log($"[{(sRain.Firmament < sT1.Firmament - 1e-4f ? "PASS" : "FAIL")}] 信号7 雨门控: 大雨 T=1 ({sRain.Firmament:F3}) < 无雨 ({sT1.Firmament:F3})");
+
+            // 情绪脉冲（2026-07-27 双时间尺度）：注入当日即可见应答；自主日快衰；E_env 慢积分不动
+            var inertia = new EmotionInertiaSystem();   // 初始 E_env = Neutral(V=0)
+            inertia.Update(Vec(-1f, 0.3f, 1f, 0.5f));   // 一篇最悲伤的日记
+            var sDay1 = tl.Translate(inertia.CurrentEEnv, nightRhythm, inertia.Impulse);
+            float eEnvAfter1 = inertia.CurrentEEnv.V;
+            inertia.Relax(); inertia.Relax();           // 两个自主日
+            var sDay3 = tl.Translate(inertia.CurrentEEnv, nightRhythm, inertia.Impulse);
+            Debug.Log($"脉冲: 当日 Wetness={sDay1.Wetness:F3} (E_env.V 仅 {eEnvAfter1:F2})   两自主日后 {sDay3.Wetness:F3}");
+            Debug.Log($"[{(sDay1.Wetness > 0.6f ? "PASS" : "FAIL")}] 脉冲当日即可见: Wetness={sDay1.Wetness:F3} > 0.6（E_env 只走 alpha=0.2）");
+            Debug.Log($"[{(sDay1.Wetness > sDay3.Wetness + 0.2f ? "PASS" : "FAIL")}] 脉冲快衰: 两日后 {sDay3.Wetness:F3} 明显回落");
+            Debug.Log($"[{(Mathf.Abs(eEnvAfter1 - (-0.2f)) < 1e-4f ? "PASS" : "FAIL")}] 慢通道不动: E_env.V={eEnvAfter1:F2}（alpha=0.2 惯性不变）");
         }
     }
 }

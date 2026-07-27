@@ -29,9 +29,9 @@ WorldSave.currentEEnv ─┘   Update: 读+算目标+平滑    LightManager（�
 
 | 视觉目标 | 世界状态源 | 映射 | 备注 |
 |---|---|---|---|
-| `rainIntensity` | `State.Rainfall` [0,1] | `1 − 2·Rainfall` | 目标字段语义 [-1雨, +1晴]，符号相反需翻转 |
+| `rainIntensity` | `State.Rainfall` [0,1] | `Lerp(0.5, −1, Rainfall)`（2026-07-27：原 `1 − 2·Rainfall` 要到 Rainfall>0.5 才落第一滴雨；现 ≈1/3 起有细雨） | 目标字段语义 [-1雨, +1晴]，符号相反需翻转 |
 | `windIntensity` | `State.WindSpeed` [0,1] | 直接映射 | 范围一致 |
-| `thunderIntensity` | `WindSpeed × Rainfall` | 双阈值门控（均 >0.6 才爬升） | 雷暴要稀有，不能常态化；阈值是审美判断的保守起点，Inspector 可调 |
+| `thunderIntensity` | `WindSpeed × Rainfall` | 双阈值门控（均 >0.45 才爬升，2026-07-27 自 0.6 下调） | 雷暴要稀有，不能常态化；阈值是审美判断的保守起点，Inspector 可调 |
 | `dimness`（新字段） | `State.FogDensity` | 直接映射 | 信号 3 晦明此前无消费者，本切片接上 |
 | `LightManager.SetTimePercent` | `rhythm.dayProgress` | 直接传入，不平滑 | dayProgress 本身连续微变；平滑会在午夜 1→0 回绕处出错 |
 | `EcosystemManager.SetEmotionState` | `eEnv.V`, `eEnv.A` | 平滑后传入 | 内部已级联 WindSystem/PlantController/GrassSystem，链路本就通 |
