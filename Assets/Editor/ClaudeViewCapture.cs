@@ -206,6 +206,38 @@ public static class ClaudeViewCapture
         if (ps != null) ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
+    // 批次4 调参探针：把 AO 强度推到 2.0 超档（验证采样通路是否活着——
+    // 若超档可见斑驳，通路正常、只是强度取舍；若无变化则采样断了）。play-safe：只写材质资产。
+    [MenuItem("Tools/Claude/AO Overdrive (play-safe)")]
+    public static void AOOverdrive()
+    {
+        SetAOStrength(2.0f, 2.0f);
+    }
+
+    // 恢复烘焙菜单写入的正式强度（地形 1.0 / 草 0.8）。
+    [MenuItem("Tools/Claude/AO Restore Baked Strength (play-safe)")]
+    public static void AORestore()
+    {
+        SetAOStrength(1.0f, 0.8f);
+    }
+
+    static void SetAOStrength(float terrain, float grass)
+    {
+        var tm = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Glimmer/Terrain_Glimmer.mat");
+        var gm = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Glimmer/Grass_Glimmer.mat");
+        if (tm != null)
+        {
+            var v = tm.GetVector("_TerrainAOBounds"); v.w = terrain;
+            tm.SetVector("_TerrainAOBounds", v); EditorUtility.SetDirty(tm);
+        }
+        if (gm != null)
+        {
+            var v = gm.GetVector("_TerrainAOBounds"); v.w = grass;
+            gm.SetVector("_TerrainAOBounds", v); EditorUtility.SetDirty(gm);
+        }
+        Debug.Log($"[ClaudeViewCapture] AO strength → terrain={terrain}, grass={grass}");
+    }
+
     // 清空手动情绪注入（play-safe）：MCP 在 play 下不能改组件字段，走菜单绕过。
     // 注入器回到平静值后，E_env 会按惯性慢慢回落——暴雨不是瞬间停的，和世界规则一致。
     [MenuItem("Tools/Claude/Clear Storm Injection (play-safe)")]

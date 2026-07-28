@@ -35,6 +35,11 @@ Shader "Glimmer/Terrain"
         _ShadowTint  ("Shadow Tint",      Color) = (0.20, 0.32, 0.40, 1)
         _RimStrength ("Rim Strength", Range(0,1)) = 0.08
         _RimPower    ("Rim Power",    Range(0.5,8)) = 3.5
+
+        [Header(Baked terrain AO. written by Bake Terrain AO menu)]
+        _TerrainAO       ("Terrain AO", 2D) = "white" {}
+        // x=worldMinX y=worldMinZ z=worldSize w=strength(0=off, 烘焙前保持 0)
+        _TerrainAOBounds ("AO Bounds (minX, minZ, size, strength)", Vector) = (0, 0, 100, 0)
     }
 
     SubShader
@@ -84,7 +89,11 @@ Shader "Glimmer/Terrain"
                 half  _ShadeBands, _Posterize, _AmbientBoost;
                 half4 _ShadowTint;
                 half  _RimStrength, _RimPower;
+                float4 _TerrainAOBounds;
             CBUFFER_END
+
+            TEXTURE2D(_TerrainAO);
+            SAMPLER(sampler_TerrainAO);
 
             float Hash2(float2 p)
             {
@@ -150,9 +159,15 @@ Shader "Glimmer/Terrain"
                 float jitter = (meadow * 0.6 + meadow2 * 0.4 - 0.5) * 2.0;
                 col *= 1.0 + jitter * _FacetVariation;
 
+                // 批次4：烘焙 AO——洼陷处环境光稀薄、脊线处略亮（tex 0.5=平地基准，×2 解码）。
+                // strength=0（未烘焙）时完全无效果。
+                float aoTex = SAMPLE_TEXTURE2D(_TerrainAO, sampler_TerrainAO,
+                                               (IN.positionWS.xz - _TerrainAOBounds.xy) / _TerrainAOBounds.z).r;
+                half ao = lerp(1.0h, (half)(aoTex * 2.0), (half)_TerrainAOBounds.w);
+
                 half3 lit = GlimmerToonLight(normalWS, IN.positionWS, col,
                                              _ShadeBands, _Posterize, _AmbientBoost,
-                                             _ShadowTint.rgb, _RimStrength, _RimPower);
+                                             _ShadowTint.rgb, _RimStrength, _RimPower, ao);
 
                 lit = MixFog(lit, IN.fogFactor);
                 return half4(lit, 1.0);

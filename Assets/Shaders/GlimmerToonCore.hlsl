@@ -7,7 +7,7 @@
 
 half3 GlimmerToonLight(float3 normalWS, float3 positionWS, half3 albedo,
                        half bands, half posterize, half ambientBoost,
-                       half3 shadowTint, half rimStrength, half rimPower)
+                       half3 shadowTint, half rimStrength, half rimPower, half ao = 1)
 {
     float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
     Light mainLight = GetMainLight(shadowCoord);
@@ -32,6 +32,9 @@ half3 GlimmerToonLight(float3 normalWS, float3 positionWS, half3 albedo,
     // 环境光完全淹没（草原黄昏失去长影）；保留 62% 底光避免死黑。
     half3 ambient   = SampleSH(normalWS) * ambientBoost;
     ambient *= lerp(0.62, 1.0, mainLight.shadowAttenuation);
+    // 批次4（07-28）：地形烘焙 AO 只压环境光——直射光不动，正午对比依然干净；
+    // 低洼处"天光天生稀薄"是环境光现象。ao=1（默认）时无效果，树木/道具调用方不变。
+    ambient *= ao;
     half3 shadowCol = lerp(shadowTint, half3(1, 1, 1), toon);
     half3 col = albedo * (ambient * lerp(shadowCol, half3(1,1,1), 0.5) + mainLight.color * toon * shadowCol);
 
