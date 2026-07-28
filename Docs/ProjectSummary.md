@@ -301,7 +301,7 @@ Assets/
   _UI/                      # 输入层，不直接写世界状态
 
 Docs/
-  InteractionWorksheet.md   # 机制交互设计工作台（设计者填写）
+  交互设计工作台_2026-07-21_矩阵补全.md   # 机制交互设计工作台（唯一工作台，设计者填写）
   TranslationLayer.md       # 翻译层 7 信号表 v1 FROZEN
   AmbientAtmosphereBinding.md  # L2→L3 大气绑定切片文档
   SkySanRockArt.md          # 天空桑人岩画定稿
@@ -322,4 +322,4 @@ Docs/
 
 ---
 
-*本文档基于 CLAUDE.md 宪法、InteractionWorksheet.md 事实盘点、以及历次开发迭代记录整理。机制交互设计决策权归设计者（InteractionWorksheet.md §5 空行勿代填）。*
+*本文档基于 CLAUDE.md 宪法、交互设计工作台事实盘点、以及历次开发迭代记录整理。机制交互设计决策权归设计者（交互设计工作台 §5 空行勿代填）。*

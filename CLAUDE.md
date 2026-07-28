@@ -26,7 +26,7 @@ three principles:
    only their traces; the trace IS the render.)
 
 Design authority: mechanism-interaction design decisions belong to the
-designer, made in Docs/InteractionWorksheet.md. Claude inventories facts
+designer, made in Docs/交互设计工作台_2026-07-21_矩阵补全.md. Claude inventories facts
 and implements; it does not invent cross-mechanism interactions unasked.
 
 
@@ -100,7 +100,7 @@ Assets/
   format — 为什么改 (player-facing), 改动清单 (file-by-file table),
   plus any ownership-table rows. Same day → append to the existing doc.
 - When a change lands, update the relevant plan/design docs in place
-  (e.g. InteractionWorksheet.md entries, 设计工作台 sections) so plans
+  (e.g. 交互设计工作台 matrix entries, 设计工作台 sections) so plans
   never drift from what was actually built.
 - After finishing each section/chunk of work: review the diff, then
   `git add` + `git commit` automatically — don't leave work uncommitted.
@@ -127,5 +127,5 @@ Ask before implementing any feature that:
 
 ## Current Priority
 - Developing sentiment-Engine (L1, decoupled — slice uses SubmitEmotion stubs).
-- Vertical slice: see Docs/InteractionWorksheet.md §6 for the build order;
+- Vertical slice: see Docs/交互设计工作台_2026-07-21_矩阵补全.md §6 for the build order;
   §5 design matrix is filled by the designer, not Claude.
