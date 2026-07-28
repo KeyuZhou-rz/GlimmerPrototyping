@@ -51,6 +51,115 @@ public static class ClaudeViewCapture
     }
 
 
+    // T7 诊断特写（仅调参用，非验收基准）：12m/26° 看压痕色片+trample 是否渲染正确。
+    // 验收永远是下面的 Stage Capture——特写只回答"东西在不在"，不回答"玩家看不看得见"。
+    [MenuItem("Tools/Claude/T7 Diagnostic Close (PNG)")]
+    public static void CaptureT7Close()
+    {
+        CaptureT7Internal("claude_t7_close.png", mode: 1);
+    }
+
+    // T7 舞台长焦（调参用）：机位不动、FOV 收窄对准压痕——
+    // 等价于"玩家眯眼盯住那个方向"，用来判断信号强度是否足够被找到。
+    [MenuItem("Tools/Claude/T7 Stage Telephoto (PNG)")]
+    public static void CaptureT7Telephoto()
+    {
+        CaptureT7Internal("claude_t7_tele.png", mode: 2);
+    }
+
+    [MenuItem("Tools/Claude/T7 Stage Capture (PNG)")]
+    public static void CaptureT7Stage()
+    {
+        CaptureT7Internal("claude_t7_stage.png", mode: 0);
+    }
+
+    private static void CaptureT7Internal(string fileName, int mode)
+    {
+        var cam = Camera.main;
+        if (cam == null) { Debug.LogWarning("[ClaudeViewCapture] No MainCamera in scene."); return; }
+        var zoneMap = Object.FindFirstObjectByType<ZoneMap>(FindObjectsInactive.Include);
+        if (zoneMap == null || !zoneMap.TryGetAnchorCenter("center", out Vector3 center, out _))
+        { Debug.LogWarning("[ClaudeViewCapture] T7: no ZoneMap center anchor."); return; }
+
+        Vector3 candidate = center + new Vector3(-8f, 0f, -5f);
+        if (!zoneMap.TryGroundAt(candidate.x, candidate.z, out Vector3 focus))
+        { Debug.LogWarning("[ClaudeViewCapture] T7: focus not on terrain."); return; }
+
+        Vector3 separation = cam.transform.right; separation.y = 0f;
+        separation = separation.sqrMagnitude > 1e-4f ? separation.normalized : Vector3.right;
+        Vector3 a = focus - separation * 1.25f, b = focus + separation * 1.25f;
+
+        float oldCount = Shader.GetGlobalFloat("_TrampleCount");
+        Vector4[] oldPoints = Shader.GetGlobalVectorArray("_TramplePoints");
+        var decals = new System.Collections.Generic.List<GameObject>();
+        var camGo = new GameObject("~ClaudeTempCam") { hideFlags = HideFlags.HideAndDontSave };
+        try
+        {
+            var pts = new Vector4[16];
+            pts[0] = new Vector4(a.x, a.z, 5.5f, 0.9f);   // 与运行时 SpawnRestPatch 同参数
+            pts[1] = new Vector4(b.x, b.z, 5.5f, 0.9f);
+            Shader.SetGlobalVectorArray("_TramplePoints", pts);
+            Shader.SetGlobalFloat("_TrampleCount", 2f);
+
+            Material mat = null;
+            var binder = Object.FindFirstObjectByType<WorldTraceBinder>(FindObjectsInactive.Include);
+            if (binder != null && binder.pressedMaterial != null) mat = binder.pressedMaterial;
+            if (mat == null)
+                foreach (var guid in AssetDatabase.FindAssets("Trace_Pressed_Glimmer t:Material"))
+                { mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guid)); if (mat != null) break; }
+
+            Vector3[] spots = { a, b };
+            float[] yaws = { 25f, 65f };
+            for (int i = 0; i < 2; i++)
+            {
+                Vector3 p = spots[i];
+                if (zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) p = g;
+                var dgo = new GameObject($"~ClaudeT7Decal{i}") { hideFlags = HideFlags.HideAndDontSave };
+                dgo.transform.SetPositionAndRotation(p + Vector3.up * 0.02f, Quaternion.Euler(0f, yaws[i], 0f));
+                dgo.transform.localScale = Vector3.one * 3.4f;
+                dgo.AddComponent<MeshFilter>().sharedMesh = TraceKit.PressedOval;
+                var mr = dgo.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = mat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                var mpb = new MaterialPropertyBlock();
+                mpb.SetColor("_BaseColor", new Color(0.55f, 0.48f, 0.33f));
+                mr.SetPropertyBlock(mpb);
+                decals.Add(dgo);
+            }
+
+            var tmp = camGo.AddComponent<Camera>();
+            tmp.CopyFrom(cam);
+            tmp.targetTexture = null;
+            if (mode == 1)
+            {
+                Vector3 back = focus - cam.transform.position; back.y = 0f;
+                back = back.sqrMagnitude > 1e-4f ? back.normalized : Vector3.forward;
+                Vector3 eye = focus - back * 12f + Vector3.up * 6f;
+                tmp.transform.SetPositionAndRotation(eye, Quaternion.LookRotation(focus - eye, Vector3.up));
+            }
+            else if (mode == 2)
+            {
+                tmp.transform.rotation = Quaternion.LookRotation(focus - cam.transform.position, Vector3.up);
+                tmp.fieldOfView = 18f;
+            }
+            Capture(tmp, Path.Combine(OutDir, fileName), 1280, 720);
+            // A/B 对照：同机位关压痕再拍一张，直接 diff 判断信号强度
+            Shader.SetGlobalFloat("_TrampleCount", 0f);
+            foreach (var d in decals) if (d != null) d.SetActive(false);
+            Capture(tmp, Path.Combine(OutDir, fileName.Replace(".png", "_off.png")), 1280, 720);
+            foreach (var d in decals) if (d != null) d.SetActive(true);
+            Debug.Log($"[ClaudeViewCapture] T7 stage capture done. focus={focus}, dist={Vector3.Distance(cam.transform.position, focus):F1}m");
+        }
+        finally
+        {
+            Object.DestroyImmediate(camGo);
+            foreach (var d in decals) if (d != null) Object.DestroyImmediate(d);
+            if (oldPoints != null && oldPoints.Length > 0) Shader.SetGlobalVectorArray("_TramplePoints", oldPoints);
+            Shader.SetGlobalFloat("_TrampleCount", oldCount);
+        }
+    }
+
+
     [MenuItem("Tools/Claude/Capture MainCamera")]
     public static void CaptureMainCamera()
     {
@@ -481,6 +590,7 @@ public static class ClaudeViewCapture
         private GlimmerDiary.Flora.GrassPreset _grassPreset;
         private Vector3 _t7Focus;
         private Vector4[] _t7Points;
+        private GameObject[] _t7Decals;
         private string _error;
         private bool _ready;
         private bool _renderRequested;
@@ -737,21 +847,8 @@ public static class ClaudeViewCapture
             _previewCamera.targetTexture = null;
             _previewCamera.transform.SetPositionAndRotation(_sourceCamera.transform.position, _sourceCamera.transform.rotation);
 
-            if (_mode == TestMode.T7Trample)
-            {
-                Vector3 horizontal = _sourceCamera.transform.position - _t7Focus;
-                horizontal.y = 0f;
-                if (horizontal.sqrMagnitude < 1e-4f)
-                {
-                    horizontal = -_sourceCamera.transform.forward;
-                    horizontal.y = 0f;
-                }
-                horizontal.Normalize();
-                Vector3 pushedPosition = _t7Focus + horizontal * 5.196f + Vector3.up * 3f;
-                _previewCamera.transform.SetPositionAndRotation(
-                    pushedPosition,
-                    Quaternion.LookRotation(_t7Focus - pushedPosition, Vector3.up));
-            }
+            // T7 不再推特写机位：压痕的调参基准必须是玩家舞台视角（60-113m 掠射平视），
+            // 6m/30° 特写验收曾导致"特写可见、玩家机位不可见"的尺度失配（07-28 返工）。
         }
 
         private bool PrepareT7()
@@ -775,12 +872,63 @@ public static class ClaudeViewCapture
             cameraRight.y = 0f;
             if (cameraRight.sqrMagnitude > 1e-4f) separation = cameraRight.normalized;
 
+            // 与运行时 SpawnRestPatch 同参数（07-28 返工：半径 5.5、间距 2.5m、强度 0.9）
             _t7Points = new Vector4[16];
-            Vector3 a = _t7Focus - separation * 0.8f;
-            Vector3 b = _t7Focus + separation * 0.8f;
-            _t7Points[0] = new Vector4(a.x, a.z, 1.1f, 0.9f);
-            _t7Points[1] = new Vector4(b.x, b.z, 1.1f, 0.9f);
+            Vector3 a = _t7Focus - separation * 1.25f;
+            Vector3 b = _t7Focus + separation * 1.25f;
+            _t7Points[0] = new Vector4(a.x, a.z, 5.5f, 0.9f);
+            _t7Points[1] = new Vector4(b.x, b.z, 5.5f, 0.9f);
+
+            // 主信号是贴地色片——预览也必须带上，否则验收的不是玩家会看到的东西
+            CreateT7Decals(zoneMap, a, b);
             return true;
+        }
+
+        private void CreateT7Decals(ZoneMap zoneMap, Vector3 a, Vector3 b)
+        {
+            DestroyT7Decals();
+            Material mat = FindTracePressedMaterial();
+            Color tint = new Color(0.55f, 0.48f, 0.33f);   // = WorldTraceBinder.pressedTint（新鲜态）
+            _t7Decals = new GameObject[2];
+            Vector3[] pts = { a, b };
+            float[] yaws = { 25f, 65f };
+            for (int i = 0; i < 2; i++)
+            {
+                Vector3 p = pts[i];
+                if (zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) p = g;
+                var go = new GameObject($"~Wave0T7Decal{i}") { hideFlags = HideFlags.HideAndDontSave };
+                go.transform.SetPositionAndRotation(p + Vector3.up * 0.02f, Quaternion.Euler(0f, yaws[i], 0f));
+                go.transform.localScale = Vector3.one * 3.4f;
+                go.AddComponent<MeshFilter>().sharedMesh = TraceKit.PressedOval;
+                var mr = go.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = mat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                var mpb = new MaterialPropertyBlock();
+                mpb.SetColor("_BaseColor", tint);
+                mr.SetPropertyBlock(mpb);
+                _t7Decals[i] = go;
+            }
+        }
+
+        private static Material FindTracePressedMaterial()
+        {
+            var binder = Object.FindFirstObjectByType<WorldTraceBinder>(FindObjectsInactive.Include);
+            if (binder != null && binder.pressedMaterial != null) return binder.pressedMaterial;
+            foreach (var guid in UnityEditor.AssetDatabase.FindAssets("Trace_Pressed_Glimmer t:Material"))
+            {
+                var m = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(
+                    UnityEditor.AssetDatabase.GUIDToAssetPath(guid));
+                if (m != null) return m;
+            }
+            return null;   // AddComponent 渲染时 fallback 由 URP 默认处理；Setup 烘焙后必然命中
+        }
+
+        private void DestroyT7Decals()
+        {
+            if (_t7Decals == null) return;
+            foreach (var go in _t7Decals)
+                if (go != null) Object.DestroyImmediate(go);
+            _t7Decals = null;
         }
 
         private bool CreateFluffClone()
@@ -1010,6 +1158,7 @@ public static class ClaudeViewCapture
         private void CleanupTemporaryObjects()
         {
             DestroyFluff();
+            DestroyT7Decals();
             DestroyPreviewCamera();
             DestroyPreviewTexture();
             _ready = false;

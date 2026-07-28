@@ -130,8 +130,8 @@ Shader "Glimmer/Grass"
                     if (fall > 0.0)
                     {
                         float2 dir = d > 1e-3 ? (pivotWS.xz - c) / d : float2(1, 0);
-                        OUT.positionWS.xz += dir * fall * 0.35 * w;
-                        OUT.positionWS.y  -= (OUT.positionWS.y - pivotWS.y) * fall * 0.6 * w;
+                        OUT.positionWS.xz += dir * fall * 0.6 * w;
+                        OUT.positionWS.y  -= (OUT.positionWS.y - pivotWS.y) * fall * 0.8 * w;
                     }
                 }
 
@@ -180,10 +180,11 @@ Shader "Glimmer/Grass"
                 albedo = lerp(albedo, lum.xxx, _GrassDecay * _GrassDecayDesat);
                 albedo *= 1.0 - _GrassDecay * _GrassDecayDarken;
 
-                // 压痕只发生在草叶本身：去饱和并压暗叶尖，不引入地表色片/decal。
-                half pressedLum = dot(albedo, half3(0.299, 0.587, 0.114));
-                albedo = lerp(albedo, pressedLum.xxx, IN.trample * 0.28);
-                albedo *= 1.0 - IN.trample * lerp(0.14, 0.24, saturate(IN.uv.y));
+                // 压痕：倒伏的草搅乱朝向、平均色沉向暗秸秆棕——金色草海上两片"暗下去的椭圆"
+                // 才是 60-113m 掠射机位可辨的信号（淡色 straw 与草尖同色，远距离洗成一片，07-28 实测）。
+                half3 pressedStraw = half3(0.48, 0.40, 0.24);
+                albedo = lerp(albedo, pressedStraw, IN.trample * 0.7);
+                albedo *= 1.0 - IN.trample * lerp(0.18, 0.30, saturate(IN.uv.y));
 
                 // 批次4（07-28）：草随地形 AO 同沉——洼里的草和洼里的地吃同一层稀薄天光，
                 // 消除地面/植被"两张皮"。strength=0（未烘焙）时无效果。

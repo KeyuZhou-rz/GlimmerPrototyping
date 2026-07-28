@@ -43,6 +43,8 @@ public class WorldTraceBinder : MonoBehaviour
 
     [Header("新鲜痕迹标记（切片 9：感叹号式占位——悬浮亮点，指向位置，永不暴露数值）")]
     public float freshAgeThreshold = 1.5f;   // 有效年龄 ≤ 此值视为"新鲜"，头顶出标记
+    [Tooltip("T7 歇息压痕的新鲜窗口单独放宽——压痕比脚印含蓄，标记是远机位唯一的视线引导")]
+    public float restFreshAgeThreshold = 3f;
     public float markerHeight = 1.6f;
     public float markerSize   = 0.35f;   // 最小世界尺寸
     [Tooltip("标记随距离放大系数：scale = max(markerSize, 距离×此值)。舞台机位 80m 时 ≈1.6m，保证余光可见")]
@@ -72,7 +74,7 @@ public class WorldTraceBinder : MonoBehaviour
     public Color printFaded  = new(0.55f, 0.50f, 0.40f);
     public Color featherTint = new(0.88f, 0.86f, 0.78f);
     public Color markFresh   = new(0.28f, 0.22f, 0.18f);
-    public Color pressedTint = new(0.70f, 0.66f, 0.45f);
+    public Color pressedTint = new(0.55f, 0.48f, 0.33f);   // 压伏草垫：比金色草海明显暗的秸秆棕（远机位可辨）
 
     // 与 GlimmerGrass.shader 的 _TramplePoints[16] 数组长度耦合——两侧同改
     private const int TRAMPLE_MAX = 16;
@@ -128,20 +130,50 @@ public class WorldTraceBinder : MonoBehaviour
     {
         // 每帧推压痕数组：强度 = 随龄衰减(派生时算好) × 展示层淡入（新痕迹 2 秒内爬升，
         // 读作"今天有什么走过"而不是瞬间跳变）
+        TraceInstance reservedRest = null;
+        float reservedRestStrength = 0f;
+        foreach (var t in _traces.Values)
+        {
+            if (t.type != TraceType.RestPatch || t.trampleContribs.Count < 2) continue;
+            float fadeIn = Mathf.Clamp01((Time.time - t.spawnRealTime) / 2f);
+            float pairStrength = Mathf.Min(t.trampleContribs[0].w, t.trampleContribs[1].w) * fadeIn;
+            if (pairStrength > reservedRestStrength)
+            {
+                reservedRest = t;
+                reservedRestStrength = pairStrength;
+            }
+        }
+
         _trampleGather.Clear();
         foreach (var t in _traces.Values)
         {
             if (t.trampleContribs.Count == 0) continue;
             float fadeIn = Mathf.Clamp01((Time.time - t.spawnRealTime) / 2f);
-            foreach (var c in t.trampleContribs)
+            for (int i = t == reservedRest ? 2 : 0; i < t.trampleContribs.Count; i++)
+            {
+                var c = t.trampleContribs[i];
                 _trampleGather.Add(new Vector4(c.x, c.y, c.z, c.w * fadeIn));
+            }
         }
-        // 超上限时保留强度最高的
-        if (_trampleGather.Count > TRAMPLE_MAX)
+
+        int reservedCount = reservedRest != null ? 2 : 0;
+        int remainingCount = TRAMPLE_MAX - reservedCount;
+        // T7 的一对有效歇息点先保留；剩余预算仍按原有强度规则竞争。
+        if (_trampleGather.Count > remainingCount)
             _trampleGather.Sort((a, b) => b.w.CompareTo(a.w));
 
-        int n = Mathf.Min(_trampleGather.Count, TRAMPLE_MAX);
-        for (int i = 0; i < n; i++) _trampleArray[i] = _trampleGather[i];
+        int n = 0;
+        if (reservedRest != null)
+        {
+            float fadeIn = Mathf.Clamp01((Time.time - reservedRest.spawnRealTime) / 2f);
+            for (int i = 0; i < reservedCount; i++)
+            {
+                var c = reservedRest.trampleContribs[i];
+                _trampleArray[n++] = new Vector4(c.x, c.y, c.z, c.w * fadeIn);
+            }
+        }
+        int otherCount = Mathf.Min(_trampleGather.Count, remainingCount);
+        for (int i = 0; i < otherCount; i++) _trampleArray[n++] = _trampleGather[i];
         Shader.SetGlobalFloat(TrampleCountId, n);
         Shader.SetGlobalVectorArray(TramplePointsId, _trampleArray);
 
@@ -332,13 +364,13 @@ public class WorldTraceBinder : MonoBehaviour
                 }
 
                 // T7 歇息压痕：涌现时刻（targetId=zone）——主表达是草被压弯
-                if (age <= restMaxAge && e.type == WorldEventType.QuietConvergence)
+                if (age < restMaxAge && e.type == WorldEventType.QuietConvergence)
                 {
                     string zone = e.targetId;
                     string rk = "rest|" + key;
                     birthDays[rk] = day;
                     desired[rk] = t => SpawnRestPatch(t, zone, age, seed);
-                    if (age <= freshAgeThreshold) fresh.Add(rk);
+                    if (age <= restFreshAgeThreshold) fresh.Add(rk);
                 }
 
                 // 新绒苗：蒲公英落种（§5.3，targetId=下风 zone）——落种 sproutDays 日后冒苗，
@@ -574,7 +606,9 @@ public class WorldTraceBinder : MonoBehaviour
         }
     }
 
-    /// <summary>T7 歇息压痕：两片相挨的压草椭圆（"两个影子挨得近了些"），主表达靠 trample。</summary>
+    /// <summary>T7 歇息压痕：两片相挨的压草椭圆（"两个影子挨得近了些"）。
+    /// 远机位（60-113m 掠射平视）下草形变本身不可读——主信号是贴地淡色椭圆片，
+    /// trample 形变/枯黄只做走近后的辅助层。</summary>
     private void SpawnRestPatch(TraceInstance t, string zone, float age, int seed)
     {
         t.type = TraceType.RestPatch; t.seed = seed;
@@ -582,17 +616,29 @@ public class WorldTraceBinder : MonoBehaviour
 
         var rng = new System.Random(seed);
         float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
-        var offset = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * 1.2f;
+        var offset = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * 2.5f;
         if (!zoneMap.TryGroundAt(p0.x + offset.x, p0.z + offset.z, out Vector3 p1))
             p1 = p0 + offset;
 
         float life = 1f - age / (float)restMaxAge;
         t.root = NewRoot($"Rest_{seed:X8}", p0);
 
-        // 不铺实体色片；沿用脚印的草形变尺度，让压痕看起来发生在草里而不是盖在草上。
-        float s = 0.9f * life;
-        t.trampleContribs.Add(new Vector4(p0.x, p0.z, 1.1f, s));
-        t.trampleContribs.Add(new Vector4(p1.x, p1.z, 1.1f, s));
+        // 贴地色片：PressedOval 网格（rx0.85/rz0.60）放大到 ~4.4m 宽——
+        // 舞台机位 93m 处约 50px，余光可辨"那里有一片不一样的颜色"。
+        // 新鲜时是压伏草的淡秸秆色，随龄沉回地表色（与 trample 强度同寿命）。
+        Color c = Color.Lerp(dirtSettled, pressedTint, Mathf.Clamp01(life));
+        float ovalScale = 3.4f;
+        float yaw0 = (float)rng.NextDouble() * 360f;
+        AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p0 + Vector3.up * 0.02f,
+                Quaternion.Euler(0f, yaw0, 0f), Vector3.one * ovalScale);
+        AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p1 + Vector3.up * 0.02f,
+                Quaternion.Euler(0f, yaw0 + 40f, 0f), Vector3.one * ovalScale);
+
+        // 草内辅助层：半径 5.5m——远机位实测 r=2.5 在 60-113m 完全不可读，
+        // r=8 又像空地；5.5 兼顾舞台存在感与近看尺度（07-28 舞台长焦标定）
+        float s = 0.9f * Mathf.Sqrt(Mathf.Clamp01(life));
+        t.trampleContribs.Add(new Vector4(p0.x, p0.z, 5.5f, s));
+        t.trampleContribs.Add(new Vector4(p1.x, p1.z, 5.5f, s));
     }
 
     /// <summary>T4 鹿鼠退守（实时态）：高地→石头区一小串脚印，在边缘停住。</summary>
@@ -667,6 +713,16 @@ public class WorldTraceBinder : MonoBehaviour
         // 命中体：包住全部子 prop 的盒（加高加一点，扁平脚印也好点）
         var b = new Bounds(t.root.transform.position, Vector3.one * 0.5f);
         foreach (var r in t.renderers) b.Encapsulate(r.bounds);
+        if (t.type == TraceType.RestPatch)
+        {
+            foreach (var c in t.trampleContribs)
+            {
+                var patchBounds = new Bounds(
+                    new Vector3(c.x, t.root.transform.position.y, c.y),
+                    new Vector3(c.z * 2f, 0.5f, c.z * 2f));
+                b.Encapsulate(patchBounds);
+            }
+        }
         var col = t.root.AddComponent<BoxCollider>();
         col.center = t.root.transform.InverseTransformPoint(b.center);
         col.size = Vector3.Max(b.size, new Vector3(1.2f, 0.8f, 1.2f));
