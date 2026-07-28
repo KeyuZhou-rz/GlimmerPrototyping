@@ -81,6 +81,11 @@ public class WorldManager : MonoBehaviour
         Translation    = new TranslationLayer();
 
         _saveData = SaveSystem.LoadWorldState() ?? WorldInitializer.CreateNewWorld();
+        // 旧档迁移：soilMoisturePeak 是 07-28 新增字段，旧档读出 0——
+        // 用当前湿度兜底（极值 ≥ 现值恒成立），之后由传播循环自然累积
+        if (_saveData.locations != null)
+            foreach (var loc in _saveData.locations)
+                if (loc.soilMoisturePeak < loc.soilMoisture) loc.soilMoisturePeak = loc.soilMoisture;
         EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory, _saveData.currentImpulse);
 
         Registry = new EntityRegistry();
@@ -376,6 +381,8 @@ public class WorldManager : MonoBehaviour
             };
             // 固定每日蒸发 0.02；植被提渗透（同 §5.5 第 3 行，与排水减缓同向）
             loc.soilMoisture = Mathf.Clamp01(loc.soilMoisture + rain * (soakRate + VegSoakBonus * loc.vegetationDensity) - 0.02f);
+            // 湿度极值只增不减（T1 水毁锁存的数据源，见 LocationEntity.soilMoisturePeak 注释）
+            if (loc.soilMoisture > loc.soilMoisturePeak) loc.soilMoisturePeak = loc.soilMoisture;
         }
     }
 

@@ -80,7 +80,11 @@ namespace GlimmerDiary.Utils
                 switch (field)
                 {
                     case "waterLevel":        entity.waterLevel        = UnityEngine.Mathf.Clamp01(fVal); break;
-                    case "soilMoisture":      entity.soilMoisture      = UnityEngine.Mathf.Clamp01(fVal); break;
+                    case "soilMoisture":
+                        entity.soilMoisture = UnityEngine.Mathf.Clamp01(fVal);
+                        // 极值同步（T1 水毁锁存）：规则路径抬湿度同样记入"曾经湿到过"
+                        if (entity.soilMoisture > entity.soilMoisturePeak) entity.soilMoisturePeak = entity.soilMoisture;
+                        break;
                     case "vegetationDensity": entity.vegetationDensity = UnityEngine.Mathf.Clamp01(fVal); break;
                 }
             }

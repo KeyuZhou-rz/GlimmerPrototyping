@@ -26,7 +26,8 @@ namespace GlimmerDiary.Utils
             LongChainForLetter,      // 30 天长链：断枝→离巢→退守→扩张→巡逻+候鸟+雨语料 → 攒一批世界志给"信"
             DroughtRecovery,         // 45 天无雨 → debt>0.6（地裂线）；再 18 天暴雨 → debt 回落线下
             DandelionDrift,          // 蒲公英：干风不落种（湿度门）→ 回湿+风峰 → 落种 lowland（冷却 ≤2 条）
-            WaterRetention           // 植被捂水：雨后低洼（veg 0.7）水退慢、石头区（veg 0.25）干透 + 捂水语料
+            WaterRetention,          // 植被捂水：雨后低洼（veg 0.7）水退慢、石头区（veg 0.25）干透 + 捂水语料
+            FloodLatchPeak           // T1 水毁锁存：湿度冲过 0.8 再回落 → 极值留证（曾经湿到过）
         }
 
         void Start()
@@ -49,6 +50,7 @@ namespace GlimmerDiary.Utils
                 case TestScenario.DroughtRecovery:        Test_DroughtRecovery();        break;
                 case TestScenario.DandelionDrift:         Test_DandelionDrift();         break;
                 case TestScenario.WaterRetention:         Test_WaterRetention();         break;
+                case TestScenario.FloodLatchPeak:         Test_FloodLatchPeak();         break;
             }
         }
 
@@ -406,6 +408,38 @@ namespace GlimmerDiary.Utils
             AssertTrue($"低洼（veg 0.7）水退慢：停雨 10 天仍 >0.6（实际 {low:F2}）", low > 0.6f);
             AssertTrue($"石头区（veg 0.25）干透：<0.05（实际 {st:F2}）", st < 0.05f);
             AssertChronicleContains("env_water_retention");
+            LogWorldState();
+        }
+
+        // ─────────────────────────────────────────────
+        // 场景十一：T1 水毁锁存（C1，2026-07-28 拍板）
+        //
+        // 机制：soilMoisturePeak 只增不减——T1 水毁判"曾经湿到过"而非"现在还湿"，
+        //       否则湿度在两次游玩间隙回落，泡透的土堆会静默复原（违反不可逆③）。
+        // 阶段：12 天暴雨（低洼湿度冲过水毁线 0.8）→ 20 天晴天（湿度回落线下）。
+        // 预期：冲高后 peak ≥ 湿度且 > 0.8；回落后 湿度 < 0.8 而 peak 仍 > 0.8 ——
+        //       这组"现值回落、极值留证"正是跨 session 锁存的数据条件。
+        // ─────────────────────────────────────────────
+        void Test_FloodLatchPeak()
+        {
+            Log("=== 场景十一：水毁锁存·湿度极值 ===");
+            ResetWorld();
+
+            for (int i = 0; i < 12; i++) SubmitEmotion(V: -0.9f, A: 0.4f, C: 0.4f);
+            var low = GetLocation("lowland");
+            Log($"  暴雨后: moisture={low.soilMoisture:F2} peak={low.soilMoisturePeak:F2}");
+            AssertTrue($"湿度冲过水毁线 0.8（实际 {low.soilMoisture:F2}）", low.soilMoisture > 0.8f);
+            AssertTrue($"极值 ≥ 现值（peak={low.soilMoisturePeak:F2}）",
+                low.soilMoisturePeak >= low.soilMoisture);
+            float latched = low.soilMoisturePeak;
+
+            for (int i = 0; i < 20; i++) SubmitEmotion(V: 0.5f, A: 0.3f, C: 0.5f);
+            Log($"  晴 20 天后: moisture={low.soilMoisture:F2} peak={low.soilMoisturePeak:F2}");
+            AssertTrue($"湿度回落水毁线下（实际 {low.soilMoisture:F2}）", low.soilMoisture < 0.8f);
+            AssertTrue($"极值保持 >0.8（曾经湿到过，实际 {low.soilMoisturePeak:F2}）",
+                low.soilMoisturePeak > 0.8f);
+            AssertTrue($"极值只增不减（{latched:F2} → {low.soilMoisturePeak:F2}）",
+                low.soilMoisturePeak >= latched - 1e-4f);
             LogWorldState();
         }
 

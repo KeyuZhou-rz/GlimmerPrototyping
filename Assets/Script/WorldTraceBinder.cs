@@ -497,7 +497,10 @@ public class WorldTraceBinder : MonoBehaviour
 
         if (save.locations != null)
             foreach (var loc in save.locations)
-                if (loc.locationId == zone && loc.soilMoisture > floodDamageMoisture)
+                // 路径①：判"曾经湿到过"（极值）而非"现在还湿"——湿度在两次游玩间隙回落
+                // 不再让泡透的土堆复原（C1，07-28 拍板；极值由 Propagate/规则路径维护）
+                if (loc.locationId == zone
+                    && (loc.soilMoisture > floodDamageMoisture || loc.soilMoisturePeak > floodDamageMoisture))
                 {
                     _floodDamaged.Add(moundKey);
                     return true;

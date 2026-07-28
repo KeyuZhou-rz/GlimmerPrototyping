@@ -81,6 +81,10 @@ namespace GlimmerDiary.Data
         public string displayName;       // "低洼地" / "河岸" / "石头区"
         public float  waterLevel;        // 0.0 ~ 1.0
         public float  soilMoisture;
+        // 历史湿度极值（2026-07-28 C1 拍板）：T1 水毁锁存判"曾经湿到过"而非"现在还湿"——
+        // 否则湿度在两次游玩间隙回落，泡透塌掉的土堆会静默"复原"，违反不可逆原则③。
+        // 只增不减（水位回落也不降）；写者同 soilMoisture（Propagate/EntityStateHelper/初始化）。
+        public float  soilMoisturePeak;
         public float  vegetationDensity;
 
         // 永久地貌变化（石头裂开、旧洞口废弃等）

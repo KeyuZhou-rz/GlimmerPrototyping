@@ -141,7 +141,7 @@ namespace GlimmerDiary.Core
         //                           [石头区]
         private static List<LocationEntity> CreateLocations()
         {
-            return new List<LocationEntity>
+            var locations = new List<LocationEntity>
             {
                 new LocationEntity
                 {
@@ -194,6 +194,9 @@ namespace GlimmerDiary.Core
                     history           = new List<StateChangeRecord>()
                 }
             };
+            // 湿度极值锚定初始湿度（T1 水毁锁存："曾经湿到过"从世界出生当天记起）
+            foreach (var l in locations) l.soilMoisturePeak = l.soilMoisture;
+            return locations;
         }
     }
 }
