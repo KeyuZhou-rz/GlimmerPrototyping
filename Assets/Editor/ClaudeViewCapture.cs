@@ -315,6 +315,146 @@ public static class ClaudeViewCapture
         if (ps != null) ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
+    // ── Accept 验收组（07-28，play 中使用）────────────────────────────
+    // 把世界拧到"指定时刻+指定天气"拍验收照：黄金时刻拉长 / 白天雨雾 / 暴雨压光闪电。
+    // 与上面的 Noon/GoldenHour override 的本质区别：不手写色板——只调
+    // LightManager.SetTimePercent，天空/雾/ambient/weatherDim 由运行时管线
+    // （EmotionWeatherController 读太阳几何）自动产出，验收的就是玩家真实会看到的光。
+    // 机制：禁用 binder（停掉它对时间/天气的每帧回写）→ SetTimePercent →
+    // 设 wc 公开字段 → 反射收敛平滑场（失焦不等爬升）→ 截图。
+    // Accept Reset 重新启用 binder，下一帧一切回到世界实况，零资产污染。
+
+    static float _acceptThunderAt = -1f, _acceptCaptureAt = -1f;
+    static string _acceptCaptureName;
+    static float _acceptOrigTransitionSpeed = -1f;
+
+    [MenuItem("Tools/Claude/Accept Golden Hour (Sunrise)")]
+    public static void AcceptGoldenSunrise() => AcceptBegin("sunrise", 0.25f, storm: false);
+
+    [MenuItem("Tools/Claude/Accept Golden Hour (Sunset)")]
+    public static void AcceptGoldenSunset() => AcceptBegin("sunset", 0.74f, storm: false);
+
+    [MenuItem("Tools/Claude/Accept Noon Clear")]
+    public static void AcceptNoonClear() => AcceptBegin("noon", 0.5f, storm: false);
+
+    [MenuItem("Tools/Claude/Accept Storm")]
+    public static void AcceptStorm() => AcceptBegin("storm", 0.45f, storm: true);
+
+    [MenuItem("Tools/Claude/Accept Reset (回世界实况)")]
+    public static void AcceptReset()
+    {
+        var binder = Object.FindFirstObjectByType<WorldAtmosphereBinder>();
+        if (binder != null) binder.enabled = true;   // 下一帧抢回时间+天气，零残留
+        var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
+        if (wc != null && _acceptOrigTransitionSpeed > 0f)
+        {
+            wc.transitionSpeed = _acceptOrigTransitionSpeed;
+            _acceptOrigTransitionSpeed = -1f;
+        }
+        _acceptThunderAt = _acceptCaptureAt = -1f;
+        Debug.Log("[ClaudeViewCapture] Accept reset：binder 恢复驱动，世界回到实况。");
+    }
+
+    static void AcceptBegin(string name, float timePercent, bool storm)
+    {
+        if (!EditorApplication.isPlaying)
+        {
+            Debug.LogWarning("[ClaudeViewCapture] Accept 菜单需要在 play 中使用（验收的是运行时管线输出）。");
+            return;
+        }
+
+        // 停 binder 的每帧回写（时间+天气都归它写）；不动 dayProgress——那是墙钟单写者
+        var binder = Object.FindFirstObjectByType<WorldAtmosphereBinder>();
+        if (binder != null) binder.enabled = false;
+
+        var lm = Object.FindFirstObjectByType<LightManager>();
+        if (lm != null)
+        {
+            lm.driveExternally = true;
+            lm.SetTimePercent(timePercent);
+        }
+
+        var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
+        if (wc != null)
+        {
+            if (_acceptOrigTransitionSpeed < 0f) _acceptOrigTransitionSpeed = wc.transitionSpeed;
+            if (storm)
+            {
+                wc.rainIntensity = -1f;    // 暴雨
+                wc.windIntensity = 0.8f;
+                wc.thunderIntensity = 1f;
+                wc.dimness = 0.4f;
+            }
+            else
+            {
+                wc.rainIntensity = 0.8f;   // 晴
+                wc.windIntensity = 0.15f;
+                wc.thunderIntensity = 0f;
+                wc.dimness = 0f;
+            }
+            wc.transitionSpeed = 10f;
+
+            // 失焦不走帧：反射收敛平滑场 + 手动 Update，雾/weatherDim/粒子参数立即到位
+            var t = typeof(EmotionWeatherController);
+            const System.Reflection.BindingFlags F =
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            t.GetField("smoothedRainIntensity", F)?.SetValue(wc, Mathf.Clamp01(-wc.rainIntensity));
+            t.GetField("smoothedSunIntensity",  F)?.SetValue(wc, Mathf.Clamp01(wc.rainIntensity));
+            t.GetField("currentWind",           F)?.SetValue(wc, wc.windIntensity);
+            wc.SendMessage("Update");
+
+            var ps = wc.rainParticleSystem;
+            if (storm && ps != null)
+            {
+                if (!ps.isPlaying) ps.Play(true);
+                ps.Simulate(6f, true, true);   // 雨幕快进铺满
+                ps.Play(true);
+            }
+            else
+            {
+                ClearRainForShot();
+            }
+        }
+
+        // 截图时机：晴天 1 秒后（画面落定）；暴雨先等雨幕稳住，触发一道闪电后抢拍余晖
+        float now = (float)EditorApplication.timeSinceStartup;
+        _acceptThunderAt = storm ? now + 1.2f : -1f;
+        _acceptCaptureAt = storm ? now + 1.55f : now + 1.0f;
+        _acceptCaptureName = $"accept_{name}.png";
+        EditorApplication.update -= AcceptTick;
+        EditorApplication.update += AcceptTick;
+        Debug.Log($"[ClaudeViewCapture] Accept '{name}' 已设定（t={timePercent:F2}, storm={storm}），" +
+                  $"约 {(_acceptCaptureAt - now):F1} 秒后截图至 Assets/Screenshots/{_acceptCaptureName}。" +
+                  "验收完记得 Accept Reset。");
+    }
+
+    static void AcceptTick()
+    {
+        if (!EditorApplication.isPlaying)
+        {
+            EditorApplication.update -= AcceptTick;
+            _acceptThunderAt = _acceptCaptureAt = -1f;
+            return;
+        }
+        float now = (float)EditorApplication.timeSinceStartup;
+        if (_acceptThunderAt > 0f && now >= _acceptThunderAt)
+        {
+            _acceptThunderAt = -1f;
+            var wc = Object.FindFirstObjectByType<EmotionWeatherController>();
+            wc?.ManualTriggerThunder();
+        }
+        if (_acceptCaptureAt > 0f && now >= _acceptCaptureAt)
+        {
+            _acceptCaptureAt = -1f;
+            EditorApplication.update -= AcceptTick;
+            Directory.CreateDirectory(OutDir);
+            // 抓真实 Game 视图（含后处理）——cam.Render() 绕过后处理，不是玩家看到的画面
+            ScreenCapture.CaptureScreenshot(Path.Combine(OutDir, _acceptCaptureName));
+            Debug.Log($"[ClaudeViewCapture] Accept 截图 → Assets/Screenshots/{_acceptCaptureName}");
+        }
+    }
+
+
     // 批次4 调参探针：把 AO 强度推到 2.0 超档（验证采样通路是否活着——
     // 若超档可见斑驳，通路正常、只是强度取舍；若无变化则采样断了）。play-safe：只写材质资产。
     [MenuItem("Tools/Claude/AO Overdrive (play-safe)")]
