@@ -26,6 +26,23 @@ public class LightManager : MonoBehaviour
     [SerializeField, Range(0f, 1f), Tooltip("暴雨时环境光余量比例（0.45 → 余 55%）")]
     private float ambientDimScale = 0.45f;
 
+    [Header("Bounce Fill（反弹补光：太阳反方位的暖色无影平行光）")]
+    [SerializeField] private Light BounceLight = null;
+    [SerializeField, Range(0f, 1f), Tooltip("反弹强度基准（正午峰值）")]
+    private float bounceIntensity = 0.25f;
+    [SerializeField, Range(5f, 60f), Tooltip("反弹光仰角（贴地反弹感）")]
+    private float bounceElevation = 30f;
+    [SerializeField, Range(0f, 1f), Tooltip("暴雨时反弹光衰减比例")]
+    private float bounceDimScale = 0.5f;
+
+    [Header("Ambient Trilight（EmotionWeatherController 每帧喂入天空色板派生值）")]
+    [Tooltip("朝上表面的环境色（天顶系）。EWC 未接管时用此默认值")]
+    public Color ambientSky = new Color(0.55f, 0.62f, 0.72f);
+    [Tooltip("侧向表面的环境色（中天/地平线系）")]
+    public Color ambientEquator = new Color(0.52f, 0.48f, 0.40f);
+    [Tooltip("朝下表面的环境色（土壤反弹系）")]
+    public Color ambientGround = new Color(0.28f, 0.23f, 0.17f);
+
     private const float inverseDayLength = 1f / 1440f;
 
     /// <summary>
@@ -96,7 +113,14 @@ public class LightManager : MonoBehaviour
         // C 轮：坏天气压光（weatherDim 由 EmotionWeatherController 写入）——
         // 雨幕是发光的灰纱，若场景光照不衰减，远山会比雾亮、雾读作"铅灰墙"；
         // 环境光随坏天气下沉后，闪电的 +5 余晖也终于有对比度可言（雷光不可见的另一半解药）。
-        RenderSettings.ambientLight = DayNightPreset.AmbientColour.Evaluate(timePercent) * (1f - weatherDim * ambientDimScale);
+        // 3A：环境光改 Trilight 三色落地（EWC 喂入天空色板派生值）——旧写法 ambientLight
+        // 在 Trilight 模式下不生效（场景序列化即 Trilight），曾整条通路空转。
+        if (RenderSettings.ambientMode != UnityEngine.Rendering.AmbientMode.Trilight)
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        float ambDim = 1f - weatherDim * ambientDimScale;
+        RenderSettings.ambientSkyColor     = ambientSky * ambDim;
+        RenderSettings.ambientEquatorColor = ambientEquator * ambDim;
+        RenderSettings.ambientGroundColor  = ambientGround * ambDim;
         // 雾由 EmotionWeatherController 统一管理（按职责拆分），此处不再写 fogColor，避免互相覆盖。
 
         //Set the directional light (the sun) according to the time percent
@@ -108,6 +132,18 @@ public class LightManager : MonoBehaviour
                 DirectionalLight.color = DayNightPreset.DirectionalColour.Evaluate(timePercent);
                 DirectionalLight.transform.localRotation = Quaternion.Euler(new Vector3((timePercent * 360f) - 90f, SunDirection, 0));
             }
+        }
+
+        // 3B：反弹补光——太阳反方位、贴地仰角的暖色无影平行光，托住树/石的阴影侧
+        // （基准图的"墙面反弹"层）。颜色取环境光 equator/ground 混合，随天气昼夜自变；
+        // 夜里随太阳落山熄灭，暴雨随 weatherDim 同沉。
+        if (BounceLight != null)
+        {
+            float sunElevRad = ((timePercent * 360f) - 90f) * Mathf.Deg2Rad;
+            float dayFac = Mathf.Clamp01(Mathf.Sin(sunElevRad) * 2.5f);
+            BounceLight.transform.localRotation = Quaternion.Euler(bounceElevation, SunDirection + 180f, 0f);
+            BounceLight.color = Color.Lerp(ambientGround, ambientEquator, 0.6f);
+            BounceLight.intensity = bounceIntensity * dayFac * (1f - weatherDim * bounceDimScale);
         }
 
         //Go through each spot light, ensure it is active, and set it's color accordingly

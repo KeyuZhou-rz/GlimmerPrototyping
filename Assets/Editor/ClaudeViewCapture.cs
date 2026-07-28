@@ -105,6 +105,20 @@ public static class ClaudeViewCapture
         RenderSettings.fogStartDistance = 60f;
         RenderSettings.fogEndDistance = 300f;
 
+        // 批次3B：override 期间 LightManager 停摆，反弹光也要手工摆（正午：反方位全强度）
+        var bounceNoon = GameObject.Find("Bounce Light");
+        if (bounceNoon != null)
+        {
+            var bl = bounceNoon.GetComponent<Light>();
+            if (bl != null)
+            {
+                bl.transform.rotation = Quaternion.Euler(30f, 35f, 0f);   // 215+180
+                bl.color = new Color(0.50f, 0.45f, 0.36f);
+                bl.intensity = 0.25f;
+            }
+        }
+        ClearRainForShot();
+
         var mat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Glimmer/SkyGradient.mat");
         if (mat != null)
         {
@@ -119,6 +133,7 @@ public static class ClaudeViewCapture
             mat.SetFloat("_AntiGlowAmt", 0f);
             mat.SetFloat("_StarBlend", 0f);
             mat.SetFloat("_MoonGlow", 0f);
+            if (sun != null) mat.SetVector("_SunDir", -sun.transform.forward);   // 暂停时 EWC 不写，日轮方位须手工同步
         }
         Debug.Log("[ClaudeViewCapture] Noon light override applied (play-safe)");
     }
@@ -152,6 +167,20 @@ public static class ClaudeViewCapture
         RenderSettings.fogStartDistance = 18f;    // 保持修复后的雾公式（Linear 18/130）
         RenderSettings.fogEndDistance = 130f;
 
+        // 批次3B：override 期间 LightManager 停摆，反弹光也要手工摆（黄昏：反方位半强度暖赭）
+        var bounceGold = GameObject.Find("Bounce Light");
+        if (bounceGold != null)
+        {
+            var bl = bounceGold.GetComponent<Light>();
+            if (bl != null)
+            {
+                bl.transform.rotation = Quaternion.Euler(30f, 350f, 0f);  // 170+180
+                bl.color = new Color(0.55f, 0.38f, 0.26f);
+                bl.intensity = 0.13f;
+            }
+        }
+        ClearRainForShot();
+
         var mat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Glimmer/SkyGradient.mat");
         if (mat != null)
         {
@@ -163,8 +192,34 @@ public static class ClaudeViewCapture
             mat.SetColor("_SunWashCol", new Color(0.98f, 0.60f, 0.32f));
             mat.SetFloat("_SunWashAmt", 0.35f);
             // _HaloAmt/_AntiGlowAmt/_StarBlend/_MoonGlow 不动，保留图腾层现状
+            if (sun != null) mat.SetVector("_SunDir", -sun.transform.forward);   // 暂停时 EWC 不写，日轮方位须手工同步
         }
         Debug.Log("[ClaudeViewCapture] GoldenHour light override applied (play-safe)");
+    }
+
+    // override 拍摄前清掉冻结的雨痕（暂停时粒子不更新，上一时刻的雨会残留在画面里）。
+    // play-safe：只动运行时粒子状态，unpause 后由天气系统按实况重新发射。
+    static void ClearRainForShot()
+    {
+        var rain = GameObject.Find("Rainsystem");
+        var ps = rain != null ? rain.GetComponent<ParticleSystem>() : null;
+        if (ps != null) ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+    }
+
+    // 清空手动情绪注入（play-safe）：MCP 在 play 下不能改组件字段，走菜单绕过。
+    // 注入器回到平静值后，E_env 会按惯性慢慢回落——暴雨不是瞬间停的，和世界规则一致。
+    [MenuItem("Tools/Claude/Clear Storm Injection (play-safe)")]
+    public static void ClearStormInjection()
+    {
+        var injector = Object.FindFirstObjectByType<GlimmerDiary.Utils.ManualEmotionInjector>();
+        if (injector == null)
+        {
+            Debug.LogWarning("[ClaudeViewCapture] 场景里没找到 ManualEmotionInjector。");
+            return;
+        }
+        injector.valence = 0f;
+        injector.arousal = 0.2f;
+        Debug.Log("[ClaudeViewCapture] Storm injection cleared (valence=0, arousal=0.2)");
     }
 
     // 失焦不走帧环境的通用步进截图：EditorApplication.Step() 手动推进 N 帧

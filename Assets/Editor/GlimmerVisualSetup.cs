@@ -47,6 +47,7 @@ public static class GlimmerVisualSetup
         SetupSky();
         SetupPostFX();
         SetupWeatherDefaults();
+        SetupBounceLight();
         DisableLSystemVegetation();
         GlimmerBinderSetup.Setup();   // 6. 大气绑定器防丢（幂等：有则补空引用，无则创建）
 
@@ -568,9 +569,21 @@ public static class GlimmerVisualSetup
 
         var bloom = GetOrAdd<Bloom>();
         bloom.active = true;
-        bloom.intensity.Override(0.22f);
-        bloom.threshold.Override(1.6f);   // 只让星光/闪电泛光，地形高光不参与
+        bloom.intensity.Override(0.3f);
+        bloom.threshold.Override(1.0f);   // 批次3D 微泛光：太阳盘/月亮/闪电刚好吃到柔边（岩山色带语言不破）
         bloom.scatter.Override(0.5f);
+        bloom.highQualityFiltering.Override(true);
+
+        var split = GetOrAdd<SplitToning>();
+        split.active = true;
+        split.shadows.Override(new Color(0.44f, 0.40f, 0.62f));    // 影→紫罗兰（对齐 _ShadowTint 族）
+        split.highlights.Override(new Color(0.62f, 0.55f, 0.44f)); // 光→暖（印象派冷暖对位）
+        split.balance.Override(0f);
+
+        var grain = GetOrAdd<FilmGrain>();
+        grain.active = true;
+        grain.intensity.Override(0.1f);   // 柔化天空/雾大平色的数字感
+        grain.response.Override(0.8f);
 
         var vig = GetOrAdd<Vignette>();
         vig.active = true;
@@ -657,6 +670,39 @@ public static class GlimmerVisualSetup
         {
             baobab.SetActive(false);
             EditorUtility.SetDirty(baobab);
+        }
+    }
+
+    // ---- 5c. 反弹补光（批次3B：太阳反方位的暖色无影平行光） ------------------
+    // 角度/颜色/强度由 LightManager 每帧驱动，此处只保证物体存在+接线+不投影。
+    static void SetupBounceLight()
+    {
+        var lm = Object.FindFirstObjectByType<LightManager>();
+        if (lm == null) { Debug.LogWarning("[GlimmerVisualSetup] no LightManager — bounce light skipped"); return; }
+
+        var go = GameObject.Find("Bounce Light");
+        if (go == null)
+        {
+            go = new GameObject("Bounce Light");
+            var l = go.AddComponent<Light>();
+            l.type = LightType.Directional;
+            l.shadows = LightShadows.None;            // 反弹光绝不投影（否则出现第二影子）
+            l.intensity = 0.25f;
+            l.color = new Color(0.50f, 0.44f, 0.34f);
+            go.transform.rotation = Quaternion.Euler(30f, 190f, 0f);
+            EditorUtility.SetDirty(go);
+            Debug.Log("[GlimmerVisualSetup] Bounce Light created");
+        }
+
+        // 接线（BounceLight 是 [SerializeField] private，经 SerializedObject 写）
+        var so = new SerializedObject(lm);
+        var prop = so.FindProperty("BounceLight");
+        if (prop != null && prop.objectReferenceValue == null)
+        {
+            prop.objectReferenceValue = go.GetComponent<Light>();
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(lm);
+            Debug.Log("[GlimmerVisualSetup] Bounce Light wired to LightManager");
         }
     }
 

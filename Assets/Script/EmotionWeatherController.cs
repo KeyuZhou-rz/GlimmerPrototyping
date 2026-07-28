@@ -154,6 +154,13 @@ public class EmotionWeatherController : MonoBehaviour
     [Tooltip("坏天气把星空遮掉的比例：暴雨云层下不该满天星")]
     [Range(0f, 1f)] public float stormStarHide = 0.85f;
 
+    [Header("环境光 · 三色派生（经 LightManager 落地 Trilight）")]
+    [Tooltip("朝下表面的土壤反弹色（黄昏/夜晚自动随天色板变暗）")]
+    public Color ambientGroundTint = new Color(0.35f, 0.27f, 0.18f);
+    [Range(0f, 2f)] public float ambientSkyBoost = 1.20f;     // 天顶色抬亮：朝上表面吃天色
+    [Range(0f, 2f)] public float ambientEquatorBoost = 1.10f; // 中天/地平线混合：侧向表面
+    [Range(0f, 2f)] public float ambientGroundBoost = 0.70f;  // 地面反弹压暗：朝下表面
+
     // UpdateRain 每帧算好的雾色/昼夜因子，UpdateSkybox 复用（同一帧内先 Rain 后 Skybox）
     private Color _fogColThisFrame;
     private float _dayLightThisFrame = 1f;
@@ -187,7 +194,16 @@ public class EmotionWeatherController : MonoBehaviour
 
         // C 轮：坏天气压光因子交给 LightManager 落地（ambient/光强的写入仍只经 LightManager——单写者纪律）
         if (lightManager == null) lightManager = FindFirstObjectByType<LightManager>();
-        if (lightManager != null) lightManager.weatherDim = _badTThisFrame;
+        if (lightManager != null)
+        {
+            lightManager.weatherDim = _badTThisFrame;
+
+            // 3A：三色环境光派生——与天空/雾同一色板来源，天-雾-环境光三色一体。
+            // sky=天顶色（朝上表面吃天色），equator=中天偏地平线（侧向），ground=土壤反弹（朝下）
+            lightManager.ambientSky     = _zenithThisFrame * ambientSkyBoost;
+            lightManager.ambientEquator = Color.Lerp(_midThisFrame, _glowThisFrame, 0.45f) * ambientEquatorBoost;
+            lightManager.ambientGround  = Color.Lerp(_fogColThisFrame, ambientGroundTint, 0.55f) * ambientGroundBoost;
+        }
     }
 
 
