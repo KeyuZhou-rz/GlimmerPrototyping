@@ -87,6 +87,7 @@ public class WorldTraceBinder : MonoBehaviour
     private class TraceInstance
     {
         public TraceType type;
+        public string key;            // 痕迹完整键（desired 字典键=源记录哈希），点击语料用
         public int seed;
         public int birthDay;          // ToDays(记录日期)；RangeHalt 用 -1（实时态）
         public GameObject root;
@@ -434,14 +435,14 @@ public class WorldTraceBinder : MonoBehaviour
                 var old = _traces[kv.Key];
                 float keepSpawnTime = old.spawnRealTime;
                 if (old.root != null) Destroy(old.root);
-                var again = new TraceInstance { spawnRealTime = keepSpawnTime };
+                var again = new TraceInstance { spawnRealTime = keepSpawnTime, key = kv.Key };
                 kv.Value(again);
                 _traces[kv.Key] = again;
                 FinishTrace(again, fresh.Contains(kv.Key));
             }
             else
             {
-                var t = new TraceInstance { spawnRealTime = Time.time };
+                var t = new TraceInstance { spawnRealTime = Time.time, key = kv.Key };
                 kv.Value(t);
                 _traces[kv.Key] = t;
                 FinishTrace(t, fresh.Contains(kv.Key));
@@ -728,9 +729,26 @@ public class WorldTraceBinder : MonoBehaviour
         col.size = Vector3.Max(b.size, new Vector3(1.2f, 0.8f, 1.2f));
         var click = t.root.AddComponent<TraceClickable>();
         click.focusPoint = b.center;
+        click.traceType = TypeKey(t.type);
+        click.traceKey = t.key;
 
         if (isFresh) SpawnFreshMarker(t, b.center);
     }
+
+    // TraceType → 语料类型串（与 key 前缀同名，TraceCaptionBank 按它选模板）
+    private static string TypeKey(TraceType type) => type switch
+    {
+        TraceType.Mound          => "mound",
+        TraceType.CollapsedBurrow=> "collapse",
+        TraceType.Trail          => "trail",
+        TraceType.Feathers       => "feathers",
+        TraceType.ScentMarks     => "marks",
+        TraceType.RestPatch      => "rest",
+        TraceType.RangeHalt      => "rangehalt",
+        TraceType.EarthCrack     => "cracks",
+        TraceType.Sprout         => "sprout",
+        _                        => "trace",
+    };
 
     // 占位感叹号：痕迹上方一个悬浮亮点（markerPrefab 待设计稿；点 marker 等于点痕迹）
     private void SpawnFreshMarker(TraceInstance t, Vector3 at)
@@ -752,6 +770,8 @@ public class WorldTraceBinder : MonoBehaviour
         click.radius = 1.2f;   // 命中半径（标记随距离放大，实际覆盖 ~1-2m，好点击）
         var tc = go.AddComponent<TraceClickable>();
         tc.focusPoint = at;
+        tc.traceType = TypeKey(t.type);
+        tc.traceKey = t.key;
         _markers.Add(go.transform);   // LateUpdate 呼吸动画
     }
 

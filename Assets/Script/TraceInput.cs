@@ -36,7 +36,11 @@ public class TraceInput : MonoBehaviour
         if (Physics.Raycast(ray, out var hit, maxRayDistance, traceMask))
         {
             var tc = hit.collider.GetComponentInParent<TraceClickable>();
-            if (tc != null) pusher.PushTo(tc.focusPoint);
+            if (tc != null)
+            {
+                pusher.PushTo(tc.focusPoint);
+                TraceCaptionUI.Show(tc.traceType, tc.traceKey);   // 推近同时给一句观察（展示层，不进世界志）
+            }
         }
     }
 }

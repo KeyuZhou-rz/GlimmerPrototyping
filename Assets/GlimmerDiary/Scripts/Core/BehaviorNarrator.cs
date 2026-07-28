@@ -48,6 +48,8 @@ namespace GlimmerDiary.Core
             // 天气成因（§5.1：雨/雾压低活动——语料提醒，仅在真实下雨/起雾时由驱动层认领）
             NarrateBehavior("fox",            "Rest",        CauseFactor.WeatherHarsh,      FoxRestHarsh,        time);
             NarrateBehavior("migratory_bird", "Settle",      CauseFactor.WeatherHarsh,      BirdSettleHarsh,     time);
+            // 狐狸饥饿巡猎（AnimalStateSystem.md P4 欠账：fox(Hunger) 次要文案）
+            NarrateBehavior("fox",            "Foraging",    CauseFactor.Hunger,            FoxForageHunger,     time);
 
             // 2. 离散世界事件（迁移自 Relation_WeaverHabitatLost + 新增）
             int count = _save.worldEvents?.Count ?? 0;
@@ -57,6 +59,21 @@ namespace GlimmerDiary.Core
 
             // 3. 环境状态解释（§5.5 第 3 行：植被捂水的可读出口——暗示而不直说）
             NarrateWaterRetention(time);
+            // 4. 旱灾语料（07-28 补：旱全链此前零语料——河岸脚印密度本身就是信号，给它一句话）
+            NarrateDrought(time);
+        }
+
+        // 旱环境语料：DroughtDebt 过线期间，"动物往水边收"用世界志点一句。
+        // 状态+冷却制（同捂水）：持续干旱每 20 天最多一条，不刷屏。
+        private void NarrateDrought(GameDateTime time)
+        {
+            if (_env == null || _env.DroughtDebt < 0.6f) return;
+
+            const string key = "env:drought_riverbank";
+            if (!CooldownPassed(key, time, BEHAVIOR_COOLDOWN_DAYS)) return;
+
+            Emit("env_drought_riverbank", Pick(DroughtRiverbank), time);
+            _lastNarratedDay[key] = time.ToAbsoluteDays();
         }
 
         // 环境语料：雨后低洼水位仍高 ∧ 植被茂密 → "水退得慢，草把水喝住了"。
@@ -351,6 +368,22 @@ namespace GlimmerDiary.Core
     "{date} {sky} 石头边的地早就干透了，低洼的水却还在。草密的地方，水走得慢。",
 
     "{date} {sky} 低洼的水退得很慢。岸边的草把水喝住了，一寸一寸地喝。",
+};
+
+        // 环境 · 旱牵引（07-28）：写「脚印变密/动静变少」这件可见的事，不点破旱债数值
+        private static readonly string[] DroughtRiverbank =
+{
+    "{date} {sky} 河岸的脚印比前些日子密了些。动物们对此未作任何说明。",
+
+    "{date} {sky} 高地上的动静少了。去水边的那条路，走得熟了。",
+};
+
+        // 狐狸 · 饥饿巡猎（P4 欠账）：写「排得满」，不点破饥饿值
+        private static readonly string[] FoxForageHunger =
+{
+    "{date} {sky} 狐狸近来的捕猎排得比往常满。收货情况未公布。",
+
+    "{date} {sky} 狐狸加大了巡猎频次。猎物方面没有发表评论。",
 };
 
         // ── 工具 ───────────────────────────────────────────────────

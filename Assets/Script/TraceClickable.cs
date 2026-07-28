@@ -9,4 +9,10 @@ public class TraceClickable : MonoBehaviour
 {
     [Tooltip("点击推近的注视点（= 痕迹所在位置）")]
     public Vector3 focusPoint;
+
+    [Tooltip("痕迹类型（mound/trail/rest…，WorldTraceBinder 的 key 前缀），点击语料按它选模板")]
+    public string traceType;
+
+    [Tooltip("痕迹完整键（源记录哈希），语料按它稳定随机——同一条痕迹每次说同一段话")]
+    public string traceKey;
 }

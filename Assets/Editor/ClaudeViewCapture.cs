@@ -315,6 +315,32 @@ public static class ClaudeViewCapture
         if (ps != null) ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
+    // 字幕通路测试（play 中）：点痕迹语料的端到端验证——调 Show + 等淡入后截 Game 视图。
+    [MenuItem("Tools/Claude/Caption Test (play)")]
+    public static void CaptionTest()
+    {
+        if (!EditorApplication.isPlaying)
+        {
+            Debug.LogWarning("[ClaudeViewCapture] Caption Test 需要在 play 中使用。");
+            return;
+        }
+        TraceCaptionUI.Show("rest", "rest|demo");
+        _captionShotAt = (float)EditorApplication.timeSinceStartup + 0.9f;
+        EditorApplication.update -= CaptionShotTick;
+        EditorApplication.update += CaptionShotTick;
+    }
+
+    static float _captionShotAt = -1f;
+    static void CaptionShotTick()
+    {
+        if (EditorApplication.timeSinceStartup < _captionShotAt) return;
+        _captionShotAt = -1f;
+        EditorApplication.update -= CaptionShotTick;
+        Directory.CreateDirectory(OutDir);
+        ScreenCapture.CaptureScreenshot(Path.Combine(OutDir, "claude_caption.png"));
+        Debug.Log("[ClaudeViewCapture] Caption 截图 → Assets/Screenshots/claude_caption.png");
+    }
+
     // ── Accept 验收组（07-28，play 中使用）────────────────────────────
     // 把世界拧到"指定时刻+指定天气"拍验收照：黄金时刻拉长 / 白天雨雾 / 暴雨压光闪电。
     // 与上面的 Noon/GoldenHour override 的本质区别：不手写色板——只调
