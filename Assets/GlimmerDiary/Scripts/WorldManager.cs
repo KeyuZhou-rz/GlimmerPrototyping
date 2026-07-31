@@ -240,7 +240,8 @@ public class WorldManager : MonoBehaviour
                     segment,
                     CountWindowEvents(startAbsDays, WorldEventType.TreeBranchBroke),
                     CollectWindowCollapses(startAbsDays),
-                    _saveData.gameTime.ToDisplayString());
+                    _saveData.gameTime.ToDisplayString(),
+                    rhythm: NaturalRhythm.State);
             }
             if (extra > 0)
                 _saveData.pendingChronicles.RemoveRange(chronicleMark, extra);

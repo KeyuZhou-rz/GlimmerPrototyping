@@ -442,7 +442,7 @@ namespace GlimmerDiary.Core
         {
             return template
                 .Replace("{date}", time.ToDisplayString())
-                .Replace("{sky}",  SkyPhrase.Pick(time, _env));
+                .Replace("{sky}",  SkyPhrase.Pick(time, _env, _rhythm));
         }
 
         private static string Pick(params string[] options) =>

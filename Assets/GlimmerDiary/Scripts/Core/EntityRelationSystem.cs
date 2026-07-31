@@ -266,7 +266,7 @@ namespace GlimmerDiary.Core
             string result = template;
             result = result.Replace("{date}",   gameTime.ToDisplayString());
             result = result.Replace("{season}", _rhythm?.season.ToString() ?? "");
-            result = result.Replace("{sky}",    SkyPhrase.Pick(gameTime, _envState));
+            result = result.Replace("{sky}",    SkyPhrase.Pick(gameTime, _envState, _rhythm));
 
             if (variables != null)
             {

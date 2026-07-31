@@ -28,7 +28,8 @@ namespace GlimmerDiary.Core
             int branchBreaksInWindow,
             List<string> collapseLocationNames,
             string todayDisplay,
-            int maxEntries = 5)
+            int maxEntries = 5,
+            NaturalRhythmState rhythm = null)   // §5.5 优先级 6：季节尾注（秋/冬一句，春夏不写）
         {
             // ① salience 分级：级别降序，同级新→旧（segment 本身旧→新，index 降序即新→旧）
             var picked = new List<WorldChronicleEntry>();
@@ -61,6 +62,13 @@ namespace GlimmerDiary.Core
             if (collapseLocationNames != null)
                 foreach (var name in collapseLocationNames)
                     sb.AppendLine($"{name}多了一处塌洞，水退了也留在那里。");
+
+            // 季节尾注：信的落款带上季节的语气（秋起风、冬转静；春夏留白）
+            switch (rhythm?.season)
+            {
+                case Season.Autumn: sb.AppendLine("风开始多了。"); break;
+                case Season.Winter: sb.AppendLine("夜里安静得很。"); break;
+            }
 
             return new WorldChronicleEntry
             {
