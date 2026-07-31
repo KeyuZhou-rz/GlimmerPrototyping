@@ -1,6 +1,6 @@
 Shader "Glimmer/SeedFluff"
 {
-    // 种子絮专用：软边圆绒点，普通 alpha 混合（絮是浅色实物，不加色发光），
+    // 种子絮专用：稀疏纤维轮廓，普通 alpha 混合（絮是浅色实物，不加色发光），
     // 随场景光沉暗 + 雾衰减（夜里不发亮）。供 ParticleSystemRenderer(Billboard) 使用。
     // 工艺同 Glimmer/RainStreak：硬边几何语言，无摄影式光晕。
     Properties
@@ -69,9 +69,16 @@ Shader "Glimmer/SeedFluff"
 
             half4 frag(Varyings IN) : SV_Target
             {
-                // 软边圆盘：中心实、外圈渐隐（绒球的"一团"感，硬边由几何语言负责）
-                float d = length(IN.uv - 0.5) * 2.0;
-                float disc = 1.0 - smoothstep(1.0 - _EdgeSoft, 1.0, d);
+                // 七束纤维围绕小绒芯，打破实心圆盘的发光球观感。
+                float2 p = (IN.uv - 0.5) * 2.0;
+                float r = length(p);
+                float theta = atan2(p.y, p.x);
+                float feather = lerp(0.025, 0.09, _EdgeSoft);
+                float radial = (1.0 - smoothstep(0.78 - feather, 0.78 + feather, r))
+                             * smoothstep(0.08, 0.20, r);
+                float rays = pow(saturate(0.5 + 0.5 * cos(theta * 7.0)), 8.0);
+                float hub = 1.0 - smoothstep(0.08, 0.18, r);
+                float disc = saturate(max(radial * (0.18 + 0.82 * rays), hub * 0.55));
 
                 half a = disc * _FluffColor.a * IN.color.a;
                 half3 col = _FluffColor.rgb * IN.color.rgb;
@@ -81,7 +88,7 @@ Shader "Glimmer/SeedFluff"
                 half sceneLum = saturate(dot(mainLight.color, half3(0.3, 0.6, 0.1)) + 0.15);
                 col *= sceneLum;
 
-                col = MixFogColor(col, half3(0, 0, 0), IN.fogFactor);
+                col = MixFog(col, IN.fogFactor);
 
                 return half4(col, a);
             }
