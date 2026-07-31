@@ -117,3 +117,6 @@ InitTestScene*.unity*
 # ---------------------------------------------------------------------------
 /[Aa]ssets/PureNature/
 /[Aa]ssets/PureNature.meta
+
+# Local Codex CLI config (per-machine MCP endpoints)
+.codex/
