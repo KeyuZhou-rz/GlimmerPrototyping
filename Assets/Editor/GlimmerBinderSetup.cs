@@ -31,6 +31,10 @@ public static class GlimmerBinderSetup
             binder.treePlacement = Object.FindFirstObjectByType<EcosystemManager>(FindObjectsInactive.Include);
         if (binder.waterSurface == null)
             binder.waterSurface = Object.FindFirstObjectByType<WaterGenerator>(FindObjectsInactive.Include);
+        // Batch 4 草色通路：映射表资产（GlimmerVisualSetup.SetupGrassPreset 建/管）
+        if (binder.grassPreset == null)
+            binder.grassPreset = AssetDatabase.LoadAssetAtPath<GlimmerDiary.Flora.GrassPreset>(
+                GlimmerVisualSetup.GrassPresetPath);
 
         EditorUtility.SetDirty(binder);
         EditorSceneManager.MarkSceneDirty(binder.gameObject.scene);
@@ -40,7 +44,8 @@ public static class GlimmerBinderSetup
                   $"weather={(binder.weatherController != null ? "√" : "×")} " +
                   $"light={(binder.lightManager != null ? "√" : "×")} " +
                   $"eco={(binder.treePlacement != null ? "√" : "×")} " +
-                  $"water={(binder.waterSurface != null ? "√" : "×")}");
+                  $"water={(binder.waterSurface != null ? "√" : "×")} " +
+                  $"grass={(binder.grassPreset != null ? "√" : "×")}");
     }
 
     // —— 水位映射边界预览(编辑模式,只动 transform,不保存场景即不留痕)——

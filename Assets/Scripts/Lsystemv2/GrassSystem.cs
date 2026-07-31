@@ -303,32 +303,4 @@ namespace GlimmerDiary.Flora
         }
     }
 
-    /// <summary>
-    /// Preset for different grass types
-    /// </summary>
-    [CreateAssetMenu(fileName = "GrassPreset", menuName = "GlimmerDiary/Flora/Grass Preset")]
-    public class GrassPreset : ScriptableObject
-    {
-        public string grassName = "Savanna Grass";
-
-        [Header("Appearance")]
-        public Color baseColor = new Color(0.7f, 0.6f, 0.3f);
-        public Color tipColor = new Color(0.9f, 0.8f, 0.5f);
-        public Gradient seasonalColorGradient;
-
-        [Header("Shape")]
-        [Range(0.1f, 2f)] public float heightMin = 0.3f;
-        [Range(0.1f, 3f)] public float heightMax = 1.2f;
-        [Range(0.01f, 0.2f)] public float bladeWidth = 0.05f;
-        [Range(0f, 1f)] public float curvature = 0.3f;
-
-        [Header("Wind Response")]
-        [Range(0f, 1f)] public float windSensitivity = 0.7f;
-        [Range(0.1f, 5f)] public float swaySpeed = 1.5f;
-
-        [Header("Emotion Mapping")]
-        [Tooltip("How grass responds to positive/negative emotion")]
-        public AnimationCurve valenceToHealth;  // Maps valence to grass health (color, uprightness)
-        public AnimationCurve arousalToMotion;  // Maps arousal to wind response
-    }
 }
