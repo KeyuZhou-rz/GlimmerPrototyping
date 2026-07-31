@@ -209,9 +209,10 @@ riverbank ── lowland ── center ── highland_east
 
 | 工作项 | 状态 | 备注 |
 |---|---|---|
-| 切片 playtest 验证 | 待做 | 切片 1-9 代码全部落地（2026-07-20），需进 Play 逐条验收 + 场景存盘（binder 在场未存盘） |
-| DemoVisualAlignment 执行 | A 节已落地；B/C/D 节待执行 | 下一轮：草原化重译/地形细节/水面 |
-| SentimentEngine (L1) | 开发中 | 垂直切片暂用 SubmitEmotion stub 填位 |
+| 切片 playtest 验证 | 待做 | 切片 1-9 代码全部落地（2026-07-20），需进 Play 逐条验收；场景存盘已闭合（2026-07-31 核实 HEAD 场景含 binder/ManualTicking/CameraPusher）；切片 9 正式机位待编辑器内取景保存 |
+| DemoVisualAlignment 执行 | A 节已落地；B1 已落地（demo2 轮）；B2/B3 被"TerrainGenerator 禁改"取代、D 节随 07-28 C5 挂起（2026-07-31 销案批注） | 仅余 B4 高度带脱钩修复（隐患级） |
+| SentimentEngine (L1) | 开发中 | 垂直切片暂用 SubmitEmotion stub 填位；清账日（2026-07-31）后排期为下一大块 |
+| 清账日（2026-07-31） | 已落地 | wave0 批提交（含修复 HEAD 编译断裂）/月相恢复/C3 销案/断枝·占区文案/季节语气偏置；详见 更改_2026-07-31.md |
 
 ### 切片工程清单（2026-07-14 定稿；2026-07-20 全部代码落地）
 

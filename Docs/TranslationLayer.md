@@ -15,9 +15,9 @@
 | 1 | 降水 | `Wetness` | V | 无状态 | 曲线 V→[0,1]（-1=大雨, 0/1=无雨） | `State.Rainfall`（→ PropagateEnvironment 水/湿） | ✅ Step 2 |
 | 2 | 躁动 | `Agitation` | A | 无状态 | 曲线 A→[0,1]（0=无风, 1=强风） | `State.WindSpeed` | ✅ Step 2 |
 | 3 | 晦明 | `Dimness` | C | 无状态 | 曲线 C→[0,1]（0=浓雾, 1=无雾） | `State.FogDensity` | ✅ Step 2 |
-| 4 | 繁盛 | `Flourishing` | V | 有状态 | V-integral `f += α·((V+1)/2 − f)`（同 baobab vitality） | `loc.vegetationDensity` 气候基线 / `tree.vitality` | ⬜ SEAM（待 tree 格） |
-| 5 | 衰败 | `Decay` | V | 有状态 | `V<-0.3 → +0.01 else -0.005`（可回 0，无棘轮底） | `State.DecayLevel` / `loc.vegetationDensity` | ⬜ SEAM（待 tree 格；现留 UpdateFromEEnv） |
-| 6 | 聚拢 | `Convergence` | S | 有状态 | `S·0.5+0.3`，α=0.1 | `State.CreatureAbundance` / 动物 abundance | ⬜ SEAM（待 animal 格；现留 UpdateFromEEnv） |
+| 4 | 繁盛 | `Flourishing` | V | 有状态 | V-integral `f += α·((V+1)/2 − f)`（同 baobab vitality） | `loc.vegetationDensity` 气候基线 / `tree.vitality` | ⛔ 不迁（2026-07-28 拍板 D1，轨道关闭） |
+| 5 | 衰败 | `Decay` | V | 有状态 | `V<-0.3 → +0.01 else -0.005`（可回 0，无棘轮底） | `State.DecayLevel` / `loc.vegetationDensity` | ⛔ 不迁（同上；留 UpdateFromEEnv） |
+| 6 | 聚拢 | `Convergence` | S | 有状态 | `S·0.5+0.3`，α=0.1 | `State.CreatureAbundance` / 动物 abundance | ⛔ 不迁（同上；留 UpdateFromEEnv） |
 | 7 | 苍穹 | `Firmament` | T | 无状态 | 近直接 T-read `T·(1-Wetness)·(1-light)` | `State.StarVisibility` | ✅ Step 2 |
 
 ## 世界字段所有权表（Track A — 单写者确权）
@@ -46,7 +46,7 @@
 - **Step 2** (2026-07-01)：新建 `TranslationLayer`，落地无状态信号 1/2/3/7；`UpdateFromEEnv` 退化为消费者；苍穹由 V 驱动改 T-read。有状态 4/5/6 暂留原处。见记忆 `translation-step2-env-weather`。
 - **所有权表核实** (2026-07-02)：核实 cells 5/6 单写者不变式（见上表 ✅/⚠）。tree `vitality`/`floweringReadiness`（internalState，drive 独占）、`isFlowering`/`lastFlowerDate`（TickTree，grep 确认无活跃规则/关系资产写）均 ✅；animal `behavior`/`internalState`（drive 独占）、`QuietConvergence`（detector 独占）、`State.CreatureAbundance`（UpdateFromEEnv）均 ✅；`isPresent`/`location` 为设计多写者（drive 连续 + 规则/关系离散），已文档化。**Track A（所有权表）目标达成**：每个世界字段单写者或文档化的设计多写者。见记忆 `translation-ownership-table-track`。
 - **无状态/有状态入口拆分** (2026-07-15)：`WorldEnvironmentSystem` 拆出幂等零积分的 `ConsumeSignals`（信号 1/2/3/7 镜像）；`UpdateFromEEnv` 收窄为仅 SimulatePass 每 tick 一次（有状态 4/5/6 积分）。修三个病灶：星穹夜门冻结（心跳只刷 rhythm 不重译信号 7，lightIntensity 新值算完即弃）、启动/重置多积一步（Start/Reinit 走 UpdateFromEEnv 把 Soil/Decay 推一天份）、Reinit 不重置 Environment（跨场景脏积分）。
-- **待办（Track B，可选、更深轨道）**：信号 4/5/6 迁入 `TranslationLayer`（tree 格 → `tree.vitality` / `loc.vegetationDensity` 气候基线；animal 格 → `CreatureAbundance`）。不影响所有权表。
+- ~~**待办（Track B，可选、更深轨道）**：信号 4/5/6 迁入 `TranslationLayer`（tree 格 → `tree.vitality` / `loc.vegetationDensity` 气候基线；animal 格 → `CreatureAbundance`）。不影响所有权表。~~ **Track B 关闭（2026-07-28 拍板 D1）**：信号 4/5/6 不迁，留在现有写者处。本文档轨道至此全部收官。
 
 ## 关键不变式
 
