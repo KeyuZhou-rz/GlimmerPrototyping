@@ -77,10 +77,6 @@ public class EmotionWeatherController : MonoBehaviour
     public float fogLinearStormStart = 30f;
     public float fogLinearStormEnd = 140f;   // 风暴仍重,但中景可读
 
-    [Header("对外输出（植物生长）")]
-    [Range(0f, 1f)] public float currentWaterSaturation;
-    [Range(0f, 1f)] public float currentSunlightIntensity;
-
     [Header("过渡速度")]
     public float transitionSpeed = 2f;
 
@@ -446,9 +442,6 @@ public class EmotionWeatherController : MonoBehaviour
         // 供同帧 UpdateSkybox 复用：地平线色=雾色（远山溶解）、昼夜因子（星空/压暗）
         _fogColThisFrame = fogCol;
         _dayLightThisFrame = dayLight;
-
-        currentWaterSaturation = smoothedRainIntensity;
-        currentSunlightIntensity = smoothedSunIntensity;
     }
 
     // -----------------------------
@@ -595,12 +588,11 @@ public class EmotionWeatherController : MonoBehaviour
         if (wm != null)
         {
             var save = wm.WorldSave;
-            /*
             if (save != null && save.gameTime != null)
                 moonPhase = ((save.gameTime.ToAbsoluteDays() - 1) % 30) / 30f;
-                */
         }
-        // 该地有一处会影响月亮的出现与否 可能是skymaterial 先勿动
+        // 排查结论（07-31）：显隐由下方 _MoonGlow 控制，相位只改圆缺、不改位置，
+        // 与显隐无关——此前"先勿动"的注释段已恢复为正式实现。
         // 中心对称：_SunDir = -sun.forward → 月亮取 sun.forward，永远悬在太阳正对面
         Vector3 moonDir = (sun != null) ? sun.transform.forward : Vector3.down;
         skyboxMaterial.SetVector("_MoonDir", moonDir);
@@ -608,7 +600,6 @@ public class EmotionWeatherController : MonoBehaviour
         // 夜里满月亮度、黄昏残留一弯、暴雨云层遮蔽（与星穹同一遮蔽系数）
         skyboxMaterial.SetFloat("_MoonGlow", moonGlowStrength
             * Mathf.Clamp01(_wNightThisFrame * 1.25f) * (1f - badT * stormStarHide));
-        skyboxMaterial.SetFloat("_MoonGLow", 1f);
     }
     private void ThunderPlay()
     {
