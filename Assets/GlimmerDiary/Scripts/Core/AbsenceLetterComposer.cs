@@ -20,7 +20,7 @@ namespace GlimmerDiary.Core
         public const string LetterEventId = "absence_letter";
 
         // segment：catch-up 区间新产生的 chronicle 段（按时间先后）
-        // branchBreaksInWindow：同窗口 TreeBranchBroke 事件数（可能无对应 chronicle——死端事实）
+        // branchBreaksInWindow：同窗口 TreeBranchBroke 事件数（07-31 起有独立世界志文案）
         // collapseLocationNames：同窗口新增 burrow_collapse 的 location displayName 列表
         // 返回合成信条目；不值得写信时返回 null
         public static WorldChronicleEntry Compose(
@@ -84,7 +84,6 @@ namespace GlimmerDiary.Core
 
                 case "vole_relocate_flood":
                 case "migratory_bird_arrival":
-                case "event_AnimalArrived":
                 case "event_AnimalDeparted":
                 case "event_WeaverBirdDeparted":
                 case "event_WeaverBirdReturned":

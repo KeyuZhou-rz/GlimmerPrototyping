@@ -231,8 +231,8 @@ public class WorldManager : MonoBehaviour
             WorldChronicleEntry letter = null;
             if (writeAbsenceLetter)
             {
-                // segment 可能为空但窗内仍有永久事件（TreeBranchBroke 无文案，死端事实）——
-                // 此时信只剩点名句，恰是缺席期最重要的归因桥，仍要生成
+                // segment 可能为空但窗内仍有永久事件——此时信只剩点名句，
+                // 恰是缺席期最重要的归因桥，仍要生成
                 var segment = extra > 0
                     ? _saveData.pendingChronicles.GetRange(chronicleMark, extra)
                     : new List<WorldChronicleEntry>();

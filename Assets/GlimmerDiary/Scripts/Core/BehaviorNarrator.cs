@@ -123,6 +123,8 @@ namespace GlimmerDiary.Core
                 WorldEventType.WeaverBirdReturned => WeaverReturned,
                 WorldEventType.AnimalDeparted     => BirdDeparted,
                 WorldEventType.TreeFlowered       => TreeFlowered,
+                WorldEventType.TreeBranchBroke    => TreeBranchBroke,
+                WorldEventType.VoleClaimedZone    => VoleClaimedZone,
                 _                            => null
             };
             if (templates == null) return;
@@ -304,6 +306,41 @@ namespace GlimmerDiary.Core
 
     // 带地面的痕迹
     "{date} {sky} 猴面包树开花了。早晨树下有一些落下来的花瓣，白色，已经有点褐了。",
+};
+
+        // 断枝（永久事件，不可逆）：写「断口还新」这件可见的事，不写风载与树龄
+        private static readonly string[] TreeBranchBroke =
+{
+    // 断口的新鲜感是最直接的证据
+    "{date} {sky} 猴面包树断了一根枝。断口还是新的，颜色比树皮浅。",
+
+    // 从地面写：枝子落下来了
+    "{date} {sky} 树下多了一根枝子。是从上面掉下来的，不是风刮来的枯枝。",
+
+    // 小报语气
+    "{date} {sky} 猴面包树就枝杈减员一事，未作任何说明。",
+
+    // 用声音写：夜里的动静，早上的结果
+    "{date} {sky} 夜里响过一声。早上看，树冠缺了一小块。",
+
+    // 过渡状态：还挂着
+    "{date} {sky} 断枝还斜挂在树上，没有完全掉下来。经过树下最好走快一点。",
+};
+
+        // 田鼠占区（与 VoleExpand 的「挖洞试探」错开：写「占有/标记」这件事）
+        private static readonly string[] VoleClaimedZone =
+{
+    // 划界的动作感
+    "{date} {sky} 田鼠在新洞口外堆了一小堆土。像是划了个界。",
+
+    // 痕迹写占有：踏出的一圈
+    "{date} {sky} 新洞口周围的草被踏出了一圈。田鼠把这一带当作自己的了。",
+
+    // 小报语气，借「声明」写领地逻辑
+    "{date} {sky} 田鼠就新领地的归属问题，以一小堆新土作出声明。",
+
+    // 从「这片地」的角度写
+    "{date} {sky} 低地往东那片草地，从今天起算是有了主。洞口外的新土为证。",
 };
 
         // 涌现时刻 · 宿敌对（狐狸 + 啮齿）：永不点破，只写「挨着歇息」这个可观察的行为
