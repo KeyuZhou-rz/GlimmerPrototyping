@@ -1,7 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
 using GlimmerDiary.Data;
-using Mono.Cecil;
 using Unity.VisualScripting;
 
 namespace GlimmerDiary.Ecosystem_nonL
