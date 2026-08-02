@@ -120,3 +120,6 @@ InitTestScene*.unity*
 
 # Local Codex CLI config (per-machine MCP endpoints)
 .codex/
+
+# Demo build output
+/[Bb]uilds/
