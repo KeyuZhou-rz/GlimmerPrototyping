@@ -110,9 +110,9 @@ gameTime.Advance(1)
 
 ## 8. 场景前置条件
 
-- [ ] `ManualEmotionInjector` 已禁用。
-- [ ] 所有 `WorldSimulationTester.runOnStart` 为 false。
-- [ ] 场景内挂载一个 `ManualTicking`。
+- [x] `ManualEmotionInjector` 已禁用。（2026-08-03 场景 YAML 单行禁用并提交 db8983b——每帧注入会锁死情绪惯性，demo 打包前已拆）
+- [x] 所有 `WorldSimulationTester.runOnStart` 为 false。（07-26 已核实场景两处实例均为 0）
+- [x] 场景内挂载一个 `ManualTicking`。（07-26 已挂 ManualGameplayLab GO 并随 bb0518c 落盘）
 - [ ] 进入 Play Mode 后再执行 Context Menu。
 - [ ] Inspector 和 Tick 操作只对研究者可见。
 
