@@ -26,6 +26,9 @@ public class ChronicleLetter : MonoBehaviour
 
     private bool _open;
 
+    // 点击穿透守卫（TraceInput 读）：信开着时场景点击不触发推近
+    public static bool IsOpen { get; private set; }
+
     void Update()
     {
         // 项目启用新 Input System（Player Settings），旧 UnityEngine.Input 会抛异常
@@ -41,6 +44,7 @@ public class ChronicleLetter : MonoBehaviour
         var save = wm != null ? wm.WorldSave : null;
         if (save == null) return;
         _open = true;
+        IsOpen = true;
         EnsureUI();
 
         int n = Mathf.Min(maxEntriesPerOpen, save.pendingChronicles.Count);
@@ -74,6 +78,7 @@ public class ChronicleLetter : MonoBehaviour
     public void Close()
     {
         _open = false;
+        IsOpen = false;
         if (canvasGroup == null) return;
         canvasGroup.alpha = 0f;
         canvasGroup.interactable = false;

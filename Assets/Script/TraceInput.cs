@@ -31,6 +31,8 @@ public class TraceInput : MonoBehaviour
         // 点在 UI（信/日记）上不触发推近
         if (UnityEngine.EventSystems.EventSystem.current != null &&
             UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject()) return;
+        // 信或日记面板开着：面板外点击也不推相机（双保险，防穿透）
+        if (ChronicleLetter.IsOpen || DiaryInputUI.IsOpen) return;
 
         Ray ray = stageCamera.ScreenPointToRay(mouse.position.ReadValue());
         if (Physics.Raycast(ray, out var hit, maxRayDistance, traceMask))
