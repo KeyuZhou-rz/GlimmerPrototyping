@@ -302,7 +302,11 @@ namespace GlimmerDiary.Flora
         
         private void CleanupMesh(Mesh mesh)
         {
-            if (mesh != null && !UnityEditor.AssetDatabase.Contains(mesh))
+            bool meshIsAsset = false;
+#if UNITY_EDITOR
+            meshIsAsset = mesh != null && UnityEditor.AssetDatabase.Contains(mesh);
+#endif
+            if (mesh != null && !meshIsAsset)
             {
                 DestroyImmediate(mesh);
             }

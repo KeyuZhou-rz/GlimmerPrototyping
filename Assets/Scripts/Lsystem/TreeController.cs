@@ -81,7 +81,12 @@ public class TreeController : MonoBehaviour
             : TreeMeshBuilder.BuildFlat(segments);
         
         // Clean up old mesh
-        if (_meshFilter.sharedMesh != null && !UnityEditor.AssetDatabase.Contains(_meshFilter.sharedMesh))
+        bool oldMeshIsAsset = false;
+#if UNITY_EDITOR
+        oldMeshIsAsset = _meshFilter.sharedMesh != null
+            && UnityEditor.AssetDatabase.Contains(_meshFilter.sharedMesh);
+#endif
+        if (_meshFilter.sharedMesh != null && !oldMeshIsAsset)
         {
             DestroyImmediate(_meshFilter.sharedMesh);
         }
