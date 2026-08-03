@@ -105,6 +105,13 @@ Shader "Glimmer/Grass"
             float  _GrassDecay, _GrassDecayDesat, _GrassDecayDarken;
             float  _GrassColorEnable;   // 0=编辑态无 binder（四级全旁路，旧观感）；1=play 通路开
 
+            // 触感层（2026-08-03，全局，单写者 LateUpdate SetGlobalVector）：
+            // _GrassTouch   xy=世界XZ触点, z=半径, w=强度0..1 —— 点草簌动（GrassTouchFeedback，~2秒归零）
+            // _GrassGustBand x=风带中心(沿风向投影坐标), y=半宽(米), z=强度增益 —— 阵风草浪（GrassGustController）
+            // 编辑态默认全零 → 无影响。
+            float4 _GrassTouch;
+            float4 _GrassGustBand;
+
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
@@ -140,6 +147,26 @@ Shader "Glimmer/Grass"
                 float sway = sin(_Time.y * _WindFrequency + phase) * _WindStrength * 0.12;
                 float2 windDir = normalize(_WindDirection.xz + float2(1e-4, 0));
                 OUT.positionWS.xz += windDir * sway * w * lerp(1.0, 0.45, maxTrample);
+
+                // 触感层①点草簌动：触点距离衰减 × 高频颤动（22 rad/s，区别于风摆低频），
+                // 沿"触点→簇心"连线外推——像手指拨过草丛，一圈草朝外倒伏又弹回。
+                if (_GrassTouch.w > 0.0)
+                {
+                    float td = distance(pivotWS.xz, _GrassTouch.xy);
+                    float tfall = saturate(1.0 - td / max(_GrassTouch.z, 1e-3)) * _GrassTouch.w;
+                    if (tfall > 0.0)
+                    {
+                        float2 tdir = td > 1e-3 ? (pivotWS.xz - _GrassTouch.xy) / td : float2(1, 0);
+                        float tremor = sin(_Time.y * 22.0 + phase * 3.0) * tfall * 0.12;
+                        OUT.positionWS.xz += tdir * tremor * w;
+                    }
+                }
+
+                // 触感层②阵风草浪：簇心投影到风向的一维行带，带内风摆增益——
+                // 一道摆动更猛的亮带滚过草海（带中心由 GrassGustController 随时间扫掠）。
+                float band = saturate(1.0 - abs(dot(pivotWS.xz, windDir) - _GrassGustBand.x)
+                                            / max(_GrassGustBand.y, 1e-3));
+                OUT.positionWS.xz += windDir * sway * band * _GrassGustBand.z * w;
 
                 OUT.positionHCS = TransformWorldToHClip(OUT.positionWS);
                 OUT.normalWS    = TransformObjectToWorldNormal(IN.normalOS);

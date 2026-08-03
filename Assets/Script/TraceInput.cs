@@ -43,6 +43,13 @@ public class TraceInput : MonoBehaviour
                 pusher.PushTo(tc.focusPoint);
                 TraceCaptionUI.Show(tc.traceType, tc.traceKey);   // 推近同时给一句观察（展示层，不进世界志）
             }
+            else if (hit.collider.GetComponentInParent<TerrainGenerator>() != null)
+            {
+                // 触感层：点的是草海/地面——触点周围草簇簌动 + 簌簌声（占位，无素材静默）。
+                // 纯表现层回应，不碰世界状态。
+                GrassTouchFeedback.Touch(hit.point);
+                AmbientAudio.PlayGrassRustle(hit.point);
+            }
         }
     }
 }

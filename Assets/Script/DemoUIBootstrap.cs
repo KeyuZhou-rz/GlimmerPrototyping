@@ -28,6 +28,12 @@ public static class DemoUIBootstrap
             es.AddComponent<InputSystemUIInputModule>();
         }
 
+        // ④ 触感层第一批（2026-08-03，纯 L3）：点草簌动 / 阵风草浪 / 环境音占位
+        var touch = new GameObject("TouchLayer");
+        touch.AddComponent<GrassTouchFeedback>();
+        touch.AddComponent<GrassGustController>();
+        touch.AddComponent<AmbientAudio>();
+
         // ③ 常驻提示行
         CreateHint();
     }
