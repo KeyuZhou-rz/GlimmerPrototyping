@@ -55,6 +55,12 @@ namespace GlimmerDiary.Data
         // 旧存档无此字段 → null → EmotionInertiaSystem.Restore 按零脉冲处理。
         public EmotionVector             currentImpulse;
 
+        // 延迟消化（2026-08-03）：注入后尚未释放的脉冲 + 墙钟释放时刻（ISO）。
+        // 玩家写完日记就关 app 时靠它们把"世界还没想完的事"带到下次启动。
+        // 旧存档无此字段 → null → 按无 pending 处理。
+        public EmotionVector             pendingImpulse;
+        public string                    pendingImpulseReleaseRealTime;
+
         // 所有实体
         public List<AnimalEntity>   animals   = new();
         public List<PlantEntity>    plants    = new();

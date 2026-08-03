@@ -86,7 +86,11 @@ public class WorldManager : MonoBehaviour
         if (_saveData.locations != null)
             foreach (var loc in _saveData.locations)
                 if (loc.soilMoisturePeak < loc.soilMoisture) loc.soilMoisturePeak = loc.soilMoisture;
-        EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory, _saveData.currentImpulse);
+        EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory, _saveData.currentImpulse,
+                               _saveData.pendingImpulse, _saveData.pendingImpulseReleaseRealTime);
+        // 缺席期间到期的 pending 在 catch-up 前先兑现："世界趁你不在想完了"——
+        // 随后 WorldTick 的 Relax 按缺席天数自然衰减它，回来不会突然全强爆发。
+        EmotionInertia.TryReleasePending();
 
         Registry = new EntityRegistry();
         Registry.Initialize(_saveData);
@@ -152,6 +156,9 @@ public class WorldManager : MonoBehaviour
         if (_rhythmHeartbeatTimer < rhythmHeartbeatSeconds) return;
         _rhythmHeartbeatTimer = 0f;
         NaturalRhythm.Tick(_saveData.gameTime);
+        // 延迟消化的泵：pending 脉冲到点释放，当拍（本帧 ConsumeSignals）即重译天气——
+        // "世界想了一会儿"之后，回响落在这里被看见。
+        EmotionInertia.TryReleasePending();
         Environment.ConsumeSignals(
             Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse));
     }
@@ -181,9 +188,7 @@ public class WorldManager : MonoBehaviour
         PropagateEnvironmentToLocations();
         _vegetationSystem.Tick(_saveData.gameTime, Environment.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
 
-        _saveData.currentEEnv    = EmotionInertia.CurrentEEnv;
-        _saveData.currentImpulse = EmotionInertia.Impulse;
-        _saveData.emotionHistory = EmotionInertia.History;
+        SyncEmotionSnapshot();
 
         // 动物状态系统：内部状态演化 → 行为输出（在文本层之前，让其读到最新行为）
         _driveSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
@@ -273,8 +278,23 @@ public class WorldManager : MonoBehaviour
         return names;
     }
 
-    // 情绪注入：仅写日记时调用，只更新 E_env，不推进日历
+    // 情绪注入：仅写日记时调用，只更新 E_env（+ 登记 pending 脉冲），不推进日历
     public void InjectEmotion(JournalEntry entry) => EmotionInertia.Update(entry.emotion);
+
+    // 情绪相关存档快照的唯一写者（currentEEnv/currentImpulse/emotionHistory + pending 两字段）。
+    // SimulatePass 与 OnJournalSubmitted 共用——写日记路径不再跑 SimulatePass（2026-08-03 A 方案），
+    // 但不走这里注入的情绪就只活内存里，关 app 即丢。
+    private void SyncEmotionSnapshot()
+    {
+        _saveData.currentEEnv    = EmotionInertia.CurrentEEnv;
+        _saveData.currentImpulse = EmotionInertia.Impulse;
+        _saveData.emotionHistory = EmotionInertia.History;
+        _saveData.pendingImpulse = EmotionInertia.PendingImpulse;
+        _saveData.pendingImpulseReleaseRealTime =
+            EmotionInertia.PendingImpulse != null
+                ? EmotionInertia.PendingReleaseRealTime.ToString("o")
+                : null;
+    }
 
     // 距上次锚点的整天数（同一天为 0）；新世界返回 0
     private int WallClockDeltaDays()
@@ -286,14 +306,16 @@ public class WorldManager : MonoBehaviour
     }
 
     // 玩家提交日记时的唯一入口（由 UI 层调用）
-    // 墙钟 catch-up → 注入情绪 → 一次响应式模拟（不额外推进日历）→ 存档
+    // 墙钟 catch-up → 注入情绪 → 落盘快照 → 存档。
+    // 2026-08-03 A 方案：不再跑 SimulatePass——世界只在日历日边界演化，
+    // 日记不当场多演一天；天气回响经 pending 脉冲延迟几分钟后由空闲心跳落地。
     public void OnJournalSubmitted(JournalEntry entry)
     {
         int delta = WallClockDeltaDays();
         if (delta > 0) WorldTick(delta, isCatchUp: delta > 1);   // 缺席天数以注入前情绪演化
 
-        InjectEmotion(entry);   // 当天情绪
-        SimulatePass();         // 响应式模拟，不额外推进一天
+        InjectEmotion(entry);   // 当天情绪（E_env 即时，脉冲挂 pending）
+        SyncEmotionSnapshot();  // 注入立即落盘——不跑 SimulatePass 后这是唯一快照时机
 
         SaveSystem.SaveWorldState(_saveData);   // 内部会盖上 lastTickRealTime = now
         SaveSystem.AppendJournalEntry(entry);
@@ -318,7 +340,8 @@ public class WorldManager : MonoBehaviour
     {
         _saveData = newSave;
         EmotionInertia = new EmotionInertiaSystem();
-        EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory, newSave.currentImpulse);
+        EmotionInertia.Restore(newSave.currentEEnv, newSave.emotionHistory, newSave.currentImpulse,
+                               newSave.pendingImpulse, newSave.pendingImpulseReleaseRealTime);
         Registry.Initialize(_saveData);
         NaturalRhythm.Tick(_saveData.gameTime);
         // 环境积分器随存档一起归零（Soil/Decay/Vegetation 等有状态字段），

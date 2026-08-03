@@ -6,7 +6,8 @@ using GlimmerDiary.Data;
 
 /// <summary>
 /// 日记输入（占位实现）：玩家侧闭环的最后一环——J 键开面板写日记，
-/// 提交即调 WorldManager.OnJournalSubmitted（catch-up → 情绪注入 → 响应式模拟 → 存档）。
+/// 提交即调 WorldManager.OnJournalSubmitted（catch-up → 情绪注入 → 落盘 → 存档；
+/// 2026-08-03 A 方案：不再当场响应式模拟，天气回响经 pending 脉冲延迟几分钟落地）。
 /// 情绪五维由 SentimentStub 关键词桩产出（L1 真引擎落地后只换分析实现）。
 /// Mountain 式克制：无仪式特效，提交后一行"世界收到了。"三秒渐隐。
 /// 形态是占位皮：运行时自建最小 UI（同 ChronicleLetter 模式），设计稿落地后替换。

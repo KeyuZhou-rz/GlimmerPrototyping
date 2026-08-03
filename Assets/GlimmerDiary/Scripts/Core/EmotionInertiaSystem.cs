@@ -17,6 +17,17 @@ namespace GlimmerDiary.Core
         // 注意零点是真零向量（不是 Neutral()——Neutral 的 A=0.3/T=1 叠进信号会凭空起风亮星）。
         public EmotionVector Impulse { get; private set; }
 
+        // 延迟消化（2026-08-03）：注入的脉冲不再立即生效，先挂 pending，
+        // 2-4 分钟后才释放为 live Impulse——"世界想了一会儿"，回响不是即时的。
+        // E_env 慢积分与 History 保持即时（世界的性情先变、不可见），
+        // 只有可见的天气回响迟到。pending 不参与 Relax 衰减——它是"还没说出口的话"。
+        public EmotionVector PendingImpulse { get; private set; }          // null = 无待释放
+        public DateTime       PendingReleaseRealTime { get; private set; } // 墙钟释放时刻
+
+        // 消化时长：随机 120-240 秒，避免机械感（30 秒心跳粒度下抖动不可感知）
+        private const float PendingDelayMinSeconds = 120f;
+        private const float PendingDelayMaxSeconds = 240f;
+
         // 脉冲衰减（每自主日）：一天后余 45%，两天 20%，三天 ~9% —— 回响挂一两天即散
         private const float ImpulseRelaxAlpha = 0.55f;
 
@@ -31,20 +42,34 @@ namespace GlimmerDiary.Core
             History     = new List<EnvEmotionSnapshot>();
         }
 
-        // 从存档恢复状态（Awake 时调用）；savedImpulse 为 null（旧存档）时按无脉冲处理
+        // 从存档恢复状态（Awake 时调用）；savedImpulse 为 null（旧存档）时按无脉冲处理。
+        // pending 两参为 2026-08-03 延迟消化新增：恢复后不主动兑现，
+        // 由 WorldManager 在 catch-up 前统一调 TryReleasePending（缺席到期的回响先落地再被 Relax 衰减）。
         public void Restore(EmotionVector savedEEnv, List<EnvEmotionSnapshot> savedHistory,
-                            EmotionVector savedImpulse = null)
+                            EmotionVector savedImpulse = null,
+                            EmotionVector savedPendingImpulse = null,
+                            string savedPendingReleaseRealTime = null)
         {
             CurrentEEnv = savedEEnv ?? EmotionVector.Neutral();
             History     = savedHistory ?? new List<EnvEmotionSnapshot>();
             Impulse     = savedImpulse ?? ZeroVector();
+            PendingImpulse = savedPendingImpulse;
+            // 时刻解析失败按"已到点"处理——下次心跳即释放，不让 pending 永远挂死
+            PendingReleaseRealTime =
+                DateTime.TryParse(savedPendingReleaseRealTime, null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var t)
+                    ? t : DateTime.Now;
         }
 
         // alpha由C维度动态决定：C越高响应越快
         public void Update(EmotionVector eCurrent)
         {
-            // 快通道：当日回响直接取注入向量全强（当天天气即可见应答）
-            Impulse = CloneVector(eCurrent);
+            // 快通道改延迟消化：脉冲先挂 pending，几分钟后才成为可见回响。
+            // 防呆：上一篇还没消化完又写新的——先把旧的兑现（不无声吞掉），再排队新的。
+            if (PendingImpulse != null) ForceReleasePending();
+            PendingImpulse = CloneVector(eCurrent);
+            PendingReleaseRealTime = DateTime.Now.AddSeconds(
+                UnityEngine.Random.Range(PendingDelayMinSeconds, PendingDelayMaxSeconds));
 
             // 慢通道：E_env 仍以惯性积分（世界的性情不因一篇日记转向）
             float alpha = Mathf.Lerp(0.1f, 0.3f, eCurrent.C);
@@ -79,6 +104,23 @@ namespace GlimmerDiary.Core
             Impulse.T *= 1f - ImpulseRelaxAlpha;
             Impulse.S *= 1f - ImpulseRelaxAlpha;
             Impulse.C *= 1f - ImpulseRelaxAlpha;
+        }
+
+        // 到点释放 pending 为 live Impulse（由 WorldManager 的 30 秒心跳与启动 catch-up 前各泵一次）。
+        // 返回是否发生了释放——释放后当拍即应重译天气。
+        public bool TryReleasePending()
+        {
+            if (PendingImpulse == null || DateTime.Now < PendingReleaseRealTime) return false;
+            ForceReleasePending();
+            return true;
+        }
+
+        // 无条件兑现 pending（测试与"新日记覆盖旧 pending"防呆用）
+        public void ForceReleasePending()
+        {
+            if (PendingImpulse == null) return;
+            Impulse = PendingImpulse;
+            PendingImpulse = null;
         }
 
         // 供叙事规则层查询最近N天V维度均值
