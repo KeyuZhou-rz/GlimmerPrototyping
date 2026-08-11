@@ -76,6 +76,39 @@ namespace GlimmerDiary.Data
         // 规则冷却表（NarrativeRuleEngine 唯一写者；重启重建，冷却跨 session 存活——
         // 原内存字典重启清零，久未登录会立即重触发，见矩阵补全文档 §5 横切注记）
         public List<RuleCooldownRecord> ruleCooldowns = new();
+
+        // 环境积分态（V1 清单 D1）：DroughtDebt/DecayLevel 等按日积分的字段。
+        // 此前只活内存，重启靠 catch-up 重算、>90 天深层旱债静默丢失。
+        // 旧存档无此字段 → null → WorldEnvironmentSystem 保持构造默认，由积分自然追上。
+        public EnvironmentStateSave    environmentState;
+
+        // 纪元钟状态（V1 清单 D2，EraSystem 唯一写者）。
+        // 旧存档 → null → EraSystem 构造时按"荒年"（世界初始态）建立。
+        public EraStateSave            eraState;
+    }
+
+    // 环境积分态快照：只存有状态字段；Rainfall/WindSpeed/FogDensity/StarVisibility
+    // 是无状态信号镜像，每拍由 ConsumeSignals 重译，不入档。
+    [Serializable]
+    public class EnvironmentStateSave
+    {
+        public float soilMoisture      = 0.5f;
+        public float vegetationDensity = 0.5f;
+        public float decayLevel;
+        public float creatureAbundance = 0.5f;
+        public float droughtDebt;
+    }
+
+    // 纪元钟状态：事件驱动的章节机（V1 §4.2）。不看表，只看累积计数。
+    [Serializable]
+    public class EraStateSave
+    {
+        public string chapter          = "wild_years";  // 世界初始态 = 荒年
+        public string chapterStartDate;                 // ToKeyString
+        public int    consecutiveRainyTicks;            // 连续雨超季节基准的 tick 数
+        public int    abundantDays;                     // 丰年持续天数（定居前提）
+        public int    voleHomeStreakDays;               // 田鼠在 lowland/center 连续在场天数
+        public int    droughtStreakDays;                // droughtDebt>0.6 持续天数（衰章前提）
     }
 
     // 一条规则冷却记录：lastFiredDateKey 用 GameDateTime.ToKeyString() 格式

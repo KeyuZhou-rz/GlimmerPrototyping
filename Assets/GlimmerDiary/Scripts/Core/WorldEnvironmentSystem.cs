@@ -77,6 +77,28 @@ namespace GlimmerDiary.Core
                                                   eEnv.S * 0.5f + 0.3f, 0.1f);
         }
 
+        // ── 积分态存档（V1 D1）─────────────────────────────────
+        // 只Snapshot/Restore 有状态字段；无状态信号镜像由 ConsumeSignals 每拍重译。
+        public EnvironmentStateSave Snapshot() => new EnvironmentStateSave
+        {
+            soilMoisture      = State.SoilMoisture,
+            vegetationDensity = State.VegetationDensity,
+            decayLevel        = State.DecayLevel,
+            creatureAbundance = State.CreatureAbundance,
+            droughtDebt       = State.DroughtDebt
+        };
+
+        // 旧档 null → 保持构造默认（积分随后自然追上，不跳变）
+        public void Restore(EnvironmentStateSave s)
+        {
+            if (s == null) return;
+            State.SoilMoisture      = s.soilMoisture;
+            State.VegetationDensity = s.vegetationDensity;
+            State.DecayLevel        = s.decayLevel;
+            State.CreatureAbundance = s.creatureAbundance;
+            State.DroughtDebt       = s.droughtDebt;
+        }
+
         // ── 旱债参数（playtest 调）──────────────────────────────
         // 季节基准雨：非洲草原夏雨型（雨季在夏季）
         // k=0.05：无雨秋季（基准 0.3）约 20 天过 0.3（decay 加速）、40 天过 0.6（地裂/收敛）；

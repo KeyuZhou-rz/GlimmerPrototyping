@@ -45,6 +45,7 @@ public class WorldManager : MonoBehaviour
     private AnimalDriveTuning      _driveTuning;
     private EmergentMomentDetector _emergentDetector;
     private VegetationSystem       _vegetationSystem;
+    private EraSystem              _eraSystem;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -88,6 +89,9 @@ public class WorldManager : MonoBehaviour
                 if (loc.soilMoisturePeak < loc.soilMoisture) loc.soilMoisturePeak = loc.soilMoisture;
         EmotionInertia.Restore(_saveData.currentEEnv, _saveData.emotionHistory, _saveData.currentImpulse,
                                _saveData.pendingImpulse, _saveData.pendingImpulseReleaseRealTime);
+        // 环境积分态（V1 D1）：droughtDebt 等随档恢复——重启不再靠 catch-up 重算，
+        // 深层旱债断电不丢。旧档 null → Restore 空转，积分自然追上。
+        Environment.Restore(_saveData.environmentState);
         // 缺席期间到期的 pending 在 catch-up 前先兑现："世界趁你不在想完了"——
         // 随后 WorldTick 的 Relax 按缺席天数自然衰减它，回来不会突然全强爆发。
         EmotionInertia.TryReleasePending();
@@ -107,6 +111,7 @@ public class WorldManager : MonoBehaviour
         _narrator       = new BehaviorNarrator(Registry, _saveData);
         var emergentTuning = Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning");
         _emergentDetector  = new EmergentMomentDetector(Registry, _saveData, emergentTuning);
+        _eraSystem         = new EraSystem(_saveData);
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
@@ -120,8 +125,11 @@ public class WorldManager : MonoBehaviour
         if (string.IsNullOrEmpty(_saveData.lastTickRealTime))
         {
             Debug.Log($"[WorldManager] 新世界：先跑 {NewWorldPreRunDays} 天中性预跑。");
-            // 预跑不是"缺席"——玩家还没到达，不产生缺席信
+            // 预跑不是"缺席"——玩家还没到达，不产生缺席信；
+            // 预跑也不翻纪元——章节叙事从玩家到达起算，ChapterTurned 锚必有信对应（宪法⑤）
+            _eraSystem.Suspended = true;
             WorldTick(NewWorldPreRunDays, isCatchUp: true, writeAbsenceLetter: false);
+            _eraSystem.Suspended = false;
             SaveSystem.SaveWorldState(_saveData);   // 锚定到现在，避免紧接的墙钟 catch-up 重跑同一天
         }
 
@@ -185,6 +193,7 @@ public class WorldManager : MonoBehaviour
         // Step 0：翻译层产出无状态信号 1/2/3/7（在天气消费之前）
         var signals = Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse); //通过情绪向量和现有状态输出新世界信号
         Environment.UpdateFromEEnv(EmotionInertia.CurrentEEnv, signals, NaturalRhythm.State); // 新的环境（含旱债积分，需季节基准）
+        _saveData.environmentState = Environment.Snapshot();   // 积分态随每日模拟落档（V1 D1）
         PropagateEnvironmentToLocations();
         _vegetationSystem.Tick(_saveData.gameTime, Environment.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
 
@@ -208,6 +217,10 @@ public class WorldManager : MonoBehaviour
         // 实体关系层：在叙事规则之后级联评估（优先级有序，效果就地生效）
         _relationSystem.SetEnvironment(Environment.State, NaturalRhythm.State);
         _relationSystem.Evaluate(_allRelations, _saveData.gameTime);
+
+        // 纪元钟（V1 D2）：每日最后拍板章节——读的是本日全管线跑完后的最新累积状态，
+        // 转换即发 ChapterTurned 事件 + 编年史信（不进 narrator，下一天会被其游标静默跳过）
+        _eraSystem.Tick(_saveData.gameTime, Environment.State, NaturalRhythm.State, Registry);
     }
 
     // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
@@ -344,9 +357,10 @@ public class WorldManager : MonoBehaviour
                                newSave.pendingImpulse, newSave.pendingImpulseReleaseRealTime);
         Registry.Initialize(_saveData);
         NaturalRhythm.Tick(_saveData.gameTime);
-        // 环境积分器随存档一起归零（Soil/Decay/Vegetation 等有状态字段），
+        // 环境积分器随存档一起恢复（V1 D1：有档则续，无档归零后由积分追上），
         // 再只消费无状态信号刷新天气快照——重置不是一天，不走 UpdateFromEEnv 积分。
         Environment = new WorldEnvironmentSystem();
+        Environment.Restore(newSave.environmentState);
         Environment.ConsumeSignals(
             Translation.Translate(EmotionInertia.CurrentEEnv, NaturalRhythm.State, EmotionInertia.Impulse));
         _ruleEngine = new NarrativeRuleEngine(Registry, _saveData);
@@ -361,6 +375,7 @@ public class WorldManager : MonoBehaviour
         _narrator.SetEnvironment(Environment.State, NaturalRhythm.State);
         _emergentDetector = new EmergentMomentDetector(Registry, _saveData,
             Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning"));
+        _eraSystem        = new EraSystem(_saveData);
     }
 
     // 将全局环境参数（Rainfall）传播到各地点实体的 waterLevel / soilMoisture（单写者）

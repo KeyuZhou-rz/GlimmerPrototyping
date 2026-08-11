@@ -158,6 +158,7 @@ namespace GlimmerDiary.Editor
             var relationSystem = new EntityRelationSystem(reg, save);
             var emergentTuning = ScriptableObject.CreateInstance<EmergentMomentTuning>();
             var detector       = new EmergentMomentDetector(reg, save, emergentTuning);
+            var eraSystem      = new EraSystem(save);
 
             var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
             var retired  = new HashSet<string>
@@ -176,7 +177,8 @@ namespace GlimmerDiary.Editor
             void Simulate()
             {
                 var signals = translation.Translate(inertia.CurrentEEnv, rhythm.State);
-                env.UpdateFromEEnv(inertia.CurrentEEnv, signals);
+                env.UpdateFromEEnv(inertia.CurrentEEnv, signals, rhythm.State);   // 镜像 WorldManager：旱债需季节基准
+                save.environmentState = env.Snapshot();   // 镜像 WorldManager.SimulatePass：积分态落档
                 // 水位/湿度传播直接复用 WorldManager 的静态实现——速率表单一来源
                 WorldManager.PropagateRainfallToLocations(save, env.State.Rainfall);
                 vegetation.Tick(save.gameTime, env.State);   // loc.vegetationDensity 单一写者 + 蒲公英落种；驱动层只读
@@ -190,6 +192,7 @@ namespace GlimmerDiary.Editor
                 ruleEngine.Evaluate(allRules, save.gameTime);
                 relationSystem.SetEnvironment(env.State, rhythm.State);
                 relationSystem.Evaluate(allRelations, save.gameTime);
+                eraSystem.Tick(save.gameTime, env.State, rhythm.State, reg);   // 纪元钟每日最后拍板
             }
 
             // 仅注入情绪 + 一次响应式模拟（不推进日历）
@@ -231,7 +234,7 @@ namespace GlimmerDiary.Editor
             return new Pipeline
             {
                 save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick,
-                detector = detector, emergentTuning = emergentTuning
+                detector = detector, emergentTuning = emergentTuning, eraSystem = eraSystem
             };
         }
 
@@ -245,6 +248,7 @@ namespace GlimmerDiary.Editor
             public System.Action<int,bool>          worldTick;  // 自主推进 N 天
             public EmergentMomentDetector           detector;       // 涌现时刻检测器（测试显式驱动）
             public EmergentMomentTuning             emergentTuning; // 可改 baseP/winterP=1 做确定性
+            public EraSystem                        eraSystem;      // 纪元钟（可挂起测预跑语义）
         }
 
         // 世界绝对日序（用于断言推进天数）——公式收敛到 GameDateTime 单一来源
@@ -724,6 +728,142 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(sDay1.Wetness > 0.6f ? "PASS" : "FAIL")}] 脉冲释放即可见: Wetness={sDay1.Wetness:F3} > 0.6（E_env 只走 alpha=0.2）");
             Debug.Log($"[{(sDay1.Wetness > sDay3.Wetness + 0.2f ? "PASS" : "FAIL")}] 脉冲快衰: 两日后 {sDay3.Wetness:F3} 明显回落");
             Debug.Log($"[{(Mathf.Abs(eEnvAfter1 - (-0.2f)) < 1e-4f ? "PASS" : "FAIL")}] 慢通道不动: E_env.V={eEnvAfter1:F2}（alpha=0.2 惯性不变）");
+        }
+
+        // ── V1 D2：纪元钟（五章节状态机） ────────────────────────────
+        // 剧本：雨季（连雨 5 tick）→ 定居（丰年 10 天 + 田鼠在场 10 天 + 3 土堆）
+        //       → 镇（5 土堆）→ 衰（洪水）→ 雨季（雨回来）。
+        // 田鼠位置/土堆记录直接安排（同既有测试注入 permanentDamages 的手法），
+        // 每日复位防驱动层 organic 移动干扰断言。
+        [MenuItem("GlimmerDiary/Test Era Clock")]
+        public static void RunEraClock()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var vole = reg.GetAnimal("vole");
+            var lowland = reg.GetLocation("lowland");
+
+            Debug.Log("=== EraClock (EditMode, V1 §4.2) ===");
+            Debug.Log($"初始章节: {save.eraState.chapter}");
+
+            int ChapterTurns() => save.worldEvents.FindAll(e => e.type == WorldEventType.ChapterTurned).Count;
+            int ChapterLetters() => save.pendingChronicles.FindAll(c => c.eventId.StartsWith("chapter_turned:")).Count;
+
+            // 阶段 1：连雨 6 天 → 荒年→雨季（第 5 tick 雨 streak 达标， debt≈0）
+            for (int i = 0; i < 6; i++) p.submit(-1f, 0.3f, 0.5f);
+            bool toRain = save.eraState.chapter == EraSystem.RainSeason;
+            Debug.Log($"阶段1后: chapter={save.eraState.chapter}  debt={save.environmentState.droughtDebt:F2} 低洼水位={lowland.waterLevel:F2}");
+            Debug.Log($"[{(toRain ? "PASS" : "FAIL")}] 连雨 5+ tick → 进入雨季/丰年");
+
+            // 阶段 2：排涝 + 田鼠定居 center + 3 条土堆记录，丰年满 10 天 → 定居
+            for (int m = 0; m < 3; m++)
+                vole.history.Add(new StateChangeRecord
+                {
+                    date = save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+            for (int i = 0; i < 12; i++)
+            {
+                vole.location = "center"; vole.isPresent = true;
+                lowland.waterLevel = 0.3f;   // 排涝防搬家规则干扰
+                p.submit(0.2f, 0.3f, 0.6f);
+            }
+            bool toSettlement = save.eraState.chapter == EraSystem.Settlement;
+            Debug.Log($"阶段2后: chapter={save.eraState.chapter}  abundantDays={save.eraState.abundantDays} 田鼠在场streak={save.eraState.voleHomeStreakDays} 活跃土堆={EraSystem.CountActiveMounds(save, save.gameTime)}");
+            Debug.Log($"[{(toSettlement ? "PASS" : "FAIL")}] 丰年持续∧田鼠在场∧3土堆 → 进入定居");
+
+            // 阶段 3：补 5 条土堆记录 → 镇（日期逐日铺开：同日同键的重复记录
+            // 在痕迹层会被归并，与"镇是多日踩出来的"语义一致，也避免虚假计入）
+            for (int m = 0; m < 5; m++)
+            {
+                save.gameTime.Advance(m == 0 ? 0 : 1);
+                vole.history.Add(new StateChangeRecord
+                {
+                    date = save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+            }
+            vole.location = "center"; lowland.waterLevel = 0.3f;
+            p.submit(0.2f, 0.3f, 0.6f);
+            bool toTown = save.eraState.chapter == EraSystem.Town;
+            Debug.Log($"[{(toTown ? "PASS" : "FAIL")}] 土堆活跃数 ≥5 → 进入镇（当日活跃土堆={EraSystem.CountActiveMounds(save, save.gameTime)}）");
+
+            // 阶段 4：洪水（lowland 水位 > 0.65，与田鼠搬家规则同源）→ 衰
+            lowland.waterLevel = 0.7f;
+            p.submit(-0.5f, 0.3f, 0.5f);
+            bool toDecline = save.eraState.chapter == EraSystem.Decline;
+            Debug.Log($"[{(toDecline ? "PASS" : "FAIL")}] 洪水 → 镇散入衰");
+
+            // 阶段 5：排涝 + 连雨 6 天 → 衰→雨季（章节可倒退/循环，不是线性升级）
+            for (int i = 0; i < 6; i++)
+            {
+                lowland.waterLevel = 0.3f;
+                p.submit(-1f, 0.3f, 0.5f);
+            }
+            bool backToRain = save.eraState.chapter == EraSystem.RainSeason;
+            Debug.Log($"[{(backToRain ? "PASS" : "FAIL")}] 衰章后雨回来 → 重返雨季（循环坐庄）");
+
+            // 每次翻页：ChapterTurned 事件（封闭层数据锚）+ 编年史信各一
+            bool t6 = ChapterTurns() == 5;
+            bool t7 = ChapterLetters() == 5;
+            Debug.Log($"[{(t6 ? "PASS" : "FAIL")}] 5 次翻页 = 5 条 ChapterTurned 事件（实际 {ChapterTurns()}）");
+            Debug.Log($"[{(t7 ? "PASS" : "FAIL")}] 5 次翻页 = 5 封编年史信（实际 {ChapterLetters()}）");
+            foreach (var c in save.pendingChronicles)
+                if (c.eventId.StartsWith("chapter_turned:"))
+                    Debug.Log($"    编年史[{c.eventId}]: \"{c.text}\"");
+        }
+
+        // ── V1 D2 附：纪元钟预跑挂起 ─────────────────────────────
+        // 挂起语义：新世界预跑期间连雨也不翻页（章节叙事从玩家到达起算，
+        // ChapterTurned 锚必有信对应）；解挂后同一部机器照常翻页（挂起是门，不是熄火）。
+        [MenuItem("GlimmerDiary/Test Era Clock (PreRun Suspended)")]
+        public static void RunEraClockSuspended()
+        {
+            var p = BuildPipeline();
+            var save = p.save;
+            Debug.Log("=== EraClock PreRunSuspended (EditMode) ===");
+
+            p.eraSystem.Suspended = true;
+            for (int i = 0; i < 8; i++) p.submit(-1f, 0.3f, 0.5f);   // 连雨 8 天，平时第 5 天就翻页
+            bool heldBack = save.eraState.chapter == EraSystem.WildYears
+                         && !save.worldEvents.Exists(e => e.type == WorldEventType.ChapterTurned);
+            Debug.Log($"[{(heldBack ? "PASS" : "FAIL")}] 挂起期间连雨 8 天不翻页（chapter={save.eraState.chapter}）");
+
+            p.eraSystem.Suspended = false;
+            for (int i = 0; i < 6; i++) p.submit(-1f, 0.3f, 0.5f);
+            bool resumes = save.eraState.chapter == EraSystem.RainSeason
+                        && save.worldEvents.Exists(e => e.type == WorldEventType.ChapterTurned);
+            Debug.Log($"[{(resumes ? "PASS" : "FAIL")}] 解挂后照常翻页入雨季（chapter={save.eraState.chapter}）");
+        }
+
+        // ── V1 D1：环境积分态入档 ───────────────────────────────────
+        // 跑几天攒出非默认的 droughtDebt/湿度 → JsonUtility 整档往返 →
+        // 新 EnvironmentSystem Restore 后积分态逐字段相等（断电不丢）。
+        [MenuItem("GlimmerDiary/Test Environment Persistence")]
+        public static void RunEnvironmentPersistence()
+        {
+            var p = BuildPipeline();
+            var save = p.save;
+            Debug.Log("=== EnvironmentPersistence (EditMode, V1 D1) ===");
+
+            for (int i = 0; i < 8; i++) p.submit(0.6f, 0.3f, 0.6f);   // 连晴攒旱债
+            float debtBefore  = save.environmentState.droughtDebt;
+            float moistBefore = save.environmentState.soilMoisture;
+            Debug.Log($"攒档: droughtDebt={debtBefore:F3}  soilMoisture={moistBefore:F3}  chapter={save.eraState.chapter}");
+
+            string json = JsonUtility.ToJson(save);
+            var save2 = JsonUtility.FromJson<WorldSaveData>(json);
+
+            var env2 = new WorldEnvironmentSystem();
+            env2.Restore(save2.environmentState);
+            bool a1 = Mathf.Approximately(env2.State.DroughtDebt, debtBefore)
+                   && Mathf.Approximately(env2.State.SoilMoisture, moistBefore);
+            bool a2 = save2.eraState != null && save2.eraState.chapter == save.eraState.chapter;
+            bool a3 = debtBefore > 1e-4f;   // 确有攒出旱债（断言不是空转）
+
+            Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] 旱债/湿度经 JsonUtility 往返 + Restore 逐字段复原");
+            Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 纪元章节随档往返（{save2.eraState?.chapter}）");
+            Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] 8 天连晴确实攒出旱债（{debtBefore:F3} > 0）");
         }
     }
 }

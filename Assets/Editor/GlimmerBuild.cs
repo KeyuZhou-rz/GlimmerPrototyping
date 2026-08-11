@@ -9,7 +9,7 @@ using UnityEngine;
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod GlimmerBuild.RunSmoke     -logFile smoke.log
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod GlimmerBuild.BuildWindows -logFile build.log
 //
-// RunSmoke：顺序跑 AnimalDriveSmokeTest 的 12 个静态冒烟（编辑态纯逻辑，不依赖
+// RunSmoke：顺序跑 AnimalDriveSmokeTest 的静态冒烟（编辑态纯逻辑，不依赖
 // play/场景组件），数日志里的 [FAIL]，任何 FAIL 或异常 → 退出码 1。
 // BuildWindows：场景取自 EditorBuildSettings（不硬编码），产物 Builds/Windows/。
 public static class GlimmerBuild
@@ -30,6 +30,9 @@ public static class GlimmerBuild
             ("VegetationPest", GlimmerDiary.Editor.AnimalDriveSmokeTest.RunVegetationPest),
             ("SoilMoisture",   GlimmerDiary.Editor.AnimalDriveSmokeTest.RunSoilMoisture),
             ("Translation",    GlimmerDiary.Editor.AnimalDriveSmokeTest.RunTranslationLayer),
+            ("EraClock",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEraClock),
+            ("EraSuspended",   GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEraClockSuspended),
+            ("EnvPersistence", GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEnvironmentPersistence),
         };
 
         int fails = 0, exceptions = 0;
@@ -53,7 +56,7 @@ public static class GlimmerBuild
         }
 
         fails = _failCount;
-        Debug.Log($"[SMOKE] 汇总: 12 项跑完，断言 FAIL={fails}，异常={exceptions}");
+        Debug.Log($"[SMOKE] 汇总: {tests.Length} 项跑完，断言 FAIL={fails}，异常={exceptions}");
         if (fails > 0 || exceptions > 0)
             EditorApplication.Exit(1);
     }
