@@ -13,7 +13,7 @@ public static class TraceCaptionBank
     {
         ["mound"] = new[]
         {
-            "这堆土是新翻的。田鼠方面对此未作任何说明。",
+            "这堆土是新翻的。{who}方面对此未作任何说明。",
             "土还是湿的。施工时间不明，施工方没有留名。",
             "此处刚经历过一次未经申报的挖掘。",
         },
@@ -21,6 +21,12 @@ public static class TraceCaptionBank
         {
             "洞塌了。没有申报，没有解释，只有一圈新土。",
             "这里发生过一次未经批准的拆除。现场保持原样。",
+        },
+        ["vtrail"] = new[]
+        {
+            // 田鼠镇小径（V1 D3）——占位各 1 条，设计者并行线扩到 ≥3
+            "土堆之间踩出了一条路。天天走，走着走着就成了路。",
+            "这条路没有名字。使用它的那几位从不登记。",
         },
         ["trail"] = new[]
         {
@@ -61,13 +67,15 @@ public static class TraceCaptionBank
 
     private const string Fallback = "这里发生过一点事情。详情不明。";
 
-    /// <summary>按痕迹键稳定选句；类型未知或模板缺失时回退通用句。</summary>
-    public static string Pick(string traceType, string traceKey)
+    /// <summary>按痕迹键稳定选句；类型未知或模板缺失时回退通用句。
+    /// voleWho：田鼠称谓档（"田鼠/它们/镇子"，V1 D3 称谓漂移）——模板里的 {who} 由它替换；
+    /// 语料库本身仍不读世界状态，称谓由调用方（TraceCaptionUI）注入。</summary>
+    public static string Pick(string traceType, string traceKey, string voleWho = "田鼠")
     {
         if (!string.IsNullOrEmpty(traceType) && Bank.TryGetValue(traceType, out var lines) && lines.Length > 0)
         {
             int idx = StableIndex(traceKey, lines.Length);
-            return lines[idx];
+            return lines[idx].Replace("{who}", voleWho ?? "田鼠");
         }
         return Fallback;
     }

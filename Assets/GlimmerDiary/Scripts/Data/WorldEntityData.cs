@@ -100,4 +100,26 @@ namespace GlimmerDiary.Data
         public string description;   // "东侧大石裂成两半，裂缝朝北"
         public string triggeredBy;
     }
+
+    // ─────────────────────────────────────────
+    // 田鼠镇小径（V1 D3）：土堆成气候后踩出的路
+    // 不挂 LocationEntity——它不是地貌的疤，是"还活着的惯例"：
+    // 镇在时每日重现，镇散（lapsed）后按 FadeDays 淡出消失。
+    // moundKeys 引用源土堆记录（TraceKeyUtil 口径），位置由 L3 从重算——
+    // 记录不存坐标，坐标是派生品。
+    // ─────────────────────────────────────────
+    [Serializable]
+    public class VoleTrailRecord
+    {
+        // lapsed 后痕迹层的淡出窗口（游戏日）。放 Data 层：binder（L3）与
+        // VoleTownSystem（L2）都要读，binder 纪律不导入 Core。
+        public const int FadeDays = 20;
+
+        public string formedDateKey;          // ToKeyString
+        public string zone;                   // 成形主场（当前恒 "center"，扩张土堆地带）
+        public List<string> moundKeys = new();// 连成小径的土堆记录键（成形时快照，按出生日排序）
+        public bool   lapsed;                 // 镇散 = 小径停止重现
+        public string lapseDateKey;           // 冻结日（淡出起点）
+        public int    belowThresholdDays;     // 活跃土堆跌破阈值的连续天数（lapse 判据之一）
+    }
 }

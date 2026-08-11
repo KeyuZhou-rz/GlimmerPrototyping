@@ -85,6 +85,10 @@ namespace GlimmerDiary.Data
         // 纪元钟状态（V1 清单 D2，EraSystem 唯一写者）。
         // 旧存档 → null → EraSystem 构造时按"荒年"（世界初始态）建立。
         public EraStateSave            eraState;
+
+        // 田鼠镇小径（V1 清单 D3，VoleTownSystem 唯一写者）。
+        // 旧存档 → null → VoleTownSystem 构造时建空表。
+        public List<VoleTrailRecord>   voleTrails;
     }
 
     // 环境积分态快照：只存有状态字段；Rainfall/WindSpeed/FogDensity/StarVisibility

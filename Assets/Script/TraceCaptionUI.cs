@@ -24,7 +24,8 @@ public class TraceCaptionUI : MonoBehaviour
     private Text _text;
     private float _timer = -1f;   // <0 = 闲置
 
-    /// <summary>点痕迹时调用：显示一句该痕迹的观察语。</summary>
+    /// <summary>点痕迹时调用：显示一句该痕迹的观察语。
+    /// 田鼠称谓档（V1 D3）经 WorldManager 透传注入——本组件不导入 Core，纪律不变。</summary>
     public static void Show(string traceType, string traceKey)
     {
         if (_instance == null)
@@ -32,7 +33,9 @@ public class TraceCaptionUI : MonoBehaviour
             var go = new GameObject("TraceCaptionUI");
             _instance = go.AddComponent<TraceCaptionUI>();
         }
-        _instance.ShowInternal(TraceCaptionBank.Pick(traceType, traceKey));
+        var wm = WorldManager.Instance;
+        string who = wm != null ? wm.GetVoleAppellation() : "田鼠";
+        _instance.ShowInternal(TraceCaptionBank.Pick(traceType, traceKey, who));
     }
 
     private void ShowInternal(string caption)

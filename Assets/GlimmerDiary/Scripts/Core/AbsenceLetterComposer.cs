@@ -22,6 +22,8 @@ namespace GlimmerDiary.Core
         // segment：catch-up 区间新产生的 chronicle 段（按时间先后）
         // branchBreaksInWindow：同窗口 TreeBranchBroke 事件数（07-31 起有独立世界志文案）
         // collapseLocationNames：同窗口新增 burrow_collapse 的 location displayName 列表
+        // chapterCrossed：窗口内是否翻过纪元章节（D4）——翻过则整封换编年史语气，
+        //   且单独足以成信（章节翻页是永久事件档，不能被当噪音丢掉）
         // 返回合成信条目；不值得写信时返回 null
         public static WorldChronicleEntry Compose(
             List<WorldChronicleEntry> segment,
@@ -29,7 +31,8 @@ namespace GlimmerDiary.Core
             List<string> collapseLocationNames,
             string todayDisplay,
             int maxEntries = 5,
-            NaturalRhythmState rhythm = null)   // §5.5 优先级 6：季节尾注（秋/冬一句，春夏不写）
+            NaturalRhythmState rhythm = null,   // §5.5 优先级 6：季节尾注（秋/冬一句，春夏不写）
+            bool chapterCrossed = false)
         {
             // ① salience 分级：级别降序，同级新→旧（segment 本身旧→新，index 降序即新→旧）
             var picked = new List<WorldChronicleEntry>();
@@ -45,12 +48,15 @@ namespace GlimmerDiary.Core
             }
 
             bool hasPointers = branchBreaksInWindow > 0
-                            || (collapseLocationNames != null && collapseLocationNames.Count > 0);
+                            || (collapseLocationNames != null && collapseLocationNames.Count > 0)
+                            || chapterCrossed;
             if (picked.Count == 0 && !hasPointers) return null;
 
             // ② 合成信体：头部 + 入选条目原文（模板已含日期）+ 永久痕迹点名句
+            // D4：章节翻页期间整封换编年史语气（占位模板各一，设计者并行线扩写）
             var sb = new StringBuilder();
-            sb.AppendLine("你离开的这些天——");
+            sb.AppendLine(chapterCrossed ? "你离开的这些天，世界翻过了一页——"
+                                         : "你离开的这些天——");
             foreach (var e in picked)
                 sb.AppendLine(e.text.Trim());
 
@@ -99,6 +105,9 @@ namespace GlimmerDiary.Core
                     return 2;
 
                 default:
+                    // 纪元翻页（D4）：章节转换是永久事件档，必进信
+                    if (eventId != null && eventId.StartsWith("chapter_turned:"))
+                        return 3;
                     // WeatherHarsh 语料系列："behavior_fox:Rest:WeatherHarsh" 等
                     if (eventId != null && eventId.StartsWith("behavior_")
                         && eventId.Contains("Harsh"))

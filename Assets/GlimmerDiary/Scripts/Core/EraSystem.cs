@@ -111,29 +111,10 @@ namespace GlimmerDiary.Core
             Debug.Log($"[EraSystem] 章节翻页 {from} → {to} @{time.ToKeyString()}");
         }
 
-        // 土堆活跃数（V1 §4.3 口径）：lowland/center 近窗口内的田鼠扩张/搬家记录条数。
-        // 与 WorldTraceBinder T1 土堆同一数据源（vole history 的 location 变更记录），
-        // 批次二（田鼠镇小径）复用本函数——勿另抄副本。
-        public static int CountActiveMounds(WorldSaveData save, GameDateTime now)
-        {
-            if (save?.animals == null) return 0;
-            int today = now.ToAbsoluteDays(), n = 0;
-            foreach (var a in save.animals)
-            {
-                if (a.speciesId != "vole" || a.history == null) continue;
-                foreach (var rec in a.history)
-                {
-                    if (rec.field != "location") continue;
-                    if (rec.triggeredBy != "vole_expansion" && rec.triggeredBy != "vole_relocate_flood") continue;
-                    if (today - GameDateTime.ParseKey(rec.date).ToAbsoluteDays() > MoundActiveWindowDays) continue;
-                    // 扩张土堆按 center 计；搬家新洞口按目的地（同 WorldTraceBinder.cs:279 口径）
-                    string zone = rec.triggeredBy == "vole_expansion" ? "center"
-                                : (string.IsNullOrEmpty(rec.toValue) ? "lowland" : rec.toValue);
-                    if (zone == "lowland" || zone == "center") n++;
-                }
-            }
-            return n;
-        }
+        // 土堆活跃数（V1 §4.3 口径）：唯一实现收敛到 TraceKeyUtil.CountActiveMounds
+        //（与 WorldTraceBinder T1 / VoleTownSystem 小径成形同源）；本包装保留入口（冒烟测试在用）。
+        public static int CountActiveMounds(WorldSaveData save, GameDateTime now) =>
+            TraceKeyUtil.CountActiveMounds(save, now, MoundActiveWindowDays);
 
         // ── 编年史信文案（占位：每章 1 条，设计者并行线扩到 ≥5 条/章）──────────
         private static string[] ChronicleFor(string chapter) => chapter switch

@@ -81,7 +81,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -212,6 +212,10 @@ public class WorldTraceBinder : MonoBehaviour
         if (save.locations != null)
             foreach (var l in save.locations) sig = sig * 31 + (l.permanentChanges?.Count ?? 0);
         sig = sig * 31 + ToDays(save.gameTime);
+        // 小径（V1 D3）：成形/lapsed 各触发一次重建（淡出进度由上面的 gameDay 项逐日驱动）
+        sig = sig * 31 + (save.voleTrails?.Count ?? 0);
+        if (save.voleTrails != null)
+            foreach (var tr in save.voleTrails) sig = sig * 31 + (tr.lapsed ? 1 : 0);
         // 鹿鼠活动范围收缩态（实时字段，无历史记录）——跨过阈值也要触发重建
         var dm = wm.Registry?.GetAnimal("deer_mouse");
         sig = sig * 31 + (dm != null && dm.activityRange < 0.5f ? 1 : 0);
@@ -414,6 +418,24 @@ public class WorldTraceBinder : MonoBehaviour
                 string ck = "cracks|" + zone;
                 birthDays[ck] = today;
                 desired[ck] = t => SpawnCracks(t, zone, Fnv1a(ck));
+            }
+        }
+
+        // 小径（V1 D3 田鼠镇）：voleTrails 记录 → 土堆之间的压草色片链。
+        // 活跃期恒在（镇是"还活着的惯例"）；lapsed 后按 VoleTrailRecord.FadeDays 淡回地表色后撤。
+        if (save.voleTrails != null)
+        {
+            foreach (var tr in save.voleTrails)
+            {
+                int formDay = ToDays(ParseKeyDate(tr.formedDateKey));
+                int lapseAge = tr.lapsed ? today - ToDays(ParseKeyDate(tr.lapseDateKey)) : 0;
+                if (tr.lapsed && lapseAge > VoleTrailRecord.FadeDays) continue;   // 淡完即撤
+                string vk = $"vtrail|{tr.formedDateKey}";
+                birthDays[vk] = formDay;
+                var rec = tr;   // 闭包捕获
+                desired[vk] = t => SpawnVoleTrail(t, rec, lapseAge);
+                // 刚成形那天指一下（镇诞生是新闻）；之后是常态不上标记
+                if (!tr.lapsed && (today - formDay) * weatherMul <= freshAgeThreshold) fresh.Add(vk);
             }
         }
 
@@ -664,6 +686,83 @@ public class WorldTraceBinder : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 小径（V1 D3）：镇成形时快照的土堆键 → 逐键重解位置（SpawnMound 同款采样）→
+    /// 相邻点之间铺 PressedOval 色片链。活跃期色恒定（每日重现不老化）；
+    /// lapsed 后按 FadeDays 把秸秆棕淡回地表色——镇散了，路慢慢长回草里。
+    /// 不走 _TramplePoints（16 点预算与 shader 耦合，小径只走色片层）。
+    /// </summary>
+    private void SpawnVoleTrail(TraceInstance t, VoleTrailRecord rec, int lapseAge)
+    {
+        t.type = TraceType.VoleTrail;
+        var pts = new List<Vector3>();
+        foreach (var mk in rec.moundKeys)
+            if (TryMoundPosition(mk, out Vector3 p)) pts.Add(p);
+        if (pts.Count < 2) return;
+
+        // 活跃期：压伏草的秸秆棕（比 T7 略沉——路是常年踩的，不是歇一晚的）；
+        // lapsed：按淡出进度沉回地表色
+        Color live = pressedTint * 0.92f;
+        Color c = rec.lapsed
+            ? Color.Lerp(live, dirtSettled, Mathf.Clamp01(lapseAge / (float)VoleTrailRecord.FadeDays))
+            : live;
+
+        int seed = Fnv1a($"vtrail|{rec.formedDateKey}");
+        t.seed = seed;
+        var rng = new System.Random(seed);
+        t.root = NewRoot($"VoleTrail_{seed:X8}", pts[0]);
+
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            Vector3 a = pts[i], b = pts[i + 1];
+            float len = Vector3.Distance(a, b);
+            int steps = Mathf.Max(1, Mathf.RoundToInt(len / 2.2f));   // ~2.2m 一片
+            for (int s = 0; s <= steps; s++)
+            {
+                Vector3 p = Vector3.Lerp(a, b, s / (float)steps);
+                // 沿路微 jitter（种子固定 → 每次重建位置复现）
+                p.x += ((float)rng.NextDouble() - 0.5f) * 0.8f;
+                p.z += ((float)rng.NextDouble() - 0.5f) * 0.8f;
+                if (zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) p = g;
+                AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p + Vector3.up * 0.015f,
+                        Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                        Vector3.one * Mathf.Lerp(1.3f, 1.7f, (float)rng.NextDouble()));
+            }
+        }
+    }
+
+    // 小径土堆键 → 世界坐标：解析 "mound|vole|{date}|{from}->{to}|{trigger}[#n]"，
+    // 用与 SpawnMound 完全相同的采样（种子=Fnv1a(去前缀键)），位置逐帧可复现。
+    private bool TryMoundPosition(string moundKey, out Vector3 p)
+    {
+        p = default;
+        if (string.IsNullOrEmpty(moundKey) || !moundKey.StartsWith("mound|")) return false;
+        string key = moundKey.Substring("mound|".Length);
+        int seed = Fnv1a(key);
+        // 键尾段即 trigger（occurrence 后缀 "#n" 只影响种子，键段切分不受影响：
+        // 含 #n 时 trigger 段形如 "vole_expansion#1"，比较时剥掉）
+        int lastBar = key.LastIndexOf('|');
+        if (lastBar < 0 || lastBar == key.Length - 1) return false;
+        string trigger = key.Substring(lastBar + 1);
+        int hash = trigger.IndexOf('#');
+        if (hash >= 0) trigger = trigger.Substring(0, hash);
+
+        if (trigger == "vole_expansion")
+            return zoneMap.TrySampleEdge("center", "stone_area", seed, out p);
+
+        // vole_relocate_flood：目的地 zone（from->to 段取 to）
+        string to = "lowland";
+        int arrow = key.IndexOf("->", System.StringComparison.Ordinal);
+        if (arrow >= 0)
+        {
+            int end = key.IndexOf('|', arrow);
+            string seg = end > arrow ? key.Substring(arrow + 2, end - arrow - 2)
+                                     : key.Substring(arrow + 2);
+            if (!string.IsNullOrEmpty(seg)) to = seg;
+        }
+        return zoneMap.TrySampleZone(to, seed, out p);
+    }
+
     /// <summary>旱痕：debt 过线期间 zone 内 2-3 条地裂（状态驱动，回落即撤；同一网格 yaw/缩放打散）。</summary>
     private void SpawnCracks(TraceInstance t, string zone, int seed)
     {
@@ -750,6 +849,7 @@ public class WorldTraceBinder : MonoBehaviour
         TraceType.RangeHalt      => "rangehalt",
         TraceType.EarthCrack     => "cracks",
         TraceType.Sprout         => "sprout",
+        TraceType.VoleTrail      => "vtrail",
         _                        => "trace",
     };
 
@@ -818,20 +918,8 @@ public class WorldTraceBinder : MonoBehaviour
 
     // ── 确定性工具 ───────────────────────────────────────────────
 
-    /// <summary>FNV-1a 32 位。绝不用 string.GetHashCode()——它逐进程随机化，痕迹会每次启动乱跳。</summary>
-    private static int Fnv1a(string s)
-    {
-        unchecked
-        {
-            uint hash = 2166136261;
-            foreach (char ch in s)
-            {
-                hash = (hash ^ (byte)(ch & 0xFF)) * 16777619;
-                hash = (hash ^ (byte)(ch >> 8))   * 16777619;
-            }
-            return (int)hash;
-        }
-    }
+    /// <summary>FNV-1a 32 位（实现收敛到 GlimmerDiary.Data.TraceKeyUtil，L2 小径成形与 L3 派生共用一颗哈希）。绝不用 string.GetHashCode()——它逐进程随机化，痕迹会每次启动乱跳。</summary>
+    private static int Fnv1a(string s) => TraceKeyUtil.Fnv1a(s);
 
     // 日期解析/日序公式收敛到 GameDateTime（单一来源），此处只留空值容错
     private static GameDateTime ParseKeyDate(string key) => GameDateTime.ParseKey(key);

@@ -46,6 +46,7 @@ public class WorldManager : MonoBehaviour
     private EmergentMomentDetector _emergentDetector;
     private VegetationSystem       _vegetationSystem;
     private EraSystem              _eraSystem;
+    private VoleTownSystem         _voleTownSystem;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -112,6 +113,7 @@ public class WorldManager : MonoBehaviour
         var emergentTuning = Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning");
         _emergentDetector  = new EmergentMomentDetector(Registry, _saveData, emergentTuning);
         _eraSystem         = new EraSystem(_saveData);
+        _voleTownSystem    = new VoleTownSystem(_saveData);
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
@@ -221,6 +223,10 @@ public class WorldManager : MonoBehaviour
         // 纪元钟（V1 D2）：每日最后拍板章节——读的是本日全管线跑完后的最新累积状态，
         // 转换即发 ChapterTurned 事件 + 编年史信（不进 narrator，下一天会被其游标静默跳过）
         _eraSystem.Tick(_saveData.gameTime, Environment.State, NaturalRhythm.State, Registry);
+
+        // 田鼠镇（V1 D3）：在纪元钟之后——镇散判据要读当日最新章节。
+        // 只读土堆记录写 voleTrails，田鼠 AI 一行不动（§4.3 红线）
+        _voleTownSystem.Tick(_saveData.gameTime);
     }
 
     // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
@@ -259,7 +265,8 @@ public class WorldManager : MonoBehaviour
                     CountWindowEvents(startAbsDays, WorldEventType.TreeBranchBroke),
                     CollectWindowCollapses(startAbsDays),
                     _saveData.gameTime.ToDisplayString(),
-                    rhythm: NaturalRhythm.State);
+                    rhythm: NaturalRhythm.State,
+                    chapterCrossed: WindowHasChapterTurn(startAbsDays));
             }
             if (extra > 0)
                 _saveData.pendingChronicles.RemoveRange(chronicleMark, extra);
@@ -289,6 +296,16 @@ public class WorldManager : MonoBehaviour
                     && GameDateTime.ParseKey(pc.date).ToAbsoluteDays() >= startAbsDays)
                     names.Add(loc.displayName);
         return names;
+    }
+
+    // 缺席窗口内是否翻过纪元章节（D4）——翻过则缺席信整封换编年史语气
+    private bool WindowHasChapterTurn(int startAbsDays)
+    {
+        foreach (var e in _saveData.worldEvents)
+            if (e.type == WorldEventType.ChapterTurned
+                && GameDateTime.ParseKey(e.gameDate).ToAbsoluteDays() >= startAbsDays)
+                return true;
+        return false;
     }
 
     // 情绪注入：仅写日记时调用，只更新 E_env（+ 登记 pending 脉冲），不推进日历
@@ -376,6 +393,7 @@ public class WorldManager : MonoBehaviour
         _emergentDetector = new EmergentMomentDetector(Registry, _saveData,
             Resources.Load<EmergentMomentTuning>("Tuning/EmergentMomentTuning"));
         _eraSystem        = new EraSystem(_saveData);
+        _voleTownSystem   = new VoleTownSystem(_saveData);
     }
 
     // 将全局环境参数（Rainfall）传播到各地点实体的 waterLevel / soilMoisture（单写者）
@@ -433,6 +451,9 @@ public class WorldManager : MonoBehaviour
     // 供视觉层随时读取（只读，不写入）
     public WorldEnvironmentState GetWorldState()  => Environment.State;
     public NaturalRhythmState    GetRhythmState() => NaturalRhythm.State;
+
+    // 田鼠称谓档（V1 D3 称谓漂移）透传：L3 文本层不导入 Core，经此读档位词
+    public string GetVoleAppellation() => VoleTownSystem.VoleAppellation(_saveData);
 }
 
 // 通过 ID 快速访问实体，避免每次遍历列表

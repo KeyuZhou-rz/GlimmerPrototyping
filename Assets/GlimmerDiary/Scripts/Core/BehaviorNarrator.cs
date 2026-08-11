@@ -167,10 +167,10 @@ namespace GlimmerDiary.Core
         private static readonly string[] VoleExpand =
 {
     // 「试探」的动作感
-    "{date} {sky} 低洼地那边的田鼠在中央方向挖了一个口子，不深，像是在探探情况。",
+    "{date} {sky} 低洼地那边的{voleWho}在中央方向挖了一个口子，不深，像是在探探情况。",
     
     // 小报语气，借「产权」暗示领地逻辑
-    "{date} {sky} 田鼠一家就中央区域东侧边缘的使用权问题，采取了一些行动。",
+    "{date} {sky} {voleWho}就中央区域东侧边缘的使用权问题，采取了一些行动。",
     
     // 细节：留下的痕迹而不是行为本身
     "{date} {sky} 石头区和中央之间那段草地，出现了新翻的土。是今天的。",
@@ -179,16 +179,16 @@ namespace GlimmerDiary.Core
     "{date} {sky} 东侧低地新开了一个洞口，朝中央方向。洞口的土是湿的，刚挖不久。",
     
     // 时间暗示：「这阵子」
-    "{date} {sky} 这阵子田鼠走得比以前远了一点。每次都在同一个地方停下来。",
+    "{date} {sky} 这阵子{voleWho}走得比以前远了一点。每次都在同一个地方停下来。",
     
     // 带一点轻微的「拟人化危机感」
-    "{date} {sky} 田鼠在中央方向新立了一个洞口。狐狸那边还不知道。",
+    "{date} {sky} {voleWho}在中央方向新立了一个洞口。狐狸那边还不知道。",
     
     // 用「没有反应」来写：世界其他部分的沉默
-    "{date} {sky} 低地的田鼠往东走了一段，在那里待了一会儿。那一带没有别的动静。",
+    "{date} {sky} 低地的{voleWho}往东走了一段，在那里待了一会儿。那一带没有别的动静。",
     
     // 带季节细节
-    "{date} {sky} 田鼠把新洞口开在了向阳的坡上，朝东南。选址经过了一些考虑，看起来。",
+    "{date} {sky} {voleWho}把新洞口开在了向阳的坡上，朝东南。选址经过了一些考虑，看起来。",
 
     // 借场景里真实存在的巨石定位（视觉可兑现）
     "{date} {sky} 新翻的土堆在两块石头中间，颜色比周围深。是今天的。",
@@ -331,13 +331,13 @@ namespace GlimmerDiary.Core
         private static readonly string[] VoleClaimedZone =
 {
     // 划界的动作感
-    "{date} {sky} 田鼠在新洞口外堆了一小堆土。像是划了个界。",
+    "{date} {sky} {voleWho}在新洞口外堆了一小堆土。像是划了个界。",
 
     // 痕迹写占有：踏出的一圈
-    "{date} {sky} 新洞口周围的草被踏出了一圈。田鼠把这一带当作自己的了。",
+    "{date} {sky} 新洞口周围的草被踏出了一圈。{voleWho}把这一带当作自己的了。",
 
     // 小报语气，借「声明」写领地逻辑
-    "{date} {sky} 田鼠就新领地的归属问题，以一小堆新土作出声明。",
+    "{date} {sky} {voleWho}就新领地的归属问题，以一小堆新土作出声明。",
 
     // 从「这片地」的角度写
     "{date} {sky} 低地往东那片草地，从今天起算是有了主。洞口外的新土为证。",
@@ -442,7 +442,9 @@ namespace GlimmerDiary.Core
         {
             return template
                 .Replace("{date}", time.ToDisplayString())
-                .Replace("{sky}",  SkyPhrase.Pick(time, _env, _rhythm));
+                .Replace("{sky}",  SkyPhrase.Pick(time, _env, _rhythm))
+                // 称谓漂移（V1 D3）：档位只看数量不验真伪——信可能把几群动物讲成一个镇子，这是特性
+                .Replace("{voleWho}", VoleTownSystem.VoleAppellation(_save));
         }
 
         private static string Pick(params string[] options) =>
