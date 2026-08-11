@@ -159,6 +159,7 @@ namespace GlimmerDiary.Editor
             var emergentTuning = ScriptableObject.CreateInstance<EmergentMomentTuning>();
             var detector       = new EmergentMomentDetector(reg, save, emergentTuning);
             var eraSystem      = new EraSystem(save);
+            var voleTown       = new VoleTownSystem(save);
 
             var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
             var retired  = new HashSet<string>
@@ -193,6 +194,7 @@ namespace GlimmerDiary.Editor
                 relationSystem.SetEnvironment(env.State, rhythm.State);
                 relationSystem.Evaluate(allRelations, save.gameTime);
                 eraSystem.Tick(save.gameTime, env.State, rhythm.State, reg);   // 纪元钟每日最后拍板
+                voleTown.Tick(save.gameTime);   // 镜像 WorldManager：纪元钟之后，读当日最新章节
             }
 
             // 仅注入情绪 + 一次响应式模拟（不推进日历）
@@ -234,7 +236,8 @@ namespace GlimmerDiary.Editor
             return new Pipeline
             {
                 save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick,
-                detector = detector, emergentTuning = emergentTuning, eraSystem = eraSystem
+                detector = detector, emergentTuning = emergentTuning, eraSystem = eraSystem,
+                voleTown = voleTown
             };
         }
 
@@ -249,6 +252,7 @@ namespace GlimmerDiary.Editor
             public EmergentMomentDetector           detector;       // 涌现时刻检测器（测试显式驱动）
             public EmergentMomentTuning             emergentTuning; // 可改 baseP/winterP=1 做确定性
             public EraSystem                        eraSystem;      // 纪元钟（可挂起测预跑语义）
+            public VoleTownSystem                   voleTown;       // 田鼠镇（小径成形/镇散，D3）
         }
 
         // 世界绝对日序（用于断言推进天数）——公式收敛到 GameDateTime 单一来源
@@ -864,6 +868,123 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] 旱债/湿度经 JsonUtility 往返 + Restore 逐字段复原");
             Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 纪元章节随档往返（{save2.eraState?.chapter}）");
             Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] 8 天连晴确实攒出旱债（{debtBefore:F3} > 0）");
+        }
+
+        // ── V1 D3：田鼠镇小径 + 称谓漂移 ─────────────────────────────
+        // 成形（活跃土堆 ≥5 → 小径记录快照土堆键）→ 镇散（洪水入衰当日 lapsed）。
+        // 称谓三档另起对照组验证（纯函数读档，不走管线）。
+        // 田鼠位置/水位每日复位防驱动层 organic 干扰（同 RunEraClock 手法）。
+        [MenuItem("GlimmerDiary/Test Vole Town")]
+        public static void RunVoleTown()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var vole = reg.GetAnimal("vole");
+            var lowland = reg.GetLocation("lowland");
+
+            Debug.Log("=== VoleTown (EditMode, V1 D3) ===");
+
+            // 阶段 1：连雨 6 天 → 雨季（定居前置，同 RunEraClock 阶段 1）
+            for (int i = 0; i < 6; i++) p.submit(-1f, 0.3f, 0.5f);
+
+            // 阶段 2：5 条土堆记录逐日铺开 + 丰年满 10 天 → 定居；
+            // 期间小径应已自行成形（5 土堆在窗口内 ≥ VoleTownSystem.MoundsForTown）
+            for (int m = 0; m < 5; m++)
+            {
+                save.gameTime.Advance(m == 0 ? 0 : 1);
+                vole.history.Add(new StateChangeRecord
+                {
+                    date = save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+            }
+            string whoAtFormation = null;
+            for (int i = 0; i < 12; i++)
+            {
+                vole.location = "center"; vole.isPresent = true;
+                lowland.waterLevel = 0.3f;
+                p.submit(0.2f, 0.3f, 0.6f);
+                // 成形当拍采样称谓——记录逐日出窗后活跃数回落， loop 末尾再读必掉档
+                if (whoAtFormation == null && save.voleTrails != null && save.voleTrails.Count > 0)
+                    whoAtFormation = VoleTownSystem.VoleAppellation(save);
+            }
+
+            bool formed = save.voleTrails != null && save.voleTrails.Count == 1 && !save.voleTrails[0].lapsed;
+            Debug.Log($"[{(formed ? "PASS" : "FAIL")}] 活跃土堆 ≥5 → 小径成形（voleTrails={save.voleTrails?.Count ?? 0}）");
+            bool keys = formed && save.voleTrails[0].moundKeys.Count == 5;
+            Debug.Log($"[{(keys ? "PASS" : "FAIL")}] 小径快照 5 个土堆键（实际 {(formed ? save.voleTrails[0].moundKeys.Count : -1)}）");
+            bool whoTown = whoAtFormation == "镇子";
+            Debug.Log($"[{(whoTown ? "PASS" : "FAIL")}] 成形当拍称谓=\"镇子\"（实际 \"{whoAtFormation ?? "n/a"}\"）");
+
+            // 阶段 3：洪水 → 章节入衰 → 当日镇散，小径冻结待淡出（塌洞照旧永久，小径是惯例）
+            lowland.waterLevel = 0.7f;
+            p.submit(-0.5f, 0.3f, 0.5f);
+            bool lapsed = formed && save.voleTrails[0].lapsed && !string.IsNullOrEmpty(save.voleTrails[0].lapseDateKey);
+            Debug.Log($"[{(lapsed ? "PASS" : "FAIL")}] 洪水入衰 → 镇散小径冻结（lapsed={(formed ? save.voleTrails[0].lapsed.ToString() : "n/a")}，chapter={save.eraState.chapter}）");
+
+            // 称谓对照组（纯函数）：荒年无堆"田鼠" → 2 堆"它们" → 5 堆"镇子"
+            var q = BuildPipeline();
+            string who0 = VoleTownSystem.VoleAppellation(q.save);
+            var qvole = q.reg.GetAnimal("vole");
+            for (int m = 0; m < 2; m++)
+            {
+                q.save.gameTime.Advance(m == 0 ? 0 : 1);
+                qvole.history.Add(new StateChangeRecord
+                {
+                    date = q.save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+            }
+            string who2 = VoleTownSystem.VoleAppellation(q.save);
+            for (int m = 0; m < 3; m++)
+            {
+                q.save.gameTime.Advance(1);
+                qvole.history.Add(new StateChangeRecord
+                {
+                    date = q.save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+            }
+            string who5 = VoleTownSystem.VoleAppellation(q.save);
+            bool drift = who0 == "田鼠" && who2 == "它们" && who5 == "镇子";
+            Debug.Log($"[{(drift ? "PASS" : "FAIL")}] 称谓三档漂移（\"{who0}\" → \"{who2}\" → \"{who5}\"）");
+        }
+
+        // ── V1 D4：缺席信章节语气 ────────────────────────────────────
+        // 窗口内翻过纪元章节 → chapter_turned 条目按永久事件档（salience 3）必进信，
+        // 且整封换编年史语气；翻页单独足以成信（不能被当噪音丢掉）。
+        [MenuItem("GlimmerDiary/Test Absence Letter Chapter Tone")]
+        public static void RunAbsenceChapterTone()
+        {
+            Debug.Log("=== AbsenceChapterTone (EditMode, V1 D4) ===");
+
+            bool s3 = AbsenceLetterComposer.Salience("chapter_turned:settlement->town") == 3;
+            Debug.Log($"[{(s3 ? "PASS" : "FAIL")}] chapter_turned:* salience = 3（永久事件档）");
+
+            var segment = new List<WorldChronicleEntry>
+            {
+                new WorldChronicleEntry { eventId = "behavior_fox:Patrol:RodentExpansion",
+                                          text = "第1年 9月1日 狐狸把东侧走了两遍。" },
+                new WorldChronicleEntry { eventId = "chapter_turned:settlement->town",
+                                          text = "第1年 9月2日 土堆之间踩出了路。——这一页，世界有了镇子。" },
+            };
+            var letter = AbsenceLetterComposer.Compose(segment, 0, null, "第1年 9月3日", chapterCrossed: true);
+            bool a1 = letter != null && letter.text.Contains("土堆之间踩出了路");
+            bool a2 = letter != null && letter.text.StartsWith("你离开的这些天，世界翻过了一页——");
+            Debug.Log($"[{(a1 ? "PASS" : "FAIL")}] chapter_turned 条目进信");
+            Debug.Log($"[{(a2 ? "PASS" : "FAIL")}] 跨章窗口整封换编年史语气开头");
+
+            // 对照：同一 segment 不带翻页标记 → 日常语气开头（条目仍按 salience 进信）
+            var plain = AbsenceLetterComposer.Compose(segment, 0, null, "第1年 9月3日");
+            bool a3 = plain != null && plain.text.StartsWith("你离开的这些天——")
+                                   && !plain.text.Contains("翻过了一页");
+            Debug.Log($"[{(a3 ? "PASS" : "FAIL")}] 无翻页标记 → 保持日常语气");
+
+            // 窗口只有翻页、无任何逐日条目 → 仍成信（翻页单独足以成信）
+            var onlyTurn = AbsenceLetterComposer.Compose(
+                new List<WorldChronicleEntry>(), 0, null, "第1年 9月3日", chapterCrossed: true);
+            bool a4 = onlyTurn != null && onlyTurn.text.Contains("翻过了一页");
+            Debug.Log($"[{(a4 ? "PASS" : "FAIL")}] 窗口只翻页无其他条目 → 仍成信");
         }
     }
 }

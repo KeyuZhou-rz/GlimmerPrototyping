@@ -33,6 +33,8 @@ public static class GlimmerBuild
             ("EraClock",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEraClock),
             ("EraSuspended",   GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEraClockSuspended),
             ("EnvPersistence", GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEnvironmentPersistence),
+            ("VoleTown",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunVoleTown),
+            ("AbsenceTone",    GlimmerDiary.Editor.AnimalDriveSmokeTest.RunAbsenceChapterTone),
         };
 
         int fails = 0, exceptions = 0;
