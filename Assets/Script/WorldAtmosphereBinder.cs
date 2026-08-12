@@ -44,6 +44,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
     public float grassSmoothingSpeed = 0.15f;
     [Tooltip("调试：强制季节（-1=跟随世界日历, 0=冬, 1=春, 2=夏, 3=秋）")]
     public int debugSeasonOverride = -1;
+    [Tooltip("调试：交还时间控制权——勾选后本绑定层不再驱动光照时刻，时间改由 DayNightAndLightController(LightManager) 自己的内部时钟走（TimeOfDay 可直接拖、TimeMultiplier 可加速），便于脱离世界日历调光")]
+    public bool debugManualTimeControl = false;
 
     // 展示层平滑后的当前值（目标值来自世界状态快照）
     private float _rain;      // [-1 雨, +1 晴]，与 weatherController.rainIntensity 同语义
@@ -288,10 +290,19 @@ public class WorldAtmosphereBinder : MonoBehaviour
 
         if (lightManager != null)
         {
-            // dayProgress 不做平滑：它本身连续微变，平滑反而会在午夜 1→0 回绕处出错
-            var rhythm = wm.GetRhythmState();
-            lightManager.driveExternally = true;
-            lightManager.SetTimePercent(rhythm.dayProgress);
+            if (debugManualTimeControl)
+            {
+                // 调试模式：交还内部时钟（TimeOfDay/TimeMultiplier 由 Inspector 直接控制），
+                // 世界日历照常走，只是光照不再跟它——只影响视觉，不动世界状态。
+                lightManager.driveExternally = false;
+            }
+            else
+            {
+                // dayProgress 不做平滑：它本身连续微变，平滑反而会在午夜 1→0 回绕处出错
+                var rhythm = wm.GetRhythmState();
+                lightManager.driveExternally = true;
+                lightManager.SetTimePercent(rhythm.dayProgress);
+            }
         }
 
         if (treePlacement != null)
