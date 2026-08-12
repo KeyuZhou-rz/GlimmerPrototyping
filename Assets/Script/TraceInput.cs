@@ -32,17 +32,14 @@ public class TraceInput : MonoBehaviour
             Debug.LogWarning($"[TraceInput] 点击但引用缺失：stageCamera={(stageCamera == null ? "null" : "ok")} pusher={(pusher == null ? "null" : "ok")}");
             return;
         }
-        // 诊断（2026-08-12 点击失灵排查）：逐闸门打日志，定位后删除
-        bool overUI = UnityEngine.EventSystems.EventSystem.current != null &&
-                      UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject();
-        // 点在 UI（信/日记）上不触发推近
-        if (overUI) { Debug.Log("[TraceInput] 点击被闸门①挡住：IsPointerOverGameObject=true"); return; }
+        // 点在 uGUI 上不触发推近。
+        // 注意（2026-08-13 点击失灵根因）：不能用 IsPointerOverGameObject()——
+        // 主相机上挂着 PhysicsRaycaster（mask=全层），新输入模块把"指针射线打到的
+        // 第一个物体"（含地形等 3D 碰撞体）都算作 pointerEnter，导致悬停世界恒 true，
+        // 全图点击被这道闸门吞掉。这里只认 GraphicRaycaster 的 uGUI 图形命中。
+        if (PointerOverUGUI(mouse.position.ReadValue())) return;
         // 信或日记面板开着：面板外点击也不推相机（双保险，防穿透）
-        if (ChronicleLetter.IsOpen || DiaryInputUI.IsOpen)
-        {
-            Debug.Log($"[TraceInput] 点击被闸门②挡住：letterOpen={ChronicleLetter.IsOpen} diaryOpen={DiaryInputUI.IsOpen}");
-            return;
-        }
+        if (ChronicleLetter.IsOpen || DiaryInputUI.IsOpen) return;
 
         Ray ray = stageCamera.ScreenPointToRay(mouse.position.ReadValue());
         if (Physics.Raycast(ray, out var hit, maxRayDistance, traceMask))
@@ -50,26 +47,30 @@ public class TraceInput : MonoBehaviour
             var tc = hit.collider.GetComponentInParent<TraceClickable>();
             if (tc != null)
             {
-                Debug.Log($"[TraceInput] 命中痕迹 {hit.collider.name}（type={tc.traceType}）→ 推近+语料");
                 pusher.PushTo(tc.focusPoint);
                 TraceCaptionUI.Show(tc.traceType, tc.traceKey);   // 推近同时给一句观察（展示层，不进世界志）
             }
             else if (hit.collider.GetComponentInParent<TerrainGenerator>() != null)
             {
-                Debug.Log($"[TraceInput] 命中地形 @ {hit.point} → 点草簌动");
                 // 触感层：点的是草海/地面——触点周围草簇簌动 + 簌簌声（占位，无素材静默）。
                 // 纯表现层回应，不碰世界状态。
                 GrassTouchFeedback.Touch(hit.point);
                 AmbientAudio.PlayGrassRustle(hit.point);
             }
-            else
-            {
-                Debug.Log($"[TraceInput] 命中 {hit.collider.name}（既非痕迹也非地形，无分支）");
-            }
         }
-        else
-        {
-            Debug.Log("[TraceInput] 射线未命中任何碰撞体");
-        }
+    }
+
+    // 指针是否悬停在 uGUI 图形上（只数 GraphicRaycaster 的命中；
+    // 场景里没有任何 GraphicRaycaster 时恒 false——信/日记由闸门② IsOpen 兜底）
+    private static bool PointerOverUGUI(Vector2 screenPos)
+    {
+        var es = UnityEngine.EventSystems.EventSystem.current;
+        if (es == null) return false;
+        var data = new UnityEngine.EventSystems.PointerEventData(es) { position = screenPos };
+        var results = new System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult>();
+        es.RaycastAll(data, results);
+        foreach (var r in results)
+            if (r.module is UnityEngine.UI.GraphicRaycaster) return true;
+        return false;
     }
 }
