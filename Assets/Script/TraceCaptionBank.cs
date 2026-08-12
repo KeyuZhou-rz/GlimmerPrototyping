@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 /// <summary>
 /// 痕迹点击语料库（Layer 3 纯文本，不读世界状态）。
@@ -27,6 +27,28 @@ public static class TraceCaptionBank
             // 田鼠镇小径（V1 D3）——占位各 1 条，设计者并行线扩到 ≥3
             "土堆之间踩出了一条路。天天走，走着走着就成了路。",
             "这条路没有名字。使用它的那几位从不登记。",
+        },
+        // ── 新生地层（V1 D5/D6）：同一对象按玩家传记分两语域 ——
+        // 记忆语气（见证过它的诞生：在线发生 ∨ 被已读信件点名）
+        ["relic_mem"] = new[]
+        {
+            "它们住过这里。那时你刚来。",
+            "这堆土你见过的——{layer}。如今沉下去半截了。",
+        },
+        // 考古语气（未见证：预演期、你错过的章节）
+        ["relic_arch"] = new[]
+        {
+            "一处旧迹。{layer}的东西，比你早。",
+            "这里沉过什么。比那棵死树老，比这条河年轻。",
+        },
+        // 出露（风暴/田鼠翻出地表）——同分两语域
+        ["exposed_mem"] = new[]
+        {
+            "它被翻出来了。{layer}你看着它落下去的，如今又回来了。",
+        },
+        ["exposed_arch"] = new[]
+        {
+            "它被翻出来了。{layer}埋下去的——那时候还没有你。",
         },
         ["trail"] = new[]
         {
@@ -69,13 +91,22 @@ public static class TraceCaptionBank
 
     /// <summary>按痕迹键稳定选句；类型未知或模板缺失时回退通用句。
     /// voleWho：田鼠称谓档（"田鼠/它们/镇子"，V1 D3 称谓漂移）——模板里的 {who} 由它替换；
-    /// 语料库本身仍不读世界状态，称谓由调用方（TraceCaptionUI）注入。</summary>
-    public static string Pick(string traceType, string traceKey, string voleWho = "田鼠")
+    /// 语料库本身仍不读世界状态，称谓由调用方（TraceCaptionUI）注入。
+    /// relic/exposed 按 witnessed 分记忆/考古两语域（V1 D6 记忆双读）——
+    /// 同一对象，读法由玩家的传记决定；layerPhrase 是断代句（{layer} 占位）。</summary>
+    public static string Pick(string traceType, string traceKey, string voleWho = "田鼠",
+                              bool witnessed = false, string layerPhrase = null)
     {
-        if (!string.IsNullOrEmpty(traceType) && Bank.TryGetValue(traceType, out var lines) && lines.Length > 0)
+        string type = traceType;
+        // 记忆双读：relic/exposed 按见证标记选语域
+        if (type == "relic" || type == "exposed")
+            type += witnessed ? "_mem" : "_arch";
+        if (!string.IsNullOrEmpty(type) && Bank.TryGetValue(type, out var lines) && lines.Length > 0)
         {
             int idx = StableIndex(traceKey, lines.Length);
-            return lines[idx].Replace("{who}", voleWho ?? "田鼠");
+            return lines[idx]
+                .Replace("{who}", voleWho ?? "田鼠")
+                .Replace("{layer}", layerPhrase ?? "很久以前");
         }
         return Fallback;
     }

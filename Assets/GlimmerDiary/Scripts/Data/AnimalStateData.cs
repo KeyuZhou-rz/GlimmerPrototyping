@@ -138,5 +138,8 @@ namespace GlimmerDiary.Data
         public string targetId;
         public string gameDate;
         public string payload;    // 如断枝方向 "E-2"
+        // 记忆双读（V1 D6）：玩家是否见证过它的发生（在线发生 ∨ 被已读信件点名）。
+        // 旧档默认 false=考古语气，语义恰好正确。
+        public bool   witnessed;
     }
 }

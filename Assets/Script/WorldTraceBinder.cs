@@ -33,7 +33,7 @@ public class WorldTraceBinder : MonoBehaviour
     public int featherMaxAge = 6;    // T5 羽毛
     public int markMaxAge    = 14;   // T6 记号
     public int restMaxAge    = 5;    // T7 歇息压痕
-    public int moundKeepCount = 6;   // T1 沉降土堆只留最新 N 个（T2 永久塌洞不受限）
+    // T1 土堆"只留最新 N"的 N 已收敛到 TraceKeyUtil.MoundKeepCount（D5 起与地层入土共用，勿在此另设字段）
 
     [Header("天气擦除（链1+风 §5.2：effectiveAge = age × (1 + Rainfall×rF + WindSpeed×wF)）")]
     [Tooltip("雨洗因子：全雨时痕迹有效老化 +50%。不改最大寿命，改有效年龄——雨天痕迹老得更快")]
@@ -81,7 +81,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail, Relic, ExposedRelic }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -89,7 +89,6 @@ public class WorldTraceBinder : MonoBehaviour
         public TraceType type;
         public string key;            // 痕迹完整键（desired 字典键=源记录哈希），点击语料用
         public int seed;
-        public int birthDay;          // ToDays(记录日期)；RangeHalt 用 -1（实时态）
         public GameObject root;
         public readonly List<Renderer> renderers = new();
         // 本痕迹贡献的压痕点（世界 XZ + 半径 + 基础强度，随龄再衰减）
@@ -216,6 +215,10 @@ public class WorldTraceBinder : MonoBehaviour
         sig = sig * 31 + (save.voleTrails?.Count ?? 0);
         if (save.voleTrails != null)
             foreach (var tr in save.voleTrails) sig = sig * 31 + (tr.lapsed ? 1 : 0);
+        // 地层（V1 D5）：入土/出露各触发一次重建（沉降进度由 gameDay 项逐日驱动）
+        sig = sig * 31 + (save.strata?.Count ?? 0);
+        if (save.strata != null)
+            foreach (var s in save.strata) sig = sig * 31 + (s.exposed ? 1 : 0);
         // 鹿鼠活动范围收缩态（实时字段，无历史记录）——跨过阈值也要触发重建
         var dm = wm.Registry?.GetAnimal("deer_mouse");
         sig = sig * 31 + (dm != null && dm.activityRange < 0.5f ? 1 : 0);
@@ -245,13 +248,12 @@ public class WorldTraceBinder : MonoBehaviour
             : 1f;
         _markers.Clear();   // 旧标记随 root 销毁重建，引用丢弃
         var desired = new Dictionary<string, System.Action<TraceInstance>>();
-        var birthDays = new Dictionary<string, int>();
         var fresh = new HashSet<string>();   // 有效年龄 ≤ freshAgeThreshold 的痕迹键（切片 9 标记）
+        var nonClickable = new HashSet<string>();   // 沉入地层档的痕迹：存在但不可点（几乎不可读，直到出露）
 
-        // —— T1/T2/T3/T6：从动物 history 与 location permanentChanges 派生 ——
+        // —— T1/T3/T6：从动物 history 派生；T2 塌洞已由地层接管（D5，见下方 strata 分支）——
         // T1 只从 history 派生（VoleClaimedZone 事件与 vole_expansion 记录同 tick 双发，
         // 单一来源即天然去重）
-        var moundKeys = new List<string>();   // (key, birthDay) 用于"只留最新 N"裁剪
 
         if (save.animals != null)
         {
@@ -271,27 +273,12 @@ public class WorldTraceBinder : MonoBehaviour
                     int seed = Fnv1a(key);
                     string from = rec.fromValue, to = rec.toValue, trigger = rec.triggeredBy;
 
-                    // T1 新翻土堆：田鼠扩张/搬家
-                    if (trigger == "vole_expansion" || trigger == "vole_relocate_flood")
-                    {
-                        string mk = "mound|" + key;
-                        moundKeys.Add(mk);
-                        birthDays[mk] = day;
-                        // 水毁态（§5.1 第四老化态）：按土堆实际所在 zone 的湿度判定——
-                        // 扩张土堆在 center↔stone 边（按 center）；搬家新洞口在目的地 zone。
-                        // （低洼被淹的旧巢是 T2 塌洞的表达范围，两者分工不混）
-                        string moundZone = trigger == "vole_expansion" ? "center"
-                                         : (string.IsNullOrEmpty(to) ? "lowland" : to);
-                        bool damaged = IsFloodDamaged(save, moundZone, mk, day);
-                        desired[mk] = t => SpawnMound(t, trigger, to, age, seed, damaged);
-                        if (age <= freshAgeThreshold) fresh.Add(mk);
-                    }
+                    // （T1 土堆改走 TraceKeyUtil.EnumVisibleMounds 单一来源，见下方）
 
                     // T6 狐狸巡逻记号（领地边界，语料："石头区和中央之间…留了几个记号"）
                     if (trigger == "fox_patrol" && age <= markMaxAge)
                     {
                         string sk = "marks|" + key;
-                        birthDays[sk] = day;
                         desired[sk] = t => SpawnMarks(t, from, to, age, seed);
                         if (age <= freshAgeThreshold) fresh.Add(sk);
                     }
@@ -300,7 +287,6 @@ public class WorldTraceBinder : MonoBehaviour
                     if (age <= trailMaxAge && !string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(to) && from != to)
                     {
                         string tk = "trail|" + key;
-                        birthDays[tk] = day;
                         desired[tk] = t => SpawnTrail(t, from, to, age, seed);
                         if (age <= freshAgeThreshold) fresh.Add(tk);
                     }
@@ -308,15 +294,25 @@ public class WorldTraceBinder : MonoBehaviour
             }
         }
 
-        // T1 裁剪：土堆沉降后保留，但总数只留最新 moundKeepCount 个
-        if (moundKeys.Count > moundKeepCount)
+        // T1 新翻土堆：地表只留最新 MoundKeepCount 个（EnumVisibleMounds 唯一来源）；
+        // 出窗的不是删除，是入土——由下方 strata 分支接续渲染（V1 D5：沉降取代消失）。
+        // 水毁态判定（§5.1 第四老化态）口径不变：按土堆所在 zone 的历史湿度极值锁存。
+        var visibleMounds = new List<TraceKeyUtil.MoundRecord>();
+        TraceKeyUtil.EnumVisibleMounds(save, visibleMounds);
+        foreach (var m in visibleMounds)
         {
-            moundKeys.Sort((a, b) => birthDays[b].CompareTo(birthDays[a]));
-            for (int i = moundKeepCount; i < moundKeys.Count; i++)
-                desired.Remove(moundKeys[i]);
+            float mage = (today - m.birthDay) * weatherMul;
+            bool damaged = IsFloodDamaged(save, m.zone, m.fullKey, m.birthDay);
+            var mm = m;   // struct 闭包捕获
+            // 种子口径与 TryMoundPosition 一致：Fnv1a(去掉 "mound|" 前缀的键)——别换，换则全图土堆挪位
+            desired[m.fullKey] = t => SpawnMound(t, mm.trigger, mm.toValue, mage,
+                Fnv1a(mm.fullKey.Substring("mound|".Length)), damaged);
+            if (mage <= freshAgeThreshold) fresh.Add(m.fullKey);
         }
 
-        // T2 塌陷旧洞（permanentChanges，永不移除——不可逆原则）
+        // T2 塌陷旧洞（permanentChanges，记录永不删——不可逆原则）。
+        // D5 起塌洞出生即入土（StratumSystem 方案 A）：已入土的由下方 strata 分支接管渲染，
+        // 这里只兜底尚未入土的（本拍刚塌、StratumSystem 还没跑到的边际拍）。
         if (save.locations != null)
         {
             foreach (var loc in save.locations)
@@ -326,10 +322,10 @@ public class WorldTraceBinder : MonoBehaviour
                 {
                     if (pc.changeType != "burrow_collapse") continue;
                     string key = $"collapse|{loc.locationId}|{pc.date}|{pc.changeType}";
+                    if (FindStratum(save, key) != null) continue;   // 已入土 → 地层分支接管
                     int seed = Fnv1a(key);
                     string zone = loc.locationId;
                     int cday = ToDays(ParseKeyDate(pc.date));
-                    birthDays[key] = cday;
                     desired[key] = t => SpawnCollapsedBurrow(t, zone, seed);
                     // 新出现的塌洞也标记几天——永久地貌的"诞生"同样是值得注意的变化
                     if ((today - cday) * weatherMul <= freshAgeThreshold) fresh.Add(key);
@@ -363,7 +359,6 @@ public class WorldTraceBinder : MonoBehaviour
                              ? e.payload.Substring(colon + 1) : "riverbank";
                     }
                     string fk = "feathers|" + key;
-                    birthDays[fk] = day;
                     desired[fk] = t => SpawnFeathers(t, zone, age, seed);
                     if (age <= freshAgeThreshold) fresh.Add(fk);
                 }
@@ -373,7 +368,6 @@ public class WorldTraceBinder : MonoBehaviour
                 {
                     string zone = e.targetId;
                     string rk = "rest|" + key;
-                    birthDays[rk] = day;
                     desired[rk] = t => SpawnRestPatch(t, zone, age, seed);
                     if (age <= restFreshAgeThreshold) fresh.Add(rk);
                 }
@@ -387,7 +381,6 @@ public class WorldTraceBinder : MonoBehaviour
                     if (rawAge >= sproutDays && rawAge <= sproutLifespan)
                     {
                         string sk = "sprout|" + key;
-                        birthDays[sk] = day;
                         desired[sk] = t => SpawnSprout(t, e.targetId, seed);
                         // 冒苗头几天给新鲜标记——"低洼冒了新苗"正是标记该指向的变化
                         if (rawAge <= sproutDays + freshAgeThreshold) fresh.Add(sk);
@@ -403,7 +396,6 @@ public class WorldTraceBinder : MonoBehaviour
         if (deerMouse != null && deerMouse.isPresent && deerMouse.activityRange < 0.5f)
         {
             const string key = "rangehalt|deer_mouse";
-            birthDays[key] = today;
             desired[key] = t => SpawnRangeHalt(t, Fnv1a(key));
             fresh.Add(key);   // 实时态恒新鲜——它出现本身就是"刚发生的变化"
         }
@@ -416,7 +408,6 @@ public class WorldTraceBinder : MonoBehaviour
             {
                 if (string.IsNullOrEmpty(zone)) continue;
                 string ck = "cracks|" + zone;
-                birthDays[ck] = today;
                 desired[ck] = t => SpawnCracks(t, zone, Fnv1a(ck));
             }
         }
@@ -431,11 +422,44 @@ public class WorldTraceBinder : MonoBehaviour
                 int lapseAge = tr.lapsed ? today - ToDays(ParseKeyDate(tr.lapseDateKey)) : 0;
                 if (tr.lapsed && lapseAge > VoleTrailRecord.FadeDays) continue;   // 淡完即撤
                 string vk = $"vtrail|{tr.formedDateKey}";
-                birthDays[vk] = formDay;
                 var rec = tr;   // 闭包捕获
                 desired[vk] = t => SpawnVoleTrail(t, rec, lapseAge);
                 // 刚成形那天指一下（镇诞生是新闻）；之后是常态不上标记
                 if (!tr.lapsed && (today - formDay) * weatherMul <= freshAgeThreshold) fresh.Add(vk);
+            }
+        }
+
+        // 新生地层（V1 D5/D6）：入土痕迹的三态渲染——
+        //   遗存（depth < RelicMaxDepth）：塌矮、色沉、微陷，可点（旧迹语气）；
+        //   地层（更深且未出露）：只剩一点土色异样，不可点——几乎不可读，直到出露；
+        //   出露（风暴/田鼠翻出）：半埋挺回地表，可点（记忆/考古双语域），出露当日上标记。
+        // 记录永不删；每区地层档只画最新 MaxPerZone 件（预算阀），更老的在档继续沉。
+        if (save.strata != null && save.strata.Count > 0)
+        {
+            var zoneBudget = new Dictionary<string, int>();
+            var sorted = new List<StratumRecord>(save.strata);
+            sorted.Sort((a, b) => string.Compare(b.buriedDateKey, a.buriedDateKey, System.StringComparison.Ordinal));
+            foreach (var s in sorted)
+            {
+                bool deep = !s.exposed && s.depth >= StratumRecord.RelicMaxDepth;
+                if (deep)
+                {
+                    zoneBudget.TryGetValue(s.zone, out int zn);
+                    if (zn >= StratumRecord.MaxPerZone) continue;   // 超限不画，档还在
+                    zoneBudget[s.zone] = zn + 1;
+                }
+                var rec = s;   // 闭包捕获
+                desired[rec.sourceKey] = t => SpawnStratum(t, rec);
+                if (!deep) nonClickable.Remove(rec.sourceKey); else nonClickable.Add(rec.sourceKey);
+                if (rec.exposed)
+                {
+                    // 出露当日指一下（旧物重见天日是新闻）
+                    if (today - ToDays(ParseKeyDate(rec.exposedDateKey)) <= freshAgeThreshold)
+                        fresh.Add(rec.sourceKey);
+                }
+                else if (rec.kind == "collapse" &&
+                         (today - ToDays(ParseKeyDate(rec.buriedDateKey))) * weatherMul <= freshAgeThreshold)
+                    fresh.Add(rec.sourceKey);   // 塌洞诞生标记行为从 T2 原样保留
             }
         }
 
@@ -460,14 +484,14 @@ public class WorldTraceBinder : MonoBehaviour
                 var again = new TraceInstance { spawnRealTime = keepSpawnTime, key = kv.Key };
                 kv.Value(again);
                 _traces[kv.Key] = again;
-                FinishTrace(again, fresh.Contains(kv.Key));
+                FinishTrace(again, fresh.Contains(kv.Key), !nonClickable.Contains(kv.Key));
             }
             else
             {
                 var t = new TraceInstance { spawnRealTime = Time.time, key = kv.Key };
                 kv.Value(t);
                 _traces[kv.Key] = t;
-                FinishTrace(t, fresh.Contains(kv.Key));
+                FinishTrace(t, fresh.Contains(kv.Key), !nonClickable.Contains(kv.Key));
             }
         }
     }
@@ -555,6 +579,102 @@ public class WorldTraceBinder : MonoBehaviour
         AddProp(t, TraceKit.MoundCollapsed, dirtMaterial, dirtSettled * 0.9f,
                 p + Vector3.up * 0.01f,
                 Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f), Vector3.one);
+    }
+
+    /// <summary>
+    /// 新生地层（V1 D5）：入土痕迹的三态渲染，全部复用现有 prefab 的 scale/tint/下沉，零新美术。
+    ///   遗存：随深度塌矮、色沉向地表、微微下陷——"这是去年的东西了"；
+    ///   地层：只剩一片比地表略沉的色片（FinishTrace 不挂点击——几乎不可读，直到出露）；
+    ///   出露：半埋挺回地表，色略新（刚翻上来的土），可点。
+    /// 位置连续性：mound 原地重解（原土堆坐标）；collapse/vtrail 用 源键种子+zone 采样——
+    /// 与出生视觉同一个点，玩家看到的是"同一个东西沉下去了"，不是别处冒出来的新东西。
+    /// </summary>
+    private void SpawnStratum(TraceInstance t, StratumRecord rec)
+    {
+        int seed = Fnv1a(rec.sourceKey);
+        t.seed = seed;
+        bool deep = !rec.exposed && rec.depth >= StratumRecord.RelicMaxDepth;
+        t.type = rec.exposed ? TraceType.ExposedRelic : TraceType.Relic;
+
+        Vector3 p;
+        if (rec.kind == "mound" && TryMoundPosition(rec.sourceKey, out p)) { /* 原地沉降 */ }
+        else if (!zoneMap.TrySampleZone(rec.zone, seed, out p)) return;
+
+        float relicT = Mathf.Clamp01(rec.depth / StratumRecord.RelicMaxDepth);
+        var rng = new System.Random(seed);
+        var yaw = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+        t.root = NewRoot($"Stratum_{seed:X8}", p);
+
+        if (deep)
+        {
+            // 地层档：一点土色异样（比地表略沉），不挂压痕
+            AddProp(t, TraceKit.PressedOval, dirtMaterial, dirtSettled * 0.92f,
+                    p + Vector3.up * 0.008f, yaw, new Vector3(0.9f, 1f, 0.9f));
+            return;
+        }
+
+        if (rec.exposed)
+        {
+            // 出露档：半埋挺起——比遗存高、色略新
+            Color c = Color.Lerp(dirtSettled, dirtDry, 0.35f);
+            switch (rec.kind)
+            {
+                case "mound":
+                    AddProp(t, TraceKit.Mound, dirtMaterial, c, p + Vector3.up * 0.01f, yaw,
+                            new Vector3(1f, 0.55f, 1f));
+                    break;
+                case "collapse":
+                    AddProp(t, TraceKit.MoundCollapsed, dirtMaterial, c * 0.95f, p + Vector3.up * 0.01f, yaw,
+                            Vector3.one * 0.85f);
+                    break;
+                default:   // vtrail：重新露出的一小段踩实路面
+                    for (int i = 0; i < 3; i++)
+                    {
+                        var off = new Vector3((float)(rng.NextDouble() - 0.5) * 2.4f, 0f,
+                                              (float)(rng.NextDouble() - 0.5) * 2.4f);
+                        AddProp(t, TraceKit.PressedOval, pressedMaterial, c,
+                                p + off + Vector3.up * 0.01f, yaw, new Vector3(0.9f, 1f, 0.9f));
+                    }
+                    break;
+            }
+            return;
+        }
+
+        // 遗存档：随深度塌矮/色沉/下陷
+        Color rc = Color.Lerp(dirtSettled, dirtSettled * 0.85f, relicT);
+        switch (rec.kind)
+        {
+            case "mound":
+                AddProp(t, TraceKit.Mound, dirtMaterial, rc,
+                        p + Vector3.up * (0.01f - 0.03f * relicT), yaw,
+                        new Vector3(1f, Mathf.Lerp(0.6f, 0.3f, relicT), 1f));
+                break;
+            case "collapse":
+                AddProp(t, TraceKit.MoundCollapsed, dirtMaterial, rc * 0.95f,
+                        p + Vector3.up * (0.01f - 0.025f * relicT), yaw,
+                        Vector3.one * Mathf.Lerp(0.95f, 0.7f, relicT));
+                break;
+            default:   // vtrail：淡回草里的一小段路
+                Color vc = Color.Lerp(pressedTint * 0.92f, dirtSettled, 0.4f + 0.5f * relicT);
+                for (int i = 0; i < 3; i++)
+                {
+                    var off = new Vector3((float)(rng.NextDouble() - 0.5) * 2.4f, 0f,
+                                          (float)(rng.NextDouble() - 0.5) * 2.4f);
+                    AddProp(t, TraceKit.PressedOval, pressedMaterial, vc,
+                            p + off + Vector3.up * (0.01f - 0.01f * relicT), yaw,
+                            new Vector3(Mathf.Lerp(0.9f, 0.6f, relicT), 1f, Mathf.Lerp(0.9f, 0.6f, relicT)));
+                }
+                break;
+        }
+    }
+
+    // 地层记录查询（T2 兜底分支判"是否已入土"用；binder 不导入 Core，直接读存档）
+    private static StratumRecord FindStratum(WorldSaveData save, string sourceKey)
+    {
+        if (save?.strata == null) return null;
+        foreach (var s in save.strata)
+            if (s.sourceKey == sourceKey) return s;
+        return null;
     }
 
     /// <summary>T3 脚印串：沿 from→to 边 4-6 片小椭圆，左右交替，随龄缩小褪色。</summary>
@@ -809,9 +929,11 @@ public class WorldTraceBinder : MonoBehaviour
 
     // 切片 9：生成后收尾——挂可点击 collider（B 方案推近的命中体），新鲜痕迹头顶出占位标记。
     // 红线：标记指向场景位置，永不暴露数值。
-    private void FinishTrace(TraceInstance t, bool isFresh)
+    // clickable=false（沉入地层档）：不挂命中体不上标记——几乎不可读，直到出露。
+    private void FinishTrace(TraceInstance t, bool isFresh, bool clickable = true)
     {
         if (t.root == null) return;
+        if (!clickable) return;
 
         // 命中体：包住全部子 prop 的盒（加高加一点，扁平脚印也好点）
         var b = new Bounds(t.root.transform.position, Vector3.one * 0.5f);
@@ -850,6 +972,8 @@ public class WorldTraceBinder : MonoBehaviour
         TraceType.EarthCrack     => "cracks",
         TraceType.Sprout         => "sprout",
         TraceType.VoleTrail      => "vtrail",
+        TraceType.Relic          => "relic",
+        TraceType.ExposedRelic   => "exposed",
         _                        => "trace",
     };
 

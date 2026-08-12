@@ -15,6 +15,9 @@ namespace GlimmerDiary.Data
         public string fromValue;     // 变更前
         public string toValue;       // 变更后
         public string triggeredBy;   // 触发事件ID，如 "flood_level_high"
+        // 记忆双读（V1 D6）：诞生时玩家是否在场（WorldManager 在非 catch-up 拍后统一打戳）。
+        // 旧档默认 false=考古语气，语义恰好正确。
+        public bool   witnessed;
     }
 
     // ─────────────────────────────────────────
@@ -99,6 +102,9 @@ namespace GlimmerDiary.Data
         public string changeType;    // "rock_split" / "burrow_abandoned"
         public string description;   // "东侧大石裂成两半，裂缝朝北"
         public string triggeredBy;
+        // 记忆双读（V1 D6）：玩家是否见证过它的诞生（在线发生 ∨ 被已读信件点名）。
+        // 旧档默认 false=考古语气，语义恰好正确（预演期/错过的章节就是没见证过）。
+        public bool   witnessed;
     }
 
     // ─────────────────────────────────────────
@@ -121,5 +127,37 @@ namespace GlimmerDiary.Data
         public bool   lapsed;                 // 镇散 = 小径停止重现
         public string lapseDateKey;           // 冻结日（淡出起点）
         public int    belowThresholdDays;     // 活跃土堆跌破阈值的连续天数（lapse 判据之一）
+        public bool   witnessed;              // 记忆双读（V1 D6）：成形时玩家是否在场
+    }
+
+    // ─────────────────────────────────────────
+    // 新生地层（V1 D5）：持久型痕迹的终点不再是删除，而是沉降。
+    //
+    // 入土即建档（本记录），此后深度逐日积分（StratumSystem 唯一写者）：
+    //   遗存（relic）  —— 塌矮、色沉、微陷，仍可读（"这是去年的东西了"）
+    //   地层（stratum）—— 沉入地下，几乎不可读，直到出露（exposed）
+    // 深度本身即记录：埋得深 = 那几年风大/雨多/草盛（速率读 WindSpeed/Rainfall/草密度）。
+    // 预算：每区地层对象上限 StratumSystem.MaxPerZone，超限最老的加深降分辨率，记录永不删。
+    // ─────────────────────────────────────────
+    [Serializable]
+    public class StratumRecord
+    {
+        public string sourceKey;      // 源痕迹键（mound|… / vtrail|… / collapse|…，TraceKeyUtil 口径）
+        public string kind;           // "mound" / "vtrail" / "collapse"
+        public string zone;           // 所在区（lowland/center/…）
+        public string buriedDateKey;  // 入土日（ToKeyString）
+        public int    chapterOrdinal; // 封闭层断代：入土时已发生的 ChapterTurned 次数
+        public string chapterAtBurial;// 入土时所在章节（EraSystem 章节 id，断代语料用）
+        public float  depth;          // 当前埋藏深度（积分值，只增不减）
+        public bool   exposed;        // 出露（风暴剥蚀/田鼠翻土）——重见天日
+        public string exposedDateKey; // 出露日
+        public string exposedBy;      // "storm" / "vole_dig"
+        public bool   witnessed;      // 记忆双读：入土时从源记录继承
+
+        // 遗存可读深度上限：depth 超过即沉入地层（几乎不可读，直到出露）。
+        // 放 Data 层：binder（L3）按它选视觉档，纪律不导入 Core。
+        public const float RelicMaxDepth = 1.0f;
+        // 每区地层对象渲染上限（预算阀）：超限最老的继续加深、降分辨率，记录永不删。
+        public const int   MaxPerZone    = 8;
     }
 }

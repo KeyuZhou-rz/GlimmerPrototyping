@@ -47,6 +47,7 @@ public class WorldManager : MonoBehaviour
     private VegetationSystem       _vegetationSystem;
     private EraSystem              _eraSystem;
     private VoleTownSystem         _voleTownSystem;
+    private StratumSystem          _stratumSystem;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -114,6 +115,7 @@ public class WorldManager : MonoBehaviour
         _emergentDetector  = new EmergentMomentDetector(Registry, _saveData, emergentTuning);
         _eraSystem         = new EraSystem(_saveData);
         _voleTownSystem    = new VoleTownSystem(_saveData);
+        _stratumSystem     = new StratumSystem(_saveData);
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
@@ -227,6 +229,9 @@ public class WorldManager : MonoBehaviour
         // 田鼠镇（V1 D3）：在纪元钟之后——镇散判据要读当日最新章节。
         // 只读土堆记录写 voleTrails，田鼠 AI 一行不动（§4.3 红线）
         _voleTownSystem.Tick(_saveData.gameTime);
+
+        // 新生地层（V1 D5）：在小径之后——小径当日 lapsed 淡完即入土，隔日边界不跨拍
+        _stratumSystem.Tick(_saveData.gameTime, Environment.State, EmotionInertia.CurrentEEnv);
     }
 
     // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
@@ -243,7 +248,15 @@ public class WorldManager : MonoBehaviour
         for (int d = 0; d < deltaDays; d++)
         {
             AdvanceCalendar();                          // 始终推进 gameTime（= 墙钟天数）
-            if (d >= simulateFrom) SimulatePass();      // 软上限跳过深层历史
+            if (d >= simulateFrom)
+            {
+                var wMark = WitnessSnapshot(_saveData); // 记忆双读：拍前计数快照
+                SimulatePass();
+                // 非 catch-up 拍 = 玩家在场——本拍新生的记录统一戳 witnessed（V1 D6）。
+                // 集中在此打戳（而非各创建点）：创建点散在驱动/规则/纪元/地层各处，
+                // 单点打戳未来新系统零接入成本。
+                if (!isCatchUp) WitnessStampNew(_saveData, wMark);
+            }
         }
 
         if (isCatchUp)
@@ -263,10 +276,11 @@ public class WorldManager : MonoBehaviour
                 letter = AbsenceLetterComposer.Compose(
                     segment,
                     CountWindowEvents(startAbsDays, WorldEventType.TreeBranchBroke),
-                    CollectWindowCollapses(startAbsDays),
+                    CollectWindowCollapses(startAbsDays, out var collapseKeys),
                     _saveData.gameTime.ToDisplayString(),
                     rhythm: NaturalRhythm.State,
-                    chapterCrossed: WindowHasChapterTurn(startAbsDays));
+                    chapterCrossed: WindowHasChapterTurn(startAbsDays),
+                    collapseWitnessKeys: collapseKeys);
             }
             if (extra > 0)
                 _saveData.pendingChronicles.RemoveRange(chronicleMark, extra);
@@ -286,15 +300,20 @@ public class WorldManager : MonoBehaviour
         return n;
     }
 
-    // 缺席窗口内新增塌洞（burrow_collapse）的 location displayName 列表
-    private List<string> CollectWindowCollapses(int startAbsDays)
+    // 缺席窗口内新增塌洞（burrow_collapse）的 location displayName 列表；
+    // out keys：同批塌洞的身份键（collapse|loc|date|type）——信件点名入 witnessKeys（V1 D6 记忆双读）
+    private List<string> CollectWindowCollapses(int startAbsDays, out List<string> keys)
     {
         var names = new List<string>();
+        keys = new List<string>();
         foreach (var loc in _saveData.locations)
             foreach (var pc in loc.permanentChanges)
                 if (pc.changeType == "burrow_collapse"
                     && GameDateTime.ParseKey(pc.date).ToAbsoluteDays() >= startAbsDays)
+                {
                     names.Add(loc.displayName);
+                    keys.Add($"collapse|{loc.locationId}|{pc.date}|{pc.changeType}");
+                }
         return names;
     }
 
@@ -306,6 +325,82 @@ public class WorldManager : MonoBehaviour
                 && GameDateTime.ParseKey(e.gameDate).ToAbsoluteDays() >= startAbsDays)
                 return true;
         return false;
+    }
+
+    // ── 记忆双读（V1 D6）────────────────────────────────────────
+    // witnessed 的唯一写入路径：①非 catch-up 拍后统一打戳（在场见证）；
+    // ②MarkWitnessed——信件被阅读时把信里点名的痕迹翻真（读信知道了它，也算见证）。
+
+    // 拍前计数快照（public static：冒烟管线镜像 SimulatePass 时复用，同 PropagateRainfallToLocations 口径）
+    public static int[] WitnessSnapshot(WorldSaveData s)
+    {
+        var list = new List<int>
+        {
+            s.worldEvents?.Count ?? 0,
+            s.voleTrails?.Count ?? 0
+        };
+        if (s.animals != null)   foreach (var a in s.animals)   list.Add(a.history?.Count ?? 0);
+        if (s.locations != null) foreach (var l in s.locations) list.Add(l.permanentChanges?.Count ?? 0);
+        return list.ToArray();
+    }
+
+    // 把快照之后新生的记录戳 witnessed=true（顺序必须与 WitnessSnapshot 一致）
+    public static void WitnessStampNew(WorldSaveData s, int[] before)
+    {
+        int i = 0;
+        int evFrom = before[i++];
+        if (s.worldEvents != null)
+            for (int k = evFrom; k < s.worldEvents.Count; k++) s.worldEvents[k].witnessed = true;
+        int vtFrom = before[i++];
+        if (s.voleTrails != null)
+            for (int k = vtFrom; k < s.voleTrails.Count; k++) s.voleTrails[k].witnessed = true;
+        if (s.animals != null)
+            foreach (var a in s.animals)
+            {
+                int from = before[i++];
+                if (a.history != null)
+                    for (int k = from; k < a.history.Count; k++) a.history[k].witnessed = true;
+            }
+        if (s.locations != null)
+            foreach (var l in s.locations)
+            {
+                int from = before[i++];
+                if (l.permanentChanges != null)
+                    for (int k = from; k < l.permanentChanges.Count; k++) l.permanentChanges[k].witnessed = true;
+            }
+    }
+
+    // 信件阅读回执：把点名键对应的源记录与地层记录 witnessed 翻真（ChronicleLetter 经此写入）。
+    // static：冒烟管线无 WorldManager 实例也可验证同一逻辑（同 PropagateRainfallToLocations 口径）。
+    public static void MarkWitnessed(WorldSaveData save, List<string> keys)
+    {
+        if (save == null || keys == null) return;
+        foreach (var key in keys)
+        {
+            // collapse|{locationId}|{date}|{changeType}
+            var parts = key.Split('|');
+            if (parts.Length == 4 && parts[0] == "collapse" && save.locations != null)
+                foreach (var loc in save.locations)
+                {
+                    if (loc.locationId != parts[1] || loc.permanentChanges == null) continue;
+                    foreach (var pc in loc.permanentChanges)
+                        if (pc.date == parts[2] && pc.changeType == parts[3]) pc.witnessed = true;
+                }
+            // 可能已先入土后被点名——同一身份键同步翻
+            if (save.strata != null)
+                foreach (var s in save.strata)
+                    if (s.sourceKey == key) s.witnessed = true;
+        }
+    }
+
+    // 地层语料上下文透传：relic/exposed 点击语料要 witnessed 档 + 断代句。
+    // L3 文本层不导入 Core，经此读（同 GetVoleAppellation 管线）。
+    public bool TryGetStratumContext(string sourceKey, out bool witnessed, out string layerPhrase)
+    {
+        var s = _stratumSystem?.FindStratum(sourceKey);
+        witnessed  = s?.witnessed ?? false;
+        layerPhrase = s != null ? StratumSystem.LayerPhrase(s) : null;
+        return s != null;
     }
 
     // 情绪注入：仅写日记时调用，只更新 E_env（+ 登记 pending 脉冲），不推进日历

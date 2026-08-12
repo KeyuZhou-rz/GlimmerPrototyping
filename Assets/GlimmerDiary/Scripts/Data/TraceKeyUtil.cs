@@ -14,6 +14,9 @@ namespace GlimmerDiary.Data
     //   只数土堆记录与数全部 location 记录结果相同（baseKey 含 trigger，互不干扰）。
     public static class TraceKeyUtil
     {
+        /// <summary>地表同时保留的土堆上限（"只留最新 N"）——binder 裁剪与地层入土共用此数，勿各写一份。</summary>
+        public const int MoundKeepCount = 6;
+
         /// <summary>FNV-1a 32 位。绝不用 string.GetHashCode()——它逐进程随机化，痕迹会每次启动乱跳。</summary>
         public static int Fnv1a(string s)
         {
@@ -35,6 +38,9 @@ namespace GlimmerDiary.Data
             public string fullKey;    // "mound|vole|Y1-M9-D3|lowland->center|vole_expansion[#n]"
             public string zone;       // 扩张按 "center"；搬家按目的地（同 binder SpawnMound 口径）
             public int    birthDay;   // ToAbsoluteDays
+            public string trigger;    // vole_expansion / vole_relocate_flood（binder 重解坐标用）
+            public string toValue;    // 搬家目的地（同上）
+            public bool   witnessed;  // 记忆双读：源记录诞生时玩家是否在场（入土继承）
         }
 
         /// <summary>
@@ -59,13 +65,28 @@ namespace GlimmerDiary.Data
                     string key = n == 0 ? baseKey : $"{baseKey}#{n}";
                     outList.Add(new MoundRecord
                     {
-                        fullKey  = "mound|" + key,
-                        zone     = rec.triggeredBy == "vole_expansion" ? "center"
-                                 : (string.IsNullOrEmpty(rec.toValue) ? "lowland" : rec.toValue),
-                        birthDay = GameDateTime.ParseKey(rec.date).ToAbsoluteDays()
+                        fullKey   = "mound|" + key,
+                        zone      = rec.triggeredBy == "vole_expansion" ? "center"
+                                  : (string.IsNullOrEmpty(rec.toValue) ? "lowland" : rec.toValue),
+                        birthDay  = GameDateTime.ParseKey(rec.date).ToAbsoluteDays(),
+                        trigger   = rec.triggeredBy,
+                        toValue   = rec.toValue,
+                        witnessed = rec.witnessed
                     });
                 }
             }
+        }
+
+        /// <summary>
+        /// 地表可见土堆集（最新 MoundKeepCount 个，按出生日降序）——唯一实现。
+        /// binder 只渲染这批；不在批里的 = 已出窗，由 StratumSystem 入土（新生地层 D5）。
+        /// </summary>
+        public static void EnumVisibleMounds(WorldSaveData save, List<MoundRecord> outList)
+        {
+            EnumVoleMoundRecords(save, outList);
+            outList.Sort((a, b) => b.birthDay.CompareTo(a.birthDay));
+            if (outList.Count > MoundKeepCount)
+                outList.RemoveRange(MoundKeepCount, outList.Count - MoundKeepCount);
         }
         /// <summary>
         /// 活跃土堆数（窗口内 + lowland/center）——唯一实现。

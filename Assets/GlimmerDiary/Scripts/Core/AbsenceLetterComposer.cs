@@ -24,6 +24,8 @@ namespace GlimmerDiary.Core
         // collapseLocationNames：同窗口新增 burrow_collapse 的 location displayName 列表
         // chapterCrossed：窗口内是否翻过纪元章节（D4）——翻过则整封换编年史语气，
         //   且单独足以成信（章节翻页是永久事件档，不能被当噪音丢掉）
+        // collapseWitnessKeys：点名塌洞的身份键（D6 记忆双读）——随信入 witnessKeys，
+        //   信被阅读时这些键的记录 witnessed 翻真（读信知道了它，也算"见证"）
         // 返回合成信条目；不值得写信时返回 null
         public static WorldChronicleEntry Compose(
             List<WorldChronicleEntry> segment,
@@ -32,7 +34,8 @@ namespace GlimmerDiary.Core
             string todayDisplay,
             int maxEntries = 5,
             NaturalRhythmState rhythm = null,   // §5.5 优先级 6：季节尾注（秋/冬一句，春夏不写）
-            bool chapterCrossed = false)
+            bool chapterCrossed = false,
+            List<string> collapseWitnessKeys = null)
         {
             // ① salience 分级：级别降序，同级新→旧（segment 本身旧→新，index 降序即新→旧）
             var picked = new List<WorldChronicleEntry>();
@@ -82,7 +85,8 @@ namespace GlimmerDiary.Core
                 gameDate     = todayDisplay,
                 eventId      = LetterEventId,
                 text         = sb.ToString().TrimEnd(),
-                hasBeenShown = false
+                hasBeenShown = false,
+                witnessKeys  = collapseWitnessKeys
             };
         }
 

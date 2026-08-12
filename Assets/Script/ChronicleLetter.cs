@@ -61,6 +61,9 @@ public class ChronicleLetter : MonoBehaviour
                 var e = save.pendingChronicles[i];
                 e.hasBeenShown = true;              // 已读回执：本组件是唯一写者
                 save.shownChronicles.Add(e);
+                // 记忆双读（V1 D6）：信里点名过的痕迹，读信即"见证"——
+                // witnessed 的写入经 WorldManager 静态入口（本组件不直接碰模拟记录）
+                WorldManager.MarkWitnessed(save, e.witnessKeys);
                 if (i > 0) sb.Append('\n');
                 sb.AppendLine(e.text);
             }

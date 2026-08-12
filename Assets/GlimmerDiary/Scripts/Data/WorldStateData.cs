@@ -89,6 +89,10 @@ namespace GlimmerDiary.Data
         // 田鼠镇小径（V1 清单 D3，VoleTownSystem 唯一写者）。
         // 旧存档 → null → VoleTownSystem 构造时建空表。
         public List<VoleTrailRecord>   voleTrails;
+
+        // 新生地层（V1 清单 D5，StratumSystem 唯一写者）。
+        // 旧存档 → null → StratumSystem 构造时建空表。记录只增不删（不可逆原则）。
+        public List<StratumRecord>     strata;
     }
 
     // 环境积分态快照：只存有状态字段；Rainfall/WindSpeed/FogDensity/StarVisibility
@@ -132,5 +136,8 @@ namespace GlimmerDiary.Data
         public string eventId;       // 对应的事件规则 ID
         public string text;          // 最终生成的完整文本
         public bool   hasBeenShown;
+        // 记忆双读（V1 D6）：缺席信点名过的痕迹键（collapse|…）。
+        // 信件被阅读时，这些键对应的记录 witnessed 翻 true——读信知道了它，也算"见证"。
+        public List<string> witnessKeys;
     }
 }
