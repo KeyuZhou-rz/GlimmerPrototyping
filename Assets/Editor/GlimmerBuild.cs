@@ -35,6 +35,9 @@ public static class GlimmerBuild
             ("EnvPersistence", GlimmerDiary.Editor.AnimalDriveSmokeTest.RunEnvironmentPersistence),
             ("VoleTown",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunVoleTown),
             ("AbsenceTone",    GlimmerDiary.Editor.AnimalDriveSmokeTest.RunAbsenceChapterTone),
+            ("Strata",         GlimmerDiary.Editor.AnimalDriveSmokeTest.RunStrata),
+            ("Exposure",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunExposure),
+            ("Witnessed",      GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWitnessed),
         };
 
         int fails = 0, exceptions = 0;

@@ -160,6 +160,7 @@ namespace GlimmerDiary.Editor
             var detector       = new EmergentMomentDetector(reg, save, emergentTuning);
             var eraSystem      = new EraSystem(save);
             var voleTown       = new VoleTownSystem(save);
+            var stratumSys     = new StratumSystem(save);
 
             var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
             var retired  = new HashSet<string>
@@ -195,6 +196,7 @@ namespace GlimmerDiary.Editor
                 relationSystem.Evaluate(allRelations, save.gameTime);
                 eraSystem.Tick(save.gameTime, env.State, rhythm.State, reg);   // 纪元钟每日最后拍板
                 voleTown.Tick(save.gameTime);   // 镜像 WorldManager：纪元钟之后，读当日最新章节
+                stratumSys.Tick(save.gameTime, env.State, inertia.CurrentEEnv);   // 镜像 WorldManager：小径之后，当日淡完即入土
             }
 
             // 仅注入情绪 + 一次响应式模拟（不推进日历）
@@ -237,7 +239,7 @@ namespace GlimmerDiary.Editor
             {
                 save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick,
                 detector = detector, emergentTuning = emergentTuning, eraSystem = eraSystem,
-                voleTown = voleTown
+                voleTown = voleTown, stratumSys = stratumSys, env = env
             };
         }
 
@@ -253,6 +255,8 @@ namespace GlimmerDiary.Editor
             public EmergentMomentTuning             emergentTuning; // 可改 baseP/winterP=1 做确定性
             public EraSystem                        eraSystem;      // 纪元钟（可挂起测预跑语义）
             public VoleTownSystem                   voleTown;       // 田鼠镇（小径成形/镇散，D3）
+            public StratumSystem                    stratumSys;     // 新生地层（入土/沉降/出露，D5/D6）
+            public WorldEnvironmentSystem           env;            // 环境系统（直拍 Tick 时喂 env.State）
         }
 
         // 世界绝对日序（用于断言推进天数）——公式收敛到 GameDateTime 单一来源
@@ -985,6 +989,221 @@ namespace GlimmerDiary.Editor
                 new List<WorldChronicleEntry>(), 0, null, "第1年 9月3日", chapterCrossed: true);
             bool a4 = onlyTurn != null && onlyTurn.text.Contains("翻过了一页");
             Debug.Log($"[{(a4 ? "PASS" : "FAIL")}] 窗口只翻页无其他条目 → 仍成信");
+        }
+
+        // ── V1 D5：新生地层——入土、沉降、三阶段 ─────────────────────
+        // 玩家视角：土堆不会凭空消失——太老的会沉下去，先塌成旧迹，再沉成只余一点土色。
+        // 直拍 stratumSys.Tick（不走全日管线）：排除驱动层额外造堆/纪元钟翻页的干扰，单变量验证。
+        [MenuItem("GlimmerDiary/Test Strata Sedimentation")]
+        public static void RunStrata()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var vole = reg.GetAnimal("vole");
+
+            Debug.Log("=== Strata (EditMode, V1 D5) ===");
+
+            // 阶段 1：7 条土堆记录逐日铺开（> MoundKeepCount=6）→ 最老一条出窗入土
+            for (int m = 0; m < 7; m++)
+            {
+                save.gameTime.Advance(m == 0 ? 0 : 1);
+                vole.history.Add(new StateChangeRecord
+                {
+                    date = save.gameTime.ToKeyString(), field = "location",
+                    fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+                });
+                p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            }
+            bool buried1 = save.strata.Count == 1 && save.strata[0].kind == "mound";
+            Debug.Log($"[{(buried1 ? "PASS" : "FAIL")}] 第 7 堆出生 → 最老土堆出窗入土（strata={save.strata.Count}）");
+
+            // 阶段 2：深度只增不减（沉降是积分，不是状态切换）
+            float d0 = save.strata[0].depth;
+            for (int d = 0; d < 10; d++)
+            {
+                save.gameTime.Advance(1);
+                p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            }
+            bool grew = save.strata[0].depth > d0 + 0.3f;   // 10 天中性天气 ≈ +0.4 起
+            Debug.Log($"[{(grew ? "PASS" : "FAIL")}] 沉降 10 天深度累计（{d0:F2} → {save.strata[0].depth:F2}）");
+
+            // 阶段 3：跨过 RelicMaxDepth → 地层档（不可点由 binder 读 depth 判定，这里验数据侧过阈）
+            save.strata[0].depth = StratumRecord.RelicMaxDepth - 0.01f;
+            save.gameTime.Advance(1);
+            p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            bool crossed = save.strata[0].depth >= StratumRecord.RelicMaxDepth && !save.strata[0].exposed;
+            Debug.Log($"[{(crossed ? "PASS" : "FAIL")}] 深度沉过遗存档上限 → 进入地层档（depth={save.strata[0].depth:F2}）");
+
+            // 阶段 4：塌洞出生即入土（方案 A）——键格式与 binder T2 口径一致，断代锚=荒年
+            var center = save.locations.Find(l => l.locationId == "center");
+            string cdate = save.gameTime.ToKeyString();
+            center.permanentChanges.Add(new PermanentTerrainRecord
+                { date = cdate, changeType = "burrow_collapse", description = "测试塌洞" });
+            p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            string ckey = $"collapse|center|{cdate}|burrow_collapse";
+            var col = save.strata.Find(s => s.sourceKey == ckey);
+            bool colOk = col != null && col.kind == "collapse"
+                      && col.chapterOrdinal == 0 && col.chapterAtBurial == EraSystem.WildYears;
+            Debug.Log($"[{(colOk ? "PASS" : "FAIL")}] 塌洞出生即入土 + 断代锚=荒年（{(col != null ? col.chapterAtBurial : "未入土")}）");
+
+            // 断代句对照：翻过一次页后入土的记录，章节锚随之更新
+            //（塌洞键 = loc|date|type——第二条须换日期才入得了土）
+            save.worldEvents.Add(new WorldEvent
+                { type = WorldEventType.ChapterTurned, gameDate = cdate, targetId = EraSystem.RainSeason });
+            save.gameTime.Advance(1);
+            string cdate2 = save.gameTime.ToKeyString();
+            center.permanentChanges.Add(new PermanentTerrainRecord
+                { date = cdate2, changeType = "burrow_collapse", description = "测试塌洞二" });
+            p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            string ckey2 = $"collapse|center|{cdate2}|burrow_collapse";
+            var col2 = save.strata.Find(s => s.sourceKey == ckey2);
+            bool chapter2 = col2 != null && col2.chapterOrdinal == 1
+                         && col2.chapterAtBurial == EraSystem.RainSeason
+                         && StratumSystem.LayerPhrase(col2) == "雨季正盛的时候";
+            Debug.Log($"[{(chapter2 ? "PASS" : "FAIL")}] 翻页后入土 → 封闭层第 1 层 + 断代句随章节（{(col2 != null ? StratumSystem.LayerPhrase(col2) : "未入土")}）");
+        }
+
+        // ── V1 D6：出露两法（风暴剥蚀 / 田鼠翻土，确定性掷签）─────────
+        // 掷签 = Fnv1a(键|日期|钩子)——测试内自算期望值找必中/必不中键，双向断言机制本身。
+        [MenuItem("GlimmerDiary/Test Stratum Exposure")]
+        public static void RunExposure()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var vole = reg.GetAnimal("vole");
+
+            Debug.Log("=== Exposure (EditMode, V1 D6) ===");
+
+            string todayKey = save.gameTime.ToKeyString();
+            // 自校验掷签：在候选键里找一枚必中/一枚必不中（确定性哈希，结果可复现）
+            string hitKey = null, missKey = null, shallowKey = null;
+            for (int i = 0; i < 500 && (hitKey == null || missKey == null || shallowKey == null); i++)
+            {
+                string k = $"mound|test{i}";
+                bool hit = (TraceKeyUtil.Fnv1a($"{k}|{todayKey}|storm") & 0xFFFF) / 65536f
+                         < StratumSystem.StormExposeChance;
+                if (hit && hitKey == null) hitKey = k;
+                if (!hit && missKey == null) missKey = k;
+                if (hit && k != hitKey && shallowKey == null) shallowKey = k;   // 浅层对照也用必中键
+            }
+            save.strata.Add(new StratumRecord { sourceKey = hitKey,  kind = "mound", zone = "center",
+                                                buriedDateKey = todayKey, depth = 1.5f });
+            save.strata.Add(new StratumRecord { sourceKey = missKey, kind = "mound", zone = "center",
+                                                buriedDateKey = todayKey, depth = 1.5f });
+            save.strata.Add(new StratumRecord { sourceKey = shallowKey, kind = "mound", zone = "center",
+                                                buriedDateKey = todayKey, depth = 0.5f });   // 未沉底，无出露资格
+
+            // 法一：风暴夜（E_env.A > 0.7）——直喂高唤醒向量，不走惯性慢化
+            var storm = new EmotionVector { V = 0f, A = 0.9f, T = 1f, S = 0f, C = 0.5f };
+            p.stratumSys.Tick(save.gameTime, p.env.State, storm);
+            var hitRec = save.strata.Find(s => s.sourceKey == hitKey);
+            bool e1 = hitRec.exposed && hitRec.exposedBy == "storm" && hitRec.exposedDateKey == todayKey;
+            Debug.Log($"[{(e1 ? "PASS" : "FAIL")}] 风暴夜：必中签出露（exposedBy={hitRec.exposedBy ?? "n/a"}）");
+            bool e2 = !save.strata.Find(s => s.sourceKey == missKey).exposed;
+            Debug.Log($"[{(e2 ? "PASS" : "FAIL")}] 风暴夜：必不中签按兵不动");
+            bool e3 = !save.strata.Find(s => s.sourceKey == shallowKey).exposed;
+            Debug.Log($"[{(e3 ? "PASS" : "FAIL")}] 未沉过遗存档的旧物无出露资格（深度门）");
+
+            // 法二：田鼠翻土——次日同区新增土堆（打洞）→ 同区沉底旧物掷签
+            save.gameTime.Advance(1);
+            string day2 = save.gameTime.ToKeyString();
+            string digHit = null, digOtherZone = null;
+            for (int i = 0; i < 500 && (digHit == null || digOtherZone == null); i++)
+            {
+                string k = $"mound|dig{i}";
+                bool hit = (TraceKeyUtil.Fnv1a($"{k}|{day2}|vole_dig") & 0xFFFF) / 65536f
+                         < StratumSystem.VoleDigExposeChance;
+                if (hit && digHit == null) digHit = k;
+                if (hit && k != digHit && digOtherZone == null) digOtherZone = k;
+            }
+            save.strata.Add(new StratumRecord { sourceKey = digHit, kind = "mound", zone = "center",
+                                                buriedDateKey = day2, depth = 1.5f });
+            save.strata.Add(new StratumRecord { sourceKey = digOtherZone, kind = "mound", zone = "lowland",
+                                                buriedDateKey = day2, depth = 1.5f });   // 隔壁区不刨
+            vole.history.Add(new StateChangeRecord
+            {
+                date = day2, field = "location",
+                fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"   // 当日 center 新洞
+            });
+            var calm = new EmotionVector { V = 0.5f, A = 0.5f, T = 1f, S = 0f, C = 0.5f };
+            p.stratumSys.Tick(save.gameTime, p.env.State, calm);
+            var digRec = save.strata.Find(s => s.sourceKey == digHit);
+            bool e4 = digRec.exposed && digRec.exposedBy == "vole_dig";
+            Debug.Log($"[{(e4 ? "PASS" : "FAIL")}] 田鼠翻土：同区必中签出露（exposedBy={digRec.exposedBy ?? "n/a"}）");
+            bool e5 = !save.strata.Find(s => s.sourceKey == digOtherZone).exposed;
+            Debug.Log($"[{(e5 ? "PASS" : "FAIL")}] 田鼠翻土：隔壁区的旧物不受影响（区域门）");
+
+            // 出露后沉降冻结（停在地面等玩家发现，不再下沉）
+            float dBefore = digRec.depth;
+            save.gameTime.Advance(1);
+            p.stratumSys.Tick(save.gameTime, p.env.State, calm);
+            bool e6 = Mathf.Approximately(digRec.depth, dBefore);
+            Debug.Log($"[{(e6 ? "PASS" : "FAIL")}] 出露后深度冻结（{dBefore:F2} → {digRec.depth:F2}）");
+        }
+
+        // ── V1 D6：记忆双读（witnessed 两写入路径 + 双语域语料）──────
+        // ① 在场见证：非 catch-up 拍后统一打戳；② 读信回执：MarkWitnessed 把点名记录翻真。
+        // 同一对象，见证过 → 记忆语气；没见证 → 考古语气。
+        [MenuItem("GlimmerDiary/Test Witnessed Dual Register")]
+        public static void RunWitnessed()
+        {
+            var p = BuildPipeline();
+            var save = p.save; var reg = p.reg;
+            var vole = reg.GetAnimal("vole");
+
+            Debug.Log("=== Witnessed (EditMode, V1 D6) ===");
+
+            // 存量记录（快照前）不应被打戳——只有"本拍新生"算在场见证
+            vole.history.Add(new StateChangeRecord
+            {
+                date = save.gameTime.ToKeyString(), field = "location",
+                fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+            });
+            var mark = WorldManager.WitnessSnapshot(save);
+            vole.history.Add(new StateChangeRecord
+            {
+                date = save.gameTime.ToKeyString(), field = "location",
+                fromValue = "lowland", toValue = "center", triggeredBy = "vole_expansion"
+            });
+            save.worldEvents.Add(new WorldEvent
+                { type = WorldEventType.ChapterTurned, gameDate = save.gameTime.ToKeyString(),
+                  targetId = EraSystem.RainSeason });
+            WorldManager.WitnessStampNew(save, mark);
+            bool w1 = !vole.history[0].witnessed && vole.history[1].witnessed
+                   && save.worldEvents[save.worldEvents.Count - 1].witnessed;
+            Debug.Log($"[{(w1 ? "PASS" : "FAIL")}] 在场打戳：只戳本拍新生（旧记录不动）");
+
+            // 读信回执：点名塌洞键 → 源记录与（可能已入土的）地层记录同步翻真
+            var center = save.locations.Find(l => l.locationId == "center");
+            string cdate = save.gameTime.ToKeyString();
+            string ck = $"collapse|center|{cdate}|burrow_collapse";
+            center.permanentChanges.Add(new PermanentTerrainRecord
+                { date = cdate, changeType = "burrow_collapse", description = "测试塌洞" });
+            save.strata.Add(new StratumRecord
+                { sourceKey = ck, kind = "collapse", zone = "center", buriedDateKey = cdate });
+            WorldManager.MarkWitnessed(save, new List<string> { ck });
+            bool w2 = center.permanentChanges[center.permanentChanges.Count - 1].witnessed
+                   && save.strata.Find(s => s.sourceKey == ck).witnessed;
+            Debug.Log($"[{(w2 ? "PASS" : "FAIL")}] 读信回执：源记录与地层记录同步翻真");
+
+            // witnessKeys 随信落档（Compose → 条目，ChronicleLetter 读信时回放给 MarkWitnessed）
+            //（条目须达进信档——salience 0 的日常噪音不成信，witnessKeys 也无处依附）
+            var letter = AbsenceLetterComposer.Compose(
+                new List<WorldChronicleEntry>
+                    { new WorldChronicleEntry { eventId = "event_TreeBranchBroke",
+                                                text = "第1年 9月1日 猴面包树断了一根枝。" } },
+                0, null, "第1年 9月3日", collapseWitnessKeys: new List<string> { ck });
+            bool w3 = letter != null && letter.witnessKeys != null && letter.witnessKeys.Contains(ck);
+            Debug.Log($"[{(w3 ? "PASS" : "FAIL")}] witnessKeys 随信落档");
+
+            // 双语域语料：同键同断代，见证与否决定说法；{layer} 必被替换
+            string mem  = TraceCaptionBank.Pick("relic", "k1", witnessed: true,  layerPhrase: "镇子还在的时候");
+            string arch = TraceCaptionBank.Pick("relic", "k1", witnessed: false, layerPhrase: "镇子还在的时候");
+            bool w4 = mem != arch && !mem.Contains("{layer}") && !arch.Contains("{layer}");
+            Debug.Log($"[{(w4 ? "PASS" : "FAIL")}] 记忆/考古双语域分句 + 断代句注入");
+            string noLayer = TraceCaptionBank.Pick("exposed", "k2", witnessed: false);
+            bool w5 = !noLayer.Contains("{layer}");   // 缺断代句时回退"很久以前"，不留占位符
+            Debug.Log($"[{(w5 ? "PASS" : "FAIL")}] 断代句缺省回退（不留 {{layer}} 占位符）");
         }
     }
 }
