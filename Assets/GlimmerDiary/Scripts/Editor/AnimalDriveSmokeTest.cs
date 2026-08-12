@@ -1328,6 +1328,50 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(c1 ? "PASS" : "FAIL")}] 方向句语料（来路西/去处东）");
         }
 
+        // 留意句（2026-08-13 设计变更：撤悬浮小球，改日记边缘语料引导）——纯静态文本路径
+        [MenuItem("GlimmerDiary/Test Noticing Captions")]
+        public static void RunNoticingCaptions()
+        {
+            Debug.Log("=== NoticingCaptions (EditMode) ===");
+
+            // ① 主要新鲜类型都有专属留意语，且无 {place} 残留
+            string[] types = { "mound", "collapse", "trail", "feathers", "rest", "sprout",
+                               "exposed", "stranger", "departure", "passerby" };
+            bool allTyped = true;
+            foreach (var t in types)
+            {
+                string s = TraceCaptionBank.PickNotice(t, "k1", "stone_area");
+                if (string.IsNullOrEmpty(s) || s.Contains("{")) allTyped = false;
+            }
+            Debug.Log($"[{(allTyped ? "PASS" : "FAIL")}] 十类新鲜痕迹留意语齐备且无占位残留");
+
+            // ② 地名注入：同类型同键，区名不同句不同（只给方向不给位置）
+            string a = TraceCaptionBank.PickNotice("mound", "k1", "stone_area");
+            string b = TraceCaptionBank.PickNotice("mound", "k1", "riverbank");
+            bool placeWorks = a.Contains("石头那边") && b.Contains("河边") && !a.Contains("河");
+            Debug.Log($"[{(placeWorks ? "PASS" : "FAIL")}] 地名式方向注入（石头那边/河边）");
+
+            // ③ PlacePhrase 五区名覆盖 + 未知/null 回退（不出占位符）
+            bool places = TraceCaptionBank.PlacePhrase("riverbank")     == "河边"
+                       && TraceCaptionBank.PlacePhrase("lowland")       == "低洼的草里"
+                       && TraceCaptionBank.PlacePhrase("center")        == "台地中央"
+                       && TraceCaptionBank.PlacePhrase("stone_area")    == "石头那边"
+                       && TraceCaptionBank.PlacePhrase("highland_east") == "东边的高地"
+                       && TraceCaptionBank.PlacePhrase("nowhere")       == "不远处"
+                       && TraceCaptionBank.PlacePhrase(null)            == "不远处";
+            Debug.Log($"[{(places ? "PASS" : "FAIL")}] 地名表五区覆盖+缺省回退");
+
+            // ④ 稳定选句：同一条痕迹每次浮出同一句话
+            bool stable = TraceCaptionBank.PickNotice("mound", "same-key", "center")
+                       == TraceCaptionBank.PickNotice("mound", "same-key", "center");
+            Debug.Log($"[{(stable ? "PASS" : "FAIL")}] 同一条痕迹每次浮出同一句话（稳定选句）");
+
+            // ⑤ 未覆盖类型回退通用留意句（仍带地名，不走无地名的 Fallback）
+            string g = TraceCaptionBank.PickNotice("rangehalt", "k9", "lowland");
+            bool generic = g.Contains("低洼的草里") && !g.Contains("{");
+            Debug.Log($"[{(generic ? "PASS" : "FAIL")}] 未覆盖类型回退通用留意句（仍带地名）");
+        }
+
         // 找一枚必中掷签的日期键（自算哈希，同批次三 Exposure 手法）：
         // Unit(tag|key) < guaranteedChance —— 调用方传"概率下限×0.95"，保证任何慢变量取值下必中
         private static string FindRollDate(string tag, float guaranteedChance, int maxDays)

@@ -40,6 +40,7 @@ public static class GlimmerBuild
             ("Witnessed",      GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWitnessed),
             ("Wings",          GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWings),
             ("WingTraces",     GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWingTraces),
+            ("NoticingCaptions", GlimmerDiary.Editor.AnimalDriveSmokeTest.RunNoticingCaptions),
         };
 
         int fails = 0, exceptions = 0;
