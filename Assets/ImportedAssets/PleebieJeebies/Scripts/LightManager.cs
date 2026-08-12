@@ -45,6 +45,12 @@ public class LightManager : MonoBehaviour
 
     private const float inverseDayLength = 1f / 1440f;
 
+    /// <summary>当前场景实际日照系数 [0,1]：太阳仰角正弦（地平线以下=0，正午=1）。
+    /// 由 UpdateLighting 每次求值时刷新——外部驱动/内部时钟/手动调试拖时间都算数，
+    /// 读者（环境音昼夜 BGM）得到的是"此刻眼睛看到的日照"，不是任何钟。
+    /// 注意：不含 weatherDim 压光（那是天气不是日照）。</summary>
+    public float CurrentSunlight01 { get; private set; }
+
     /// <summary>
     /// 外部驱动入口：t01 为一天中的时刻（0=午夜，0.5=正午）。
     /// 仅在 driveExternally=true 时由绑定层调用；同步 TimeOfDay 便于 Inspector 观察。
@@ -123,6 +129,9 @@ public class LightManager : MonoBehaviour
         RenderSettings.ambientGroundColor  = ambientGround * ambDim;
         // 雾由 EmotionWeatherController 统一管理（按职责拆分），此处不再写 fogColor，避免互相覆盖。
 
+        float sunElevRad = ((timePercent * 360f) - 90f) * Mathf.Deg2Rad;
+        CurrentSunlight01 = Mathf.Clamp01(Mathf.Sin(sunElevRad));   // 日照单点赋值（AmbientAudio 读）
+
         //Set the directional light (the sun) according to the time percent
         if (DirectionalLight != null)
         {
@@ -139,7 +148,6 @@ public class LightManager : MonoBehaviour
         // 夜里随太阳落山熄灭，暴雨随 weatherDim 同沉。
         if (BounceLight != null)
         {
-            float sunElevRad = ((timePercent * 360f) - 90f) * Mathf.Deg2Rad;
             float dayFac = Mathf.Clamp01(Mathf.Sin(sunElevRad) * 2.5f);
             BounceLight.transform.localRotation = Quaternion.Euler(bounceElevation, SunDirection + 180f, 0f);
             BounceLight.color = Color.Lerp(ambientGround, ambientEquator, 0.6f);

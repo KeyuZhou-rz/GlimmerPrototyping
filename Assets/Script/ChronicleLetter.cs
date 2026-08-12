@@ -33,7 +33,8 @@ public class ChronicleLetter : MonoBehaviour
     {
         // 项目启用新 Input System（Player Settings），旧 UnityEngine.Input 会抛异常
         var kb = UnityEngine.InputSystem.Keyboard.current;
-        if (kb != null && kb.lKey.wasPressedThisFrame) Toggle();
+        // 日记开着时 L 是字母不是命令——写日记的人敲一个 l 不该把信拍在脸上
+        if (kb != null && kb.lKey.wasPressedThisFrame && !DiaryInputUI.IsOpen) Toggle();
     }
 
     public void Toggle() { if (_open) Close(); else Open(); }
