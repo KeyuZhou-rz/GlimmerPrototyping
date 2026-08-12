@@ -93,6 +93,95 @@ namespace GlimmerDiary.Data
         // 新生地层（V1 清单 D5，StratumSystem 唯一写者）。
         // 旧存档 → null → StratumSystem 构造时建空表。记录只增不删（不可逆原则）。
         public List<StratumRecord>     strata;
+
+        // 侧翼（V1 清单 D7/D8，WingSystem 唯一写者）。
+        // 旧档 → null → WingSystem 构造时建立。侧翼永远只是侧翼：无实体、无地图、不可抵达。
+        public WingState               wings;
+    }
+
+    // ── 侧翼（V1 §5：舞台边界之外的世界）──────────────────────────
+    // 两翼正好接现有拓扑两端：西=riverbank 方向（来水、来风、来者），
+    // 东=highland_east 方向（去处、远行）。每翼只持 2~3 个慢变量，周粒度漂移。
+    [Serializable]
+    public class WingState
+    {
+        public WingSideState west = new();   // 来向：草原/上游
+        public WingSideState east = new();   // 去向：高地/下游
+
+        // 河通道：上游夜雨延迟队列（1~2 日后抵达）。记录留着不删——
+        // "哪几场雨到过这里"本身就是编年史素材；消费与否看 arriveDateKey，不看删除。
+        public List<UpstreamRainRecord> upstreamRains = new();
+
+        // 路通道痕迹（陌生脚印/离去标记/过路客链）。过期不删——
+        // 可见性由 WingSystem.TraceVisible(年龄) 判定，binder 只画可见的。
+        public List<WingTraceRecord>    traces = new();
+    }
+
+    [Serializable]
+    public class WingSideState
+    {
+        public float drought01;         // 西：旱涝状态（0=雨季未断，1=大旱）；东：旱情烈度
+        public float groupPressure01;   // 西：族群压力（高 → 陌生痕迹/过路客概率升）；东翼不用
+    }
+
+    // 上游夜雨（D7 河通道）：fell 在侧翼，arrive 在你这里——延迟即诗学。
+    [Serializable]
+    public class UpstreamRainRecord
+    {
+        public string fellDateKey;      // 上游下雨的那夜
+        public string arriveDateKey;    // 水抵达 riverbank 的那天（fell 后 1~2 日）
+        public float  amount;           // 水量（Propagate 消费时按区速率入账）
+        public bool   announced;        // 抵达当日是否已发事件+编年史（WingSystem 写）
+    }
+
+    // 侧翼痕迹（D8 路通道）。三类共用一表，可见窗口各不同：
+    //   stranger  西缘陌生脚印，数日蔓延入五区，12 日淡完；
+    //   departure 你的动物自东缘离去留下的标记，21 日淡完；
+    //   passerby  过路客脚印链，2~3 日横穿舞台即走，不停留。
+    [Serializable]
+    public class WingTraceRecord
+    {
+        public string id;               // stranger|{dateKey} / depart|{species}|{dateKey} / passer|{dateKey}
+        public string kind;             // "stranger" / "departure" / "passerby"
+        public string formedDateKey;
+        public string species;          // departure 专用：谁走了（读 AnimalDeparted.sourceId）
+
+        public const int StrangerFadeDays    = 12;
+        public const int DepartureFadeDays   = 21;
+        public const int PasserbyCrossDays   = 3;
+        public const int StrangerMaxSegments = 5;   // 蔓延入五区（五区=五段）
+
+        // 行为静态量放 Data 层（同 VoleTrailRecord.FadeDays 先例）：
+        // WingSystem（L2）与 WorldTraceBinder（L3，不导入 Core）都要读，单源在此。
+
+        // 可见窗口：stranger 12 日 / departure 21 日 / passerby 横穿期间（<3 日）
+        public static bool IsVisible(WingTraceRecord t, int todayAbsDays)
+        {
+            int age = todayAbsDays - GameDateTime.ParseKey(t.formedDateKey).ToAbsoluteDays();
+            switch (t.kind)
+            {
+                case "stranger":  return age <= StrangerFadeDays;
+                case "departure": return age <= DepartureFadeDays;
+                case "passerby":  return age <  PasserbyCrossDays;
+                default:          return false;
+            }
+        }
+
+        // 陌生脚印蔓延段数：成形当天 1 段（西缘），之后每天更深一段，至多五段
+        public static int StrangerSegments(WingTraceRecord t, int todayAbsDays)
+        {
+            int age = todayAbsDays - GameDateTime.ParseKey(t.formedDateKey).ToAbsoluteDays();
+            int n = 1 + age;
+            return n < 1 ? 1 : (n > StrangerMaxSegments ? StrangerMaxSegments : n);
+        }
+
+        // 过路客横穿进度 0..1：第 0 天在西缘，最后一天到东缘（binder 按进度截断脚印链）
+        public static float PasserbyProgress01(WingTraceRecord t, int todayAbsDays)
+        {
+            int age = todayAbsDays - GameDateTime.ParseKey(t.formedDateKey).ToAbsoluteDays();
+            float p = (float)age / (PasserbyCrossDays - 1);
+            return p < 0f ? 0f : (p > 1f ? 1f : p);
+        }
     }
 
     // 环境积分态快照：只存有状态字段；Rainfall/WindSpeed/FogDensity/StarVisibility

@@ -34,6 +34,10 @@ public class WorldAtmosphereBinder : MonoBehaviour
     [Tooltip("与 VegetationSystem 落种阈值同源数值——L3 展示层阈值，各自独立调")]
     [Range(0f, 1f)] public float fluffWindThreshold = 0.7f;
 
+    [Header("侧翼尘霾（V1 D8 风通道：西翼旱情 → 地平线尘霾）")]
+    [Tooltip("尘霾是周粒度慢变量——展示层平滑比天气再慢一档，霾是'挂上去的'不是'飘过来的'")]
+    public float dustSmoothingSpeed = 0.08f;
+
     [Header("草色通路（Batch 4：{DecayLevel, season, zone 湿度} → 草色，映射表=GrassPreset）")]
     public GlimmerDiary.Flora.GrassPreset grassPreset;
     [Tooltip("草色(慢变量)的展示层平滑速率——土壤湿度按天变,颜色爬不能跳")]
@@ -51,6 +55,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
     private float _waterLevel;       // [0,1] 平滑后的水量
     private bool _waterInitialized;  // 独立首帧对齐:location 可能晚于全局状态就绪
     private float _fluff;            // [0,1] 种子絮速率（平滑后）
+    private float _dust;             // [0,1] 侧翼尘霾（西翼旱情，平滑后）
 
     // —— 草色通路（Batch 4）——
     private const int GrassMaxZones = 8;   // 与 shader _GrassZoneAnchors[8] 耦合——两侧同改
@@ -104,6 +109,8 @@ public class WorldAtmosphereBinder : MonoBehaviour
 
         float dimnessTarget = env.FogDensity;
         float starVisTarget = env.StarVisibility;
+        // 侧翼尘霾（D8）：西翼旱情烈度——旱不在你这里，但霾挂在你看得见的地平线上
+        float dustTarget = wm.GetWingDust01();
 
         // 种子絮（§5.3 风的实体化）：风峰 ∧ 蒲公英在场开花 → 絮飘。
         // 与落种（L2 VegetationSystem）读同一 WindSpeed 但互不依赖——
@@ -122,17 +129,20 @@ public class WorldAtmosphereBinder : MonoBehaviour
             _dimness = dimnessTarget;
             _starVis = starVisTarget;
             _fluff   = fluffTarget;
+            _dust    = dustTarget;
             _initialized = true;
         }
         else
         {
             float k = 1f - Mathf.Exp(-smoothingSpeed * Time.deltaTime);
+            float kd = 1f - Mathf.Exp(-dustSmoothingSpeed * Time.deltaTime);
             _rain    = Mathf.Lerp(_rain,    rainTarget,    k);
             _wind    = Mathf.Lerp(_wind,    windTarget,    k);
             _thunder = Mathf.Lerp(_thunder, thunderTarget, k);
             _dimness = Mathf.Lerp(_dimness, dimnessTarget, k);
             _starVis = Mathf.Lerp(_starVis, starVisTarget, k);
             _fluff   = Mathf.Lerp(_fluff,   fluffTarget,   k);
+            _dust    = Mathf.Lerp(_dust,    dustTarget,    kd);
         }
 
         // —— 水位通路(独立首帧对齐;loc 缺失则静默跳过,保持现值不驱动向假默认)——
@@ -273,6 +283,7 @@ public class WorldAtmosphereBinder : MonoBehaviour
             weatherController.dimness          = _dimness;
             weatherController.starVisibility   = _starVis;
             weatherController.seedFluffRate    = _fluff;
+            weatherController.dustHaze         = _dust;   // 侧翼尘霾（D8 风通道）
         }
 
         if (lightManager != null)

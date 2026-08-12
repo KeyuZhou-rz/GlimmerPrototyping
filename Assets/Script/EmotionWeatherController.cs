@@ -19,6 +19,12 @@ public class EmotionWeatherController : MonoBehaviour
     [Header("晦明（雾的情绪分量，独立于降雨）")]
     [Range(0f, 1f)]
     public float dimness = 0f;               // 默认 0：未接绑定层的场景雾公式退化回原样
+
+    [Header("侧翼尘霾（V1 D8 风通道：西翼旱情 → 地平线尘霾，参数级零新美术）")]
+    [Range(0f, 1f)] public float dustHaze = 0f;        // 外部驱动（WorldAtmosphereBinder），默认 0=无影响
+    public Color dustTint = new(0.78f, 0.66f, 0.48f);  // 干燥尘土的黄褐
+    [Range(0f, 1f)] public float dustFogColorBlend = 0.5f;   // 满霾时雾色向尘土色的混入上限
+    [Range(0f, 1f)] public float dustFogCloseIn = 0.35f;     // 满霾时雾距收拢强度（0=不收）
     [Range(0f, 1f)]
     public float dimnessFogWeight = 0.45f;   // dimness=1 时雾距向暴雨端额外收拢的比例
 
@@ -420,6 +426,14 @@ public class EmotionWeatherController : MonoBehaviour
 
         float fogStart = Mathf.Lerp(fogLinearSunnyStart, fogLinearStormStart, fogT);
         float fogEnd   = Mathf.Lerp(fogLinearSunnyEnd,   fogLinearStormEnd,   fogT);
+
+        // 侧翼尘霾（D8）：与本地天气正交——大晴天也可以挂霾（旱在西翼，不在你这里）。
+        // 雾距向近端收拢一档：远山被霾吃掉，地平线"那边有事情"但读不出是什么。
+        if (dustHaze > 0.001f)
+        {
+            fogStart *= Mathf.Lerp(1f, 0.65f, dustHaze * dustFogCloseIn);
+            fogEnd   *= Mathf.Lerp(1f, 0.60f, dustHaze * dustFogCloseIn);
+        }
         fogStart = Mathf.Clamp(fogStart, 0f, fogEnd - 0.01f);
 
         RenderSettings.fogMode          = FogMode.Linear;
@@ -433,6 +447,9 @@ public class EmotionWeatherController : MonoBehaviour
         Color glow = _glowThisFrame;
         float lum = glow.r * 0.299f + glow.g * 0.587f + glow.b * 0.114f;
         Color fogCol = Color.Lerp(glow, new Color(lum, lum, lum), fogSkyGreyAmount) * fogSkyScale;
+        // 尘霾偏色：向尘土黄褐混入，随天空亮度缩放——夜里不发光，黄昏最显（残阳照尘）
+        if (dustHaze > 0.001f)
+            fogCol = Color.Lerp(fogCol, dustTint * lum, dustHaze * dustFogColorBlend);
         RenderSettings.fogColor = fogCol;
 
         // 昼夜因子改为纯几何（太阳在哪），不被 C 轮天气压光影响；供 UpdateSkybox 日盘/星空用

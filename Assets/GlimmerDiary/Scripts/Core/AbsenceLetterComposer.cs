@@ -106,6 +106,8 @@ namespace GlimmerDiary.Core
                 case "event_WeaverBirdDeparted":
                 case "event_WeaverBirdReturned":
                 case "event_QuietConvergence":
+                case "event_WingUpstreamRain":   // 侧翼（D7/D8）：上游来水/陌生脚印——
+                case "event_StrangerPassed":     // 延迟即诗学，信是侧翼的主要解释渠道
                     return 2;
 
                 default:

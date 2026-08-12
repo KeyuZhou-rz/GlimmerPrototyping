@@ -48,6 +48,7 @@ public class WorldManager : MonoBehaviour
     private EraSystem              _eraSystem;
     private VoleTownSystem         _voleTownSystem;
     private StratumSystem          _stratumSystem;
+    private WingSystem             _wingSystem;
 
     // 已迁移到 AnimalDriveSystem 的实体-实体耦合：从关系系统的活动集中剔除
     // （资产保留在 Resources/Relations，仅运行时不再评估其状态效果）
@@ -116,6 +117,7 @@ public class WorldManager : MonoBehaviour
         _eraSystem         = new EraSystem(_saveData);
         _voleTownSystem    = new VoleTownSystem(_saveData);
         _stratumSystem     = new StratumSystem(_saveData);
+        _wingSystem        = new WingSystem(_saveData);
         Debug.Log($"[WorldManager] Rules={_allRules.Count}  Relations={_allRelations.Count} (retired {RetiredRelationIds.Count})  " +
                   $"Tuning={(_driveTuning != null ? _driveTuning.name : "defaults")}");
         Debug.Log($"[WorldManager] SaveDir: {SaveSystem.GetSaveDir()}");
@@ -232,6 +234,10 @@ public class WorldManager : MonoBehaviour
 
         // 新生地层（V1 D5）：在小径之后——小径当日 lapsed 淡完即入土，隔日边界不跨拍
         _stratumSystem.Tick(_saveData.gameTime, Environment.State, EmotionInertia.CurrentEEnv);
+
+        // 侧翼（V1 D7/D8）：每日最后——读当日世界事件终态（离场→离去标记），
+        // 慢变量漂移与掷签全部确定性，不看你的日记
+        _wingSystem.Tick(_saveData.gameTime);
     }
 
     // 自主世界 tick：推进世界 deltaDays，每天模拟一次。与日记无关。
@@ -403,6 +409,10 @@ public class WorldManager : MonoBehaviour
         return s != null;
     }
 
+    // 侧翼尘霾透传（V1 D8 风通道）：西翼旱情烈度 0..1——L3 大气绑定层经此读，
+    // 不导入 Core 纪律不变。侧翼数据本身的持有/演进归 WingSystem。
+    public float GetWingDust01() => WingSystem.WestDrought01(_saveData);
+
     // 情绪注入：仅写日记时调用，只更新 E_env（+ 登记 pending 脉冲），不推进日历
     public void InjectEmotion(JournalEntry entry) => EmotionInertia.Update(entry.emotion);
 
@@ -502,6 +512,17 @@ public class WorldManager : MonoBehaviour
     // 速率表只此一份——不得在测试里手抄副本。
     public static void PropagateRainfallToLocations(WorldSaveData save, float rain)
     {
+        // 侧翼河通道（V1 D7）：今日抵达的上游来水汇总。WingSystem 只往队列里放记录，
+        // 水位入账只在这里——loc.waterLevel 单写者纪律不破。
+        float upstreamInflow = 0f;
+        if (save.wings?.upstreamRains != null)
+        {
+            int todayAbs = save.gameTime.ToAbsoluteDays();
+            foreach (var r in save.wings.upstreamRains)
+                if (GameDateTime.ParseKey(r.arriveDateKey).ToAbsoluteDays() == todayAbs)
+                    upstreamInflow += r.amount;
+        }
+
         foreach (var loc in save.locations)
         {
             // 各地点积水速率不同：低洼地最慢排水，东侧高地最快
@@ -520,6 +541,16 @@ public class WorldManager : MonoBehaviour
             float drain = Mathf.Max(0.03f - VegDrainReduction * loc.vegetationDensity, MinDailyDrain);
             float delta = rain * accRate - drain;
             loc.waterLevel = Mathf.Clamp01(loc.waterLevel + delta);
+
+            // 上游来水（与本地降雨正交的另一条来路）：riverbank 迎水，lowland 承接漫流。
+            // "你这里一滴雨没下，河水却涨了"——两种水走同一个水位场，无标记无特例。
+            if (upstreamInflow > 0f)
+            {
+                if (loc.locationId == "riverbank")
+                    loc.waterLevel = Mathf.Clamp01(loc.waterLevel + upstreamInflow * WingSystem.RiverbankInflowRate);
+                else if (loc.locationId == "lowland")
+                    loc.waterLevel = Mathf.Clamp01(loc.waterLevel + upstreamInflow * WingSystem.LowlandInflowRate);
+            }
 
             // 土壤湿度：比水位更慢的蓄水库；按区渗透率不同（沙石地渗透快、保水差）
             float soakRate = loc.locationId switch

@@ -125,6 +125,10 @@ namespace GlimmerDiary.Data
         public const string VoleClaimedZone      = "VoleClaimedZone";
         public const string QuietConvergence     = "QuietConvergence";  // 涌现时刻：宿敌/邻里罕见地挨着歇息
         public const string DandelionSeedsDrifted = "DandelionSeedsDrifted";  // 风峰日落种：targetId=下风 zone
+        // 侧翼（V1 D7/D8）：上游夜雨抵达 = WingUpstreamRain（payload=下雨那夜的 dateKey）；
+        // 陌生脚印成形/过路客上路 = StrangerPassed（payload= "stranger" / "passerby"）
+        public const string WingUpstreamRain     = "WingUpstreamRain";
+        public const string StrangerPassed       = "StrangerPassed";
         // 纪元翻页（V1 D2）：sourceId=旧章节 targetId=新章节。兼作新生地层的封闭层数据锚（§4.5）。
         // BehaviorNarrator 对它无模板（静默跳过）；编年史信由 EraSystem 自己发。
         public const string ChapterTurned        = "ChapterTurned";

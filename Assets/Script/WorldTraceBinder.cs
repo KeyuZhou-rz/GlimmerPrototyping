@@ -81,7 +81,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail, Relic, ExposedRelic }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail, Relic, ExposedRelic, StrangerMarks, DepartureMarks, PasserbyChain }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -219,6 +219,8 @@ public class WorldTraceBinder : MonoBehaviour
         sig = sig * 31 + (save.strata?.Count ?? 0);
         if (save.strata != null)
             foreach (var s in save.strata) sig = sig * 31 + (s.exposed ? 1 : 0);
+        // 侧翼路通道（V1 D8）：新痕迹成形触发重建（蔓延/横穿/淡出由 gameDay 项逐日驱动）
+        sig = sig * 31 + (save.wings?.traces?.Count ?? 0);
         // 鹿鼠活动范围收缩态（实时字段，无历史记录）——跨过阈值也要触发重建
         var dm = wm.Registry?.GetAnimal("deer_mouse");
         sig = sig * 31 + (dm != null && dm.activityRange < 0.5f ? 1 : 0);
@@ -463,6 +465,26 @@ public class WorldTraceBinder : MonoBehaviour
             }
         }
 
+        // 侧翼路通道（V1 D8）：陌生脚印数日蔓延入五区 / 离去标记数周淡出 /
+        // 过路客链 2~3 日横穿。记录与行为口径在 Data 层（WingTraceRecord 静态量），
+        // 这里只画可见的——侧翼永不可抵达，这些印子是"那边"唯一漏进来的东西。
+        if (save.wings?.traces != null)
+        {
+            foreach (var wt in save.wings.traces)
+            {
+                if (!WingTraceRecord.IsVisible(wt, today)) continue;
+                var rec = wt;   // 闭包捕获
+                int age = today - ToDays(ParseKeyDate(rec.formedDateKey));
+                switch (rec.kind)
+                {
+                    case "stranger":  desired[rec.id] = t => SpawnStrangerMarks(t, rec, today);  break;
+                    case "departure": desired[rec.id] = t => SpawnDepartureMarks(t, rec, age);   break;
+                    case "passerby":  desired[rec.id] = t => SpawnPasserbyChain(t, rec, today);  break;
+                }
+                if (age <= freshAgeThreshold) fresh.Add(rec.id);   // 出现/上路当日指一下
+            }
+        }
+
         // —— 同步：移除消失的，生成新增的 ——
         var stale = new List<string>();
         foreach (var kv in _traces)
@@ -675,6 +697,117 @@ public class WorldTraceBinder : MonoBehaviour
         foreach (var s in save.strata)
             if (s.sourceKey == sourceKey) return s;
         return null;
+    }
+
+    // ── 侧翼路通道（V1 D8）─────────────────────────────────────
+    // 西→东五区链：三类侧翼痕迹共用这条空间骨架（"从西边的草里来，到东边的山里去"）
+    private static readonly string[] WingPath = { "riverbank", "lowland", "center", "stone_area", "highland_east" };
+
+    /// <summary>陌生脚印：西缘起每天更深一段（段数口径在 WingTraceRecord.StrangerSegments），
+    /// 12 日淡完。每段两枚相邻脚印，朝向下一段——"它们每天都更深一点"。</summary>
+    private void SpawnStrangerMarks(TraceInstance t, WingTraceRecord rec, int today)
+    {
+        t.type = TraceType.StrangerMarks; t.seed = Fnv1a(rec.id);
+        int segments = WingTraceRecord.StrangerSegments(rec, today);
+        int age = today - ToDays(ParseKeyDate(rec.formedDateKey));
+        float life = 1f - age / (float)WingTraceRecord.StrangerFadeDays;
+        Color c = Color.Lerp(printFaded, printFresh, Mathf.Clamp01(life));
+
+        t.root = null;
+        for (int i = 0; i < segments && i < WingPath.Length; i++)
+        {
+            if (!zoneMap.TrySampleZone(WingPath[i], t.seed + i * 977, out Vector3 p)) continue;
+            if (t.root == null) t.root = NewRoot($"Stranger_{t.seed:X8}", p);
+            Vector3 dir = WingPathDirection(i);
+            Quaternion yaw = Quaternion.LookRotation(dir, Vector3.up);
+            Vector3 perp = Vector3.Cross(dir, Vector3.up);
+            for (int f = 0; f < 2; f++)
+            {
+                Vector3 fp = p + dir * (f * 0.35f) + perp * (f == 0 ? 0.09f : -0.09f);
+                if (zoneMap.TryGroundAt(fp.x, fp.z, out Vector3 g)) fp = g;
+                AddProp(t, TraceKit.Footprint, dirtMaterial, c, fp + Vector3.up * 0.02f, yaw,
+                        Vector3.one * 0.95f);
+            }
+        }
+    }
+
+    /// <summary>离去标记：你的动物自东缘离去——从 highland_east 区缘向东（舞台之外）
+    /// 一串远行的脚印，21 日淡完。东方位角不假设坐标轴：由 riverbank→highland_east 锚点连线推。</summary>
+    private void SpawnDepartureMarks(TraceInstance t, WingTraceRecord rec, int age)
+    {
+        t.type = TraceType.DepartureMarks; t.seed = Fnv1a(rec.id);
+        if (!zoneMap.TryGetAnchorCenter("highland_east", out Vector3 c0, out float radius)) return;
+        Vector3 east = WingEastDirection();
+        float life = 1f - age / (float)WingTraceRecord.DepartureFadeDays;
+        Color c = Color.Lerp(printFaded, printFresh, Mathf.Clamp01(life));
+
+        t.root = NewRoot($"Depart_{t.seed:X8}", c0);
+        Quaternion yaw = Quaternion.LookRotation(east, Vector3.up);
+        Vector3 perp = Vector3.Cross(east, Vector3.up);
+        for (int i = 0; i < 4; i++)
+        {
+            Vector3 p = c0 + east * (radius * 0.6f + i * 0.7f) + perp * (i % 2 == 0 ? 0.09f : -0.09f);
+            if (!zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) break;   // 走出地形就不画了
+            AddProp(t, TraceKit.Footprint, dirtMaterial, c, g + Vector3.up * 0.02f, yaw,
+                    Vector3.one * 0.95f);
+        }
+    }
+
+    /// <summary>过路客链：五个锚点连成一条横穿线，按 WingTraceRecord.PasserbyProgress01
+    /// 逐日截断——第 0 天只在西缘一两枚，最后一天抵东缘，次日整条撤（不停留，印子始终新鲜）。</summary>
+    private void SpawnPasserbyChain(TraceInstance t, WingTraceRecord rec, int today)
+    {
+        t.type = TraceType.PasserbyChain; t.seed = Fnv1a(rec.id);
+        float progress = WingTraceRecord.PasserbyProgress01(rec, today);
+
+        var anchors = new List<Vector3>();
+        foreach (var z in WingPath)
+            if (zoneMap.TryGetAnchorCenter(z, out Vector3 ac, out _)) anchors.Add(ac);
+        if (anchors.Count < 2) return;
+
+        const int N = 9;
+        int visible = Mathf.Max(2, Mathf.CeilToInt(progress * (N - 1)) + 1);
+        var rng = new System.Random(t.seed);
+        t.root = NewRoot($"Passer_{t.seed:X8}", anchors[0]);
+        for (int i = 0; i < visible; i++)
+        {
+            float segF = (float)i / (N - 1) * (anchors.Count - 1);
+            int seg = Mathf.Min((int)segF, anchors.Count - 2);
+            Vector3 dir = anchors[seg + 1] - anchors[seg]; dir.y = 0f;
+            dir = dir.sqrMagnitude > 1e-4f ? dir.normalized : Vector3.forward;
+            Vector3 perp = Vector3.Cross(dir, Vector3.up);
+            Vector3 p = Vector3.Lerp(anchors[seg], anchors[seg + 1], segF - seg)
+                      + perp * ((float)(rng.NextDouble() - 0.5) * 0.5f)   // 不是阅兵直线
+                      + dir * (i % 2 == 0 ? 0.09f : -0.09f);
+            if (!zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) continue;
+            AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh, g + Vector3.up * 0.02f,
+                    Quaternion.LookRotation(dir, Vector3.up), Vector3.one * 0.95f);
+        }
+    }
+
+    // 第 seg 段的前进方向（锚点 seg → seg+1；末段沿用前一段方向）
+    private Vector3 WingPathDirection(int seg)
+    {
+        int next = Mathf.Min(seg + 1, WingPath.Length - 1);
+        if (zoneMap.TryGetAnchorCenter(WingPath[seg], out Vector3 a, out _)
+            && zoneMap.TryGetAnchorCenter(WingPath[next], out Vector3 b, out _))
+        {
+            var d = b - a; d.y = 0f;
+            if (d.sqrMagnitude > 1e-4f) return d.normalized;
+        }
+        return Vector3.forward;
+    }
+
+    // 东 = riverbank→highland_east 锚点连线方向（数据驱动，不假设世界坐标轴）
+    private Vector3 WingEastDirection()
+    {
+        if (zoneMap.TryGetAnchorCenter("riverbank", out Vector3 w, out _)
+            && zoneMap.TryGetAnchorCenter("highland_east", out Vector3 e, out _))
+        {
+            var d = e - w; d.y = 0f;
+            if (d.sqrMagnitude > 1e-4f) return d.normalized;
+        }
+        return Vector3.right;
     }
 
     /// <summary>T3 脚印串：沿 from→to 边 4-6 片小椭圆，左右交替，随龄缩小褪色。</summary>
@@ -974,6 +1107,9 @@ public class WorldTraceBinder : MonoBehaviour
         TraceType.VoleTrail      => "vtrail",
         TraceType.Relic          => "relic",
         TraceType.ExposedRelic   => "exposed",
+        TraceType.StrangerMarks  => "stranger",
+        TraceType.DepartureMarks => "departure",
+        TraceType.PasserbyChain  => "passerby",
         _                        => "trace",
     };
 
