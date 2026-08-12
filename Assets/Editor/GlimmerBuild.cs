@@ -38,6 +38,8 @@ public static class GlimmerBuild
             ("Strata",         GlimmerDiary.Editor.AnimalDriveSmokeTest.RunStrata),
             ("Exposure",       GlimmerDiary.Editor.AnimalDriveSmokeTest.RunExposure),
             ("Witnessed",      GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWitnessed),
+            ("Wings",          GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWings),
+            ("WingTraces",     GlimmerDiary.Editor.AnimalDriveSmokeTest.RunWingTraces),
         };
 
         int fails = 0, exceptions = 0;

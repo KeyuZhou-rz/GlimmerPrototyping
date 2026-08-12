@@ -161,6 +161,7 @@ namespace GlimmerDiary.Editor
             var eraSystem      = new EraSystem(save);
             var voleTown       = new VoleTownSystem(save);
             var stratumSys     = new StratumSystem(save);
+            var wingSys        = new WingSystem(save);
 
             var allRules = new List<NarrativeRuleSO>(Resources.LoadAll<NarrativeRuleSO>("Rules"));
             var retired  = new HashSet<string>
@@ -197,6 +198,7 @@ namespace GlimmerDiary.Editor
                 eraSystem.Tick(save.gameTime, env.State, rhythm.State, reg);   // 纪元钟每日最后拍板
                 voleTown.Tick(save.gameTime);   // 镜像 WorldManager：纪元钟之后，读当日最新章节
                 stratumSys.Tick(save.gameTime, env.State, inertia.CurrentEEnv);   // 镜像 WorldManager：小径之后，当日淡完即入土
+                wingSys.Tick(save.gameTime);   // 镜像 WorldManager：每日最后，读当日事件终态
             }
 
             // 仅注入情绪 + 一次响应式模拟（不推进日历）
@@ -239,7 +241,7 @@ namespace GlimmerDiary.Editor
             {
                 save = save, reg = reg, submit = Submit, inject = Inject, worldTick = WorldTick,
                 detector = detector, emergentTuning = emergentTuning, eraSystem = eraSystem,
-                voleTown = voleTown, stratumSys = stratumSys, env = env
+                voleTown = voleTown, stratumSys = stratumSys, env = env, wingSys = wingSys
             };
         }
 
@@ -257,6 +259,7 @@ namespace GlimmerDiary.Editor
             public VoleTownSystem                   voleTown;       // 田鼠镇（小径成形/镇散，D3）
             public StratumSystem                    stratumSys;     // 新生地层（入土/沉降/出露，D5/D6）
             public WorldEnvironmentSystem           env;            // 环境系统（直拍 Tick 时喂 env.State）
+            public WingSystem                       wingSys;        // 侧翼（慢变量/河/路/风通道，D7/D8）
         }
 
         // 世界绝对日序（用于断言推进天数）——公式收敛到 GameDateTime 单一来源
@@ -1204,6 +1207,161 @@ namespace GlimmerDiary.Editor
             string noLayer = TraceCaptionBank.Pick("exposed", "k2", witnessed: false);
             bool w5 = !noLayer.Contains("{layer}");   // 缺断代句时回退"很久以前"，不留占位符
             Debug.Log($"[{(w5 ? "PASS" : "FAIL")}] 断代句缺省回退（不留 {{layer}} 占位符）");
+        }
+
+        // ── V1 D7：侧翼骨架 + 河通道 ─────────────────────────────────
+        // 玩家视角：地平线之外有自己的天气——你这里滴雨未下，河水却涨了，水是从西边来的。
+        [MenuItem("GlimmerDiary/Test Wings River Channel")]
+        public static void RunWings()
+        {
+            Debug.Log("=== Wings (EditMode, V1 D7) ===");
+
+            // ① 漂移确定性：两条管线同跑 10 天，侧翼慢变量逐位一致（Fnv 周目标，不用 Random）
+            var a = BuildPipeline(); var b = BuildPipeline();
+            a.worldTick(10, false); b.worldTick(10, false);
+            bool det = Mathf.Approximately(a.save.wings.west.drought01, b.save.wings.west.drought01)
+                    && Mathf.Approximately(a.save.wings.west.groupPressure01, b.save.wings.west.groupPressure01)
+                    && Mathf.Approximately(a.save.wings.east.drought01, b.save.wings.east.drought01);
+            Debug.Log($"[{(det ? "PASS" : "FAIL")}] 慢变量漂移确定性（双管线 10 天逐位一致）");
+            bool bounded = a.save.wings.west.drought01 >= 0f && a.save.wings.west.drought01 <= 1f
+                        && a.save.wings.west.groupPressure01 >= 0f && a.save.wings.west.groupPressure01 <= 1f;
+            Debug.Log($"[{(bounded ? "PASS" : "FAIL")}] 慢变量有界 [0,1]（drought={a.save.wings.west.drought01:F3}）");
+
+            // ② 上游夜雨：找一个"必中签"日期（Unit < RainChanceMin → 无论旱涝必中），推进到那天
+            var p = BuildPipeline();
+            string hitDate = FindRollDate("wing_rain", WingSystem.RainChanceMin * 0.95f, 400);
+            int walk = GameDateTime.ParseKey(hitDate).ToAbsoluteDays() - p.save.gameTime.ToAbsoluteDays();
+            p.worldTick(walk, false);
+            var rain = p.save.wings.upstreamRains.Find(r => r.fellDateKey == hitDate);
+            bool rolled = rain != null;
+            Debug.Log($"[{(rolled ? "PASS" : "FAIL")}] 上游夜雨入延迟队列（@{hitDate}）");
+            int delay = rolled
+                ? GameDateTime.ParseKey(rain.arriveDateKey).ToAbsoluteDays()
+                  - GameDateTime.ParseKey(rain.fellDateKey).ToAbsoluteDays() : -1;
+            bool dly = delay == 1 || delay == 2;
+            Debug.Log($"[{(dly ? "PASS" : "FAIL")}] 抵达延迟 1~2 日（实际 {delay}）");
+
+            // ③ 抵达日：riverbank 水位在本地无雨时上涨（Propagate 消费队列，单写者纪律）
+            var riverbank = p.reg.GetLocation("riverbank");
+            int toArrival = GameDateTime.ParseKey(rain.arriveDateKey).ToAbsoluteDays()
+                          - p.save.gameTime.ToAbsoluteDays();
+            float before = riverbank.waterLevel;
+            p.worldTick(toArrival, false);
+            float rise = riverbank.waterLevel - before;
+            // 无本雨日 drain≈0.03、有雨才正；来水 0.15~0.4 入账 → 两日内必见明显净涨
+            bool rose = rise > 0.05f;
+            Debug.Log($"[{(rose ? "PASS" : "FAIL")}] 本地无雨而水涨（riverbank {before:F2} → {riverbank.waterLevel:F2}）");
+            bool evt = p.save.worldEvents.Exists(e => e.type == WorldEventType.WingUpstreamRain
+                                                    && e.payload == hitDate);
+            bool chr = p.save.pendingChronicles.Exists(c => c.eventId == "event_WingUpstreamRain"
+                                                         && c.text.Contains("西边"));
+            Debug.Log($"[{(evt ? "PASS" : "FAIL")}] 抵达日发 WingUpstreamRain 事件（payload=下雨那夜）");
+            Debug.Log($"[{(chr ? "PASS" : "FAIL")}] 编年史条目带方向句（\"水是从西边来的\"）");
+        }
+
+        // ── V1 D8：路通道（陌生脚印/离去标记/过路客）────────────────────
+        [MenuItem("GlimmerDiary/Test Wing Road Channel")]
+        public static void RunWingTraces()
+        {
+            var p = BuildPipeline();
+            var save = p.save;
+
+            Debug.Log("=== WingTraces (EditMode, V1 D8) ===");
+
+            // ① 陌生脚印：必中且窗口内无更早触发的日期 → 成形；段数逐日蔓延；12 日后不可见
+            string sDate = FindCleanRollDate("wing_stranger",
+                WingSystem.StrangerChanceBase * 0.95f,
+                WingSystem.StrangerChanceBase + WingSystem.StrangerChanceVar,
+                WingTraceRecord.StrangerFadeDays + 1, 600);
+            p.worldTick(GameDateTime.ParseKey(sDate).ToAbsoluteDays() - save.gameTime.ToAbsoluteDays(), false);
+            // 按身份键取——长途推进中洁净窗之前可能有更早的有机触发已淡出，
+            // Find(kind) 首个匹配会抢到那条旧记录（成形≠没成形，是取错了对象）
+            var st = save.wings.traces.Find(t => t.id == $"stranger|{sDate}");
+            bool s1 = st != null && WingTraceRecord.StrangerSegments(st, save.gameTime.ToAbsoluteDays()) == 1;
+            Debug.Log($"[{(s1 ? "PASS" : "FAIL")}] 西缘陌生脚印成形（当日 1 段）");
+            p.worldTick(2, false);
+            bool s2 = WingTraceRecord.StrangerSegments(st, save.gameTime.ToAbsoluteDays()) == 3;
+            Debug.Log($"[{(s2 ? "PASS" : "FAIL")}] 数日蔓延（2 日后 3 段，每天更深一段）");
+            p.worldTick(WingTraceRecord.StrangerFadeDays, false);
+            bool s3 = !WingTraceRecord.IsVisible(st, save.gameTime.ToAbsoluteDays());
+            Debug.Log($"[{(s3 ? "PASS" : "FAIL")}] 12 日淡完即不可见（记录仍在档）");
+            bool s4 = save.wings.traces.Contains(st);   // 淡出≠删除
+            Debug.Log($"[{(s4 ? "PASS" : "FAIL")}] 淡出只撤可见性，记录保留");
+
+            // ② 离去标记：AnimalDeparted → 东缘标记；重复 Tick 不重复建
+            //（按身份键断言——管线长途推进中候鸟可能有机离场，同键幂等恰是被测行为）
+            string depId = $"depart|migratory_bird|{save.gameTime.ToKeyString()}";
+            save.worldEvents.Add(new WorldEvent
+                { type = WorldEventType.AnimalDeparted, sourceId = "migratory_bird",
+                  gameDate = save.gameTime.ToKeyString() });
+            p.wingSys.Tick(save.gameTime);
+            p.wingSys.Tick(save.gameTime);   // 幂等检查
+            int depCount = save.wings.traces.FindAll(t => t.id == depId).Count;
+            var dep = save.wings.traces.Find(t => t.id == depId);
+            bool d1 = depCount == 1 && dep.species == "migratory_bird";
+            Debug.Log($"[{(d1 ? "PASS" : "FAIL")}] 动物离场 → 东缘离去标记（幂等，species={dep?.species ?? "n/a"}）");
+
+            // ③ 过路客：必中且 3 日窗口内无更早触发的日期 → 横穿进度 0→0.5→1，第 3 日不可见
+            //（从明天起扫——①②阶段已把时钟推进到 M11 之后，从世界起点扫会拿回一条
+            //   早已横穿完的陈年记录，断言的"当日"其实是几十天前）
+            string pDate = FindCleanRollDate("wing_passerby",
+                WingSystem.PasserbyChance, WingSystem.PasserbyChance,
+                WingTraceRecord.PasserbyCrossDays, 800, save.gameTime);
+            p.worldTick(GameDateTime.ParseKey(pDate).ToAbsoluteDays() - save.gameTime.ToAbsoluteDays(), false);
+            var pa = save.wings.traces.Find(t => t.id == $"passer|{pDate}");   // 同上：按身份键取
+            bool p1 = pa != null && WingTraceRecord.PasserbyProgress01(pa, save.gameTime.ToAbsoluteDays()) == 0f;
+            Debug.Log($"[{(p1 ? "PASS" : "FAIL")}] 过路客上路（当日进度 0=还在西缘）");
+            p.worldTick(1, false);
+            bool p2 = WingTraceRecord.PasserbyProgress01(pa, save.gameTime.ToAbsoluteDays()) == 0.5f;
+            p.worldTick(1, false);
+            bool p3 = WingTraceRecord.PasserbyProgress01(pa, save.gameTime.ToAbsoluteDays()) == 1f;
+            p.worldTick(1, false);
+            bool p4 = !WingTraceRecord.IsVisible(pa, save.gameTime.ToAbsoluteDays());
+            Debug.Log($"[{(p2 && p3 ? "PASS" : "FAIL")}] 横穿进度逐日推进（0 → 0.5 → 1）");
+            Debug.Log($"[{(p4 ? "PASS" : "FAIL")}] 3 日穿完即走，不停留");
+
+            // ④ 方向句语料：三类痕迹的点击语都带方向感（占位，设计者扩写）
+            string cs = TraceCaptionBank.Pick("stranger",  "sk");
+            string cd = TraceCaptionBank.Pick("departure", "dk");
+            string cp = TraceCaptionBank.Pick("passerby",  "pk");
+            bool c1 = cs.Contains("西") && cd.Contains("东") && (cp.Contains("西") || cp.Contains("东"));
+            Debug.Log($"[{(c1 ? "PASS" : "FAIL")}] 方向句语料（来路西/去处东）");
+        }
+
+        // 找一枚必中掷签的日期键（自算哈希，同批次三 Exposure 手法）：
+        // Unit(tag|key) < guaranteedChance —— 调用方传"概率下限×0.95"，保证任何慢变量取值下必中
+        private static string FindRollDate(string tag, float guaranteedChance, int maxDays)
+        {
+            var d = new GameDateTime { year = 1, month = 9, day = 1 };
+            for (int i = 0; i < maxDays; i++)
+            {
+                string key = d.ToKeyString();
+                if ((TraceKeyUtil.Fnv1a($"{tag}|{key}") & 0xFFFF) / 65536f < guaranteedChance) return key;
+                d.Advance(1);
+            }
+            return null;
+        }
+
+        // 加强版：找"必中且此前 cleanDays 窗口内无可能触发"的日期——
+        // 防更早的触发占掉唯一活跃位/抢走 Find 首个匹配（guaranteed=概率下限，maxChance=概率上限）
+        // from 非空时从 from 的次日起扫（默认世界起点）——多阶段测试时钟已推进时，
+        // 扫出来的日期必须仍在未来，否则拿回的是陈年记录
+        private static string FindCleanRollDate(string tag, float guaranteed, float maxChance,
+                                                int cleanDays, int maxDays, GameDateTime from = null)
+        {
+            var d = from != null
+                ? new GameDateTime { year = from.year, month = from.month, day = from.day }
+                : new GameDateTime { year = 1, month = 9, day = 1 };
+            if (from != null) d.Advance(1);
+            int clean = 0;
+            for (int i = 0; i < maxDays; i++)
+            {
+                float u = (TraceKeyUtil.Fnv1a($"{tag}|{d.ToKeyString()}") & 0xFFFF) / 65536f;
+                if (u < guaranteed && clean >= cleanDays) return d.ToKeyString();
+                clean = u < maxChance ? 0 : clean + 1;
+                d.Advance(1);
+            }
+            return null;
         }
     }
 }
