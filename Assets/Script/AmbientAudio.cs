@@ -41,6 +41,7 @@ public class AmbientAudio : MonoBehaviour
     {
         _instance = this;
         if (grassRustleClip == null) grassRustleClip = Resources.Load<AudioClip>("Audio/grass_rustle");
+        if (grassRustleClip == null) grassRustleClip = Resources.Load<AudioClip>("Audio/Grass");
         if (gustWindClip   == null) gustWindClip   = Resources.Load<AudioClip>("Audio/gust_wind");
         if (MusicDay       == null) MusicDay       = Resources.Load<AudioClip>("Audio/music_day");
         if (MusicNight     == null) MusicNight     = Resources.Load<AudioClip>("Audio/music_night");
@@ -109,10 +110,8 @@ public class AmbientAudio : MonoBehaviour
         go.transform.position = pos;
         var src = go.AddComponent<AudioSource>();
         src.clip = clip;
-        src.spatialBlend = 1f;                    // 全 3D
-        src.rolloffMode = AudioRolloffMode.Logarithmic;
-        src.minDistance = _instance.minDistance;
-        src.maxDistance = _instance.maxDistance;
+        // Override the legacy 3D setup above: touch feedback is a direct 2D cue.
+        src.spatialBlend = 0f;
         src.PlayOneShot(clip, volume);
         Destroy(go, clip.length + 0.1f);
     }
