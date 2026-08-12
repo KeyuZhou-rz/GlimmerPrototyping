@@ -66,6 +66,56 @@ public static class TraceCaptionBank
             "一串脚印从西边的草里来，到东边的山里去。它没打算留下。",
             "连夜赶路的脚印，不停，不绕，不看风景。",
         },
+        // ── 留意句（2026-08-13 设计变更：撤悬浮小球，改语料引导）——
+        // 挂在日记边缘，只给方向不给位置（地名式，{place} 由 PlacePhrase 注入）；
+        // 找不到就过去，信补后文。占位各 1~2 条，设计者并行线扩写。
+        ["notice_mound"] = new[]
+        {
+            "{place}有一堆新翻的土。谁翻的，没说。",
+            "今天{place}多了一小堆土。土还是湿的。",
+        },
+        ["notice_collapse"] = new[]
+        {
+            "{place}塌了一个洞。没有人申报。",
+        },
+        ["notice_trail"] = new[]
+        {
+            "有脚印从{place}经过。目的地不明。",
+        },
+        ["notice_feathers"] = new[]
+        {
+            "{place}落了几根羽毛。飞走的那位没有告别。",
+        },
+        ["notice_rest"] = new[]
+        {
+            "{place}的草倒了一小片。昨夜有谁歇过脚。",
+        },
+        ["notice_sprout"] = new[]
+        {
+            "{place}冒了新苗。风把种子送到，就没有了下文。",
+        },
+        ["notice_exposed"] = new[]
+        {
+            "{place}有什么被翻出来了。埋下去有些年头了。",
+        },
+        // 侧翼三类自带方向（西来/东去），不套 {place}
+        ["notice_stranger"] = new[]
+        {
+            "西边的草里有串脚印。你没见过那种脚型。",
+        },
+        ["notice_departure"] = new[]
+        {
+            "东边有一串往山里去的印子。是谁走了。",
+        },
+        ["notice_passerby"] = new[]
+        {
+            "有一串脚印正连夜横穿这片土地，不停留。",
+        },
+        // 未覆盖类型的通用回退（仍在语料体系内，不走 Fallback——留意句必须带地名）
+        ["notice"] = new[]
+        {
+            "今天{place}似乎有点不一样。",
+        },
         ["trail"] = new[]
         {
             "一串脚印从这里经过。脚步不急，目的地不明。",
@@ -104,6 +154,30 @@ public static class TraceCaptionBank
     };
 
     private const string Fallback = "这里发生过一点事情。详情不明。";
+
+    // 区名 → 地名式方向（留意句用："石头那边"而非坐标，天然是区域不是位置）
+    public static string PlacePhrase(string zoneId) => zoneId switch
+    {
+        "riverbank"     => "河边",
+        "lowland"       => "低洼的草里",
+        "center"        => "台地中央",
+        "stone_area"    => "石头那边",
+        "highland_east" => "东边的高地",
+        _               => "不远处",
+    };
+
+    /// <summary>留意句选句（日记边缘）：notice_{traceType} 组，缺失回退通用 notice 组；
+    /// {place} 由区名经 PlacePhrase 注入（侧翼三类自带方向，模板无 {place}，替换为空操作）。
+    /// 同一条痕迹（同 traceKey）每次浮出同一句话。</summary>
+    public static string PickNotice(string traceType, string traceKey, string zoneId)
+    {
+        string place = PlacePhrase(zoneId);
+        if (!string.IsNullOrEmpty(traceType)
+            && Bank.TryGetValue("notice_" + traceType, out var lines) && lines.Length > 0)
+            return lines[StableIndex(traceKey, lines.Length)].Replace("{place}", place);
+        var generic = Bank["notice"];
+        return generic[StableIndex(traceKey, generic.Length)].Replace("{place}", place);
+    }
 
     /// <summary>按痕迹键稳定选句；类型未知或模板缺失时回退通用句。
     /// voleWho：田鼠称谓档（"田鼠/它们/镇子"，V1 D3 称谓漂移）——模板里的 {who} 由它替换；

@@ -41,15 +41,13 @@ public class WorldTraceBinder : MonoBehaviour
     [Tooltip("风吹因子：全风时痕迹有效老化 +30%。与雨洗同属「天气擦除痕迹」的信号")]
     [Range(0f, 2f)] public float windTraceFactor = 0.3f;
 
-    [Header("新鲜痕迹标记（切片 9：感叹号式占位——悬浮亮点，指向位置，永不暴露数值）")]
-    public float freshAgeThreshold = 1.5f;   // 有效年龄 ≤ 此值视为"新鲜"，头顶出标记
-    [Tooltip("T7 歇息压痕的新鲜窗口单独放宽——压痕比脚印含蓄，标记是远机位唯一的视线引导")]
+    [Header("新鲜窗口（游戏日）：有效年龄 ≤ 阈值的变化进留意清单——日记边缘语料的选材")]
+    public float freshAgeThreshold = 1.5f;   // 有效年龄 ≤ 此值视为"新鲜"
+    [Tooltip("T7 歇息压痕的新鲜窗口单独放宽——压痕比脚印含蓄")]
     public float restFreshAgeThreshold = 3f;
-    public float markerHeight = 1.6f;
-    public float markerSize   = 0.35f;   // 最小世界尺寸
-    [Tooltip("标记随距离放大系数：scale = max(markerSize, 距离×此值)。舞台机位 80m 时 ≈1.6m，保证余光可见")]
-    public float markerScreenScale = 0.02f;
-    public Color markerColor  = new(1.0f, 0.62f, 0.22f);   // 暖橙：与金色草丛拉开对比
+    // 2026-08-13 设计变更（拍板）：悬浮小球标记撤销。新鲜判定口径保留，
+    // 产物从"头顶的球"改为 GetFreshNotices() 留意清单 → 日记边缘一行小字。
+    // 只给方向不给位置；错过即错过，信补后文。
 
     [Header("旱痕（§5.5：DroughtDebt>阈值 → 干裂地表，状态驱动仿 T4，回落即撤）")]
     public float droughtCrackThreshold = 0.6f;
@@ -96,8 +94,17 @@ public class WorldTraceBinder : MonoBehaviour
         public float spawnRealTime;   // 展示层淡入用（真实秒）
     }
 
+    // 留意清单（2026-08-13 设计变更：撤悬浮小球，改语料引导）——
+    // 新鲜痕迹的"说法素材"：类型+键+所在区。只给方向不给位置；日记边缘取用。
+    public struct NoticeInfo
+    {
+        public string traceType;   // TypeKey 语料类型串
+        public string traceKey;    // 稳定选句用（同一条痕迹同一句话）
+        public string zoneId;      // 最近锚点的区（地名式方向）；解析不到为 null
+    }
+
     private readonly Dictionary<string, TraceInstance> _traces = new();
-    private readonly List<Transform> _markers = new();   // 新鲜标记（LateUpdate 呼吸动画用）
+    private readonly List<NoticeInfo> _notices = new();   // 每次 Rebuild 随 fresh 集合重算
     private readonly HashSet<string> _floodDamaged = new();   // T1 水毁锁存（不可逆原则③：一旦泡透不再复原）
     private readonly Vector4[] _trampleArray = new Vector4[TRAMPLE_MAX];
     private readonly List<Vector4> _trampleGather = new();
@@ -176,24 +183,6 @@ public class WorldTraceBinder : MonoBehaviour
         for (int i = 0; i < otherCount; i++) _trampleArray[n++] = _trampleGather[i];
         Shader.SetGlobalFloat(TrampleCountId, n);
         Shader.SetGlobalVectorArray(TramplePointsId, _trampleArray);
-
-        // 新鲜标记呼吸动画：上下浮动 + 慢转 + 随距离放大（舞台机位 50-100m，
-        // 0.35m 静球只有几像素且与草顺色；屏幕尺寸近似恒定才是"注意引导"）
-        var cam = Camera.main;
-        for (int i = 0; i < _markers.Count; i++)
-        {
-            var m = _markers[i];
-            if (m == null) continue;   // 重建后旧标记随 root 销毁
-            var lp = m.localPosition;
-            lp.y = markerHeight + Mathf.Sin(Time.time * 2.2f + i * 1.7f) * 0.18f;
-            m.localPosition = lp;
-            m.Rotate(0f, 40f * Time.deltaTime, 0f, Space.World);
-            if (cam != null)
-            {
-                float dist = Vector3.Distance(cam.transform.position, m.position);
-                m.localScale = Vector3.one * Mathf.Max(markerSize, dist * markerScreenScale);
-            }
-        }
     }
 
     void OnDisable()
@@ -248,9 +237,9 @@ public class WorldTraceBinder : MonoBehaviour
         float weatherMul = env != null
             ? 1f + env.Rainfall * rainTraceFactor + env.WindSpeed * windTraceFactor
             : 1f;
-        _markers.Clear();   // 旧标记随 root 销毁重建，引用丢弃
+        _notices.Clear();   // 留意清单随本次重建重算
         var desired = new Dictionary<string, System.Action<TraceInstance>>();
-        var fresh = new HashSet<string>();   // 有效年龄 ≤ freshAgeThreshold 的痕迹键（切片 9 标记）
+        var fresh = new HashSet<string>();   // 有效年龄 ≤ freshAgeThreshold 的痕迹键（留意句选材）
         var nonClickable = new HashSet<string>();   // 沉入地层档的痕迹：存在但不可点（几乎不可读，直到出露）
 
         // —— T1/T3/T6：从动物 history 派生；T2 塌洞已由地层接管（D5，见下方 strata 分支）——
@@ -329,7 +318,7 @@ public class WorldTraceBinder : MonoBehaviour
                     string zone = loc.locationId;
                     int cday = ToDays(ParseKeyDate(pc.date));
                     desired[key] = t => SpawnCollapsedBurrow(t, zone, seed);
-                    // 新出现的塌洞也标记几天——永久地貌的"诞生"同样是值得注意的变化
+                    // 新出现的塌洞也留意几天——永久地貌的"诞生"同样是值得注意的变化
                     if ((today - cday) * weatherMul <= freshAgeThreshold) fresh.Add(key);
                 }
             }
@@ -384,7 +373,7 @@ public class WorldTraceBinder : MonoBehaviour
                     {
                         string sk = "sprout|" + key;
                         desired[sk] = t => SpawnSprout(t, e.targetId, seed);
-                        // 冒苗头几天给新鲜标记——"低洼冒了新苗"正是标记该指向的变化
+                        // 冒苗头几天进留意清单——"低洼冒了新苗"正是留意句该说的变化
                         if (rawAge <= sproutDays + freshAgeThreshold) fresh.Add(sk);
                     }
                 }
@@ -403,7 +392,7 @@ public class WorldTraceBinder : MonoBehaviour
         }
 
         // 旱痕（§5.5 阈值 2）：debt>0.6 → 干裂地表。状态驱动仿 T4：过线出现，回落即撤。
-        // 不上新鲜标记——裂缝会持续数周，标记只指向"新变化"。
+        // 不进留意清单——裂缝会持续数周，留意句只说"新变化"。
         if ((env?.DroughtDebt ?? 0f) > droughtCrackThreshold && crackZones != null)
         {
             foreach (var zone in crackZones)
@@ -426,7 +415,7 @@ public class WorldTraceBinder : MonoBehaviour
                 string vk = $"vtrail|{tr.formedDateKey}";
                 var rec = tr;   // 闭包捕获
                 desired[vk] = t => SpawnVoleTrail(t, rec, lapseAge);
-                // 刚成形那天指一下（镇诞生是新闻）；之后是常态不上标记
+                // 刚成形那天留意一下（镇诞生是新闻）；之后是常态不再提
                 if (!tr.lapsed && (today - formDay) * weatherMul <= freshAgeThreshold) fresh.Add(vk);
             }
         }
@@ -434,7 +423,7 @@ public class WorldTraceBinder : MonoBehaviour
         // 新生地层（V1 D5/D6）：入土痕迹的三态渲染——
         //   遗存（depth < RelicMaxDepth）：塌矮、色沉、微陷，可点（旧迹语气）；
         //   地层（更深且未出露）：只剩一点土色异样，不可点——几乎不可读，直到出露；
-        //   出露（风暴/田鼠翻出）：半埋挺回地表，可点（记忆/考古双语域），出露当日上标记。
+        //   出露（风暴/田鼠翻出）：半埋挺回地表，可点（记忆/考古双语域），出露当日进留意清单。
         // 记录永不删；每区地层档只画最新 MaxPerZone 件（预算阀），更老的在档继续沉。
         if (save.strata != null && save.strata.Count > 0)
         {
@@ -461,7 +450,7 @@ public class WorldTraceBinder : MonoBehaviour
                 }
                 else if (rec.kind == "collapse" &&
                          (today - ToDays(ParseKeyDate(rec.buriedDateKey))) * weatherMul <= freshAgeThreshold)
-                    fresh.Add(rec.sourceKey);   // 塌洞诞生标记行为从 T2 原样保留
+                    fresh.Add(rec.sourceKey);   // 塌洞诞生的留意行为从 T2 原样保留
             }
         }
 
@@ -481,7 +470,7 @@ public class WorldTraceBinder : MonoBehaviour
                     case "departure": desired[rec.id] = t => SpawnDepartureMarks(t, rec, age);   break;
                     case "passerby":  desired[rec.id] = t => SpawnPasserbyChain(t, rec, today);  break;
                 }
-                if (age <= freshAgeThreshold) fresh.Add(rec.id);   // 出现/上路当日指一下
+                if (age <= freshAgeThreshold) fresh.Add(rec.id);   // 出现/上路当日留意一下
             }
         }
 
@@ -1060,9 +1049,9 @@ public class WorldTraceBinder : MonoBehaviour
 
     // ── prop 组装 ────────────────────────────────────────────────
 
-    // 切片 9：生成后收尾——挂可点击 collider（B 方案推近的命中体），新鲜痕迹头顶出占位标记。
-    // 红线：标记指向场景位置，永不暴露数值。
-    // clickable=false（沉入地层档）：不挂命中体不上标记——几乎不可读，直到出露。
+    // 生成后收尾——挂可点击 collider（B 方案推近的命中体）；新鲜痕迹记入留意清单
+    //（日记边缘语料的选材：类型+键+区，只给方向不给位置）。
+    // clickable=false（沉入地层档）：不挂命中体不进清单——几乎不可读，直到出露。
     private void FinishTrace(TraceInstance t, bool isFresh, bool clickable = true)
     {
         if (t.root == null) return;
@@ -1089,7 +1078,37 @@ public class WorldTraceBinder : MonoBehaviour
         click.traceType = TypeKey(t.type);
         click.traceKey = t.key;
 
-        if (isFresh) SpawnFreshMarker(t, b.center);
+        if (isFresh)
+            _notices.Add(new NoticeInfo
+            {
+                traceType = click.traceType,
+                traceKey  = t.key,
+                zoneId    = NearestZoneId(b.center)
+            });
+    }
+
+    /// <summary>当前新鲜痕迹的留意清单（日记边缘语料用）。
+    /// 只读派生——不写世界状态、不进编年史、不落档；关上日记即散，错过即错过。</summary>
+    public void GetFreshNotices(List<NoticeInfo> into)
+    {
+        into.Clear();
+        into.AddRange(_notices);
+    }
+
+    // 位置 → 最近锚点的 zoneId（地名式方向："石头那边"而非坐标）
+    private string NearestZoneId(Vector3 at)
+    {
+        if (zoneMap == null || zoneMap.anchors == null) return null;
+        string best = null;
+        float bestD = float.MaxValue;
+        foreach (var a in zoneMap.anchors)
+        {
+            if (a == null || string.IsNullOrEmpty(a.zoneId)) continue;
+            if (!zoneMap.TryGetAnchorCenter(a.zoneId, out Vector3 c, out _)) continue;
+            float d = (c - at).sqrMagnitude;
+            if (d < bestD) { bestD = d; best = a.zoneId; }
+        }
+        return best;
     }
 
     // TraceType → 语料类型串（与 key 前缀同名，TraceCaptionBank 按它选模板）
@@ -1112,31 +1131,6 @@ public class WorldTraceBinder : MonoBehaviour
         TraceType.PasserbyChain  => "passerby",
         _                        => "trace",
     };
-
-    // 占位感叹号：痕迹上方一个悬浮亮点（markerPrefab 待设计稿；点 marker 等于点痕迹）
-    private void SpawnFreshMarker(TraceInstance t, Vector3 at)
-    {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        go.name = "Marker_Fresh";
-        Destroy(go.GetComponent<Collider>());
-        go.transform.SetParent(t.root.transform, false);
-        go.transform.position = at + Vector3.up * markerHeight;
-        go.transform.localScale = Vector3.one * markerSize;
-        var mr = go.GetComponent<MeshRenderer>();
-        // 用资产材质而非运行时 FallbackMaterial（运行时 new Material 疑似触发 keyword space 报错）
-        mr.sharedMaterial = dirtMaterial != null ? dirtMaterial : FallbackMaterial();
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        _mpb.Clear();
-        _mpb.SetColor("_BaseColor", markerColor);
-        mr.SetPropertyBlock(_mpb);
-        var click = go.AddComponent<SphereCollider>();
-        click.radius = 1.2f;   // 命中半径（标记随距离放大，实际覆盖 ~1-2m，好点击）
-        var tc = go.AddComponent<TraceClickable>();
-        tc.focusPoint = at;
-        tc.traceType = TypeKey(t.type);
-        tc.traceKey = t.key;
-        _markers.Add(go.transform);   // LateUpdate 呼吸动画
-    }
 
     private GameObject NewRoot(string name, Vector3 at)
     {

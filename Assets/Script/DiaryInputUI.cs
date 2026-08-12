@@ -20,10 +20,26 @@ public class DiaryInputUI : MonoBehaviour
 
     public static bool IsOpen { get; private set; }
 
+    [Header("留意句（2026-08-13 设计变更：撤悬浮小球，改日记边缘语料引导）")]
+    [Tooltip("打开日记后第一行浮出的延迟（秒）")]
+    public float noticeFirstDelay = 1.2f;
+    [Tooltip("停笔多少秒后浮出下一行（秒）")]
+    public float noticeIdleDelay  = 5f;
+    [Tooltip("一行停留多久（秒）；清单为空则始终安静")]
+    public float noticeHoldSeconds = 12f;   // 拍板后调长：它是"想起"，让你把这句话读完再读完一遍
+
     private CanvasGroup _canvasGroup;
     private InputField  _input;
     private Text        _ack;
     private float       _ackTimer;
+
+    // 留意行状态：只给方向不给位置；纯 L3 派生，不写世界状态、不落档
+    private Text _notice;
+    private readonly System.Collections.Generic.List<WorldTraceBinder.NoticeInfo> _notices = new();
+    private int   _noticeCursor;
+    private float _noticeIdle;    // 距下一行浮出的剩余秒数
+    private float _noticeHold;    // 当前行剩余停留秒数（>0 = 正在展示）
+    private float _noticeAlpha;   // 当前透明度（向目标缓动）
 
     void Update()
     {
@@ -47,6 +63,41 @@ public class DiaryInputUI : MonoBehaviour
                 _ack.color = c;
             }
         }
+
+        // 留意行：展示中缓显、停留；非展示期缓隐并倒数下一行。清单为空则永远安静——
+        // 大多数日子没有新事，没有新事就不说话（它不是通知）。
+        if (IsOpen && _notice != null && _notices.Count > 0)
+        {
+            if (_noticeHold > 0f)
+            {
+                _noticeHold -= Time.deltaTime;
+                _noticeAlpha = Mathf.MoveTowards(_noticeAlpha, 1f, Time.deltaTime / 1.2f);
+            }
+            else
+            {
+                _noticeAlpha = Mathf.MoveTowards(_noticeAlpha, 0f, Time.deltaTime / 0.8f);
+                _noticeIdle -= Time.deltaTime;
+                if (_noticeIdle <= 0f) ShowNextNotice();
+            }
+            var nc = _notice.color;
+            nc.a = _noticeAlpha * 0.65f;   // 永远半透明——它是"想起"，不是"提示"
+            _notice.color = nc;
+        }
+    }
+
+    private void ShowNextNotice()
+    {
+        var n = _notices[_noticeCursor % _notices.Count];
+        _noticeCursor++;
+        _notice.text = TraceCaptionBank.PickNotice(n.traceType, n.traceKey, n.zoneId);
+        _noticeHold = noticeHoldSeconds;
+    }
+
+    // 一动笔，浮现的句子就散（写字的人被自己的句子接走）；停笔几秒后世界再说话
+    private void OnTyping(string _)
+    {
+        _noticeHold = 0f;
+        _noticeIdle = noticeIdleDelay;
     }
 
     public void Open()
@@ -57,11 +108,24 @@ public class DiaryInputUI : MonoBehaviour
         _canvasGroup.interactable = true;
         _canvasGroup.blocksRaycasts = true;
         _input.ActivateInputField();   // 打开即聚焦，直接可写
+
+        // 拉取当下值得留意的变化（新鲜痕迹，方向不给位置）；没有就保持安静
+        _notices.Clear();
+        var binder = FindFirstObjectByType<WorldTraceBinder>();
+        if (binder != null) binder.GetFreshNotices(_notices);
+        _noticeCursor = 0;
+        _noticeIdle = noticeFirstDelay;
+        _noticeHold = 0f;
+        _noticeAlpha = 0f;
     }
 
     public void Close()
     {
         IsOpen = false;
+        // 关上日记，留意句即散——错过即错过，不落任何"已读"记录
+        _noticeHold = 0f;
+        _noticeAlpha = 0f;
+        if (_notice != null) { var nc = _notice.color; nc.a = 0f; _notice.color = nc; }
         if (_canvasGroup == null) return;
         _canvasGroup.alpha = 0f;
         _canvasGroup.interactable = false;
@@ -168,6 +232,24 @@ public class DiaryInputUI : MonoBehaviour
         prt.offsetMin = new Vector2(12f, 8f);
         prt.offsetMax = new Vector2(-12f, -8f);
         _input.placeholder = ph;
+        _input.onValueChanged.AddListener(OnTyping);
+
+        // 留意行：面板顶缘外一行斜体小字——"写下今天之前，你想起白天瞥见的东西"
+        var noticeGo = new GameObject("Notice");
+        noticeGo.transform.SetParent(panelGo.transform, false);
+        _notice = noticeGo.AddComponent<Text>();
+        _notice.font = font;
+        _notice.fontSize = 15;
+        _notice.fontStyle = FontStyle.Italic;
+        _notice.color = new Color(textColor.r, textColor.g, textColor.b, 0f);
+        _notice.alignment = TextAnchor.MiddleCenter;
+        _notice.raycastTarget = false;
+        var nrt = (RectTransform)noticeGo.transform;
+        nrt.anchorMin = new Vector2(0.5f, 1f);
+        nrt.anchorMax = new Vector2(0.5f, 1f);
+        nrt.pivot = new Vector2(0.5f, 0f);
+        nrt.anchoredPosition = new Vector2(0f, 10f);
+        nrt.sizeDelta = new Vector2(720f, 24f);
 
         // 提交按钮（右下）+ 快捷键提示（左下）
         var btnGo = new GameObject("Submit");

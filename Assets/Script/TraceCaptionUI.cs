@@ -11,7 +11,7 @@ public class TraceCaptionUI : MonoBehaviour
 {
     [Header("节奏（秒）")]
     public float fadeIn  = 0.5f;
-    public float hold    = 3.2f;
+    public float hold    = 5.5f;   // 2026-08-13：聚焦改为停留式（不再自动回主机位）——观察语陪着多看一会儿
     public float fadeOut = 0.9f;
 
     [Header("占位样式")]
