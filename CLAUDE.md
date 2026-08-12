@@ -117,8 +117,11 @@ Interaction stance (decided 2026-07-13, benchmark: Mountain):
 no retention mechanics, no daily rewards, no notifications-as-pressure,
 no progress bars, no social features. The only drivers are curiosity and
 emotional projection. Player camera: fixed stage view + click-to-approach
-on traces (option B). Trace-anchored attention markers are allowed as
-"noticing guidance" — they point at places, never expose values.
+on traces (option B). Noticing guidance (revised 2026-08-13, superseding
+the floating-marker decision): NO floating markers/balls — guidance is
+text-only "noticing lines" at the diary's edge, naming a place, never a
+position ("石头那边有一堆新翻的土"). Missing a change is an accepted
+experience; the absence letter fills in the aftermath later.
 
 Ask before implementing any feature that:
 - Gives the user more control over world state
