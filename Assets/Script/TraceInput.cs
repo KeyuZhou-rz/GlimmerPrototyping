@@ -71,14 +71,14 @@ public class TraceInput : MonoBehaviour
 
         // 最近的痕迹命中与"第一个打到的任何东西"各取一（痕迹可能躲在草后）
         TraceClickable tc = null;
-        Vector3 hitPoint = default;
+        Vector3 hitPoint = default, traceHitPoint = default;
         bool hitAnything = false, hitTerrain = false;
         foreach (var h in hits)
         {
             if (tc == null)
             {
                 var c = h.collider.GetComponentInParent<TraceClickable>();
-                if (c != null) tc = c;
+                if (c != null) { tc = c; traceHitPoint = h.point; }
             }
             if (!hitAnything && h.collider.GetComponentInParent<TraceClickable>() == null)
             {
@@ -93,7 +93,7 @@ public class TraceInput : MonoBehaviour
         if (tc != null)
         {
             _pendingReturn = -1f;
-            FocusTrace(tc);
+            FocusTrace(tc, traceHitPoint);
             return;
         }
 
@@ -112,7 +112,7 @@ public class TraceInput : MonoBehaviour
             if (snapped != null)
             {
                 _pendingReturn = -1f;
-                FocusTrace(snapped);
+                FocusTrace(snapped, hitPoint);
                 return;
             }
 
@@ -133,13 +133,15 @@ public class TraceInput : MonoBehaviour
         if (pusher.IsFocused && !isDouble) _pendingReturn = doubleClickWindow;
     }
 
-    private void FocusTrace(TraceClickable tc)
+    // clickAt = 本次点击的世界落点：链式痕迹（小径）聚焦到链上最近的那段，而非整条链的盒心
+    private void FocusTrace(TraceClickable tc, Vector3 clickAt)
     {
-        pusher.PushTo(tc.focusPoint);
+        pusher.PushTo(tc.NearestFocus(clickAt));
         TraceCaptionUI.Show(tc.traceType, tc.traceKey);   // 聚焦同时给一句观察（展示层，不进世界志）
     }
 
     // 落点半径内最近的 TraceClickable（OverlapSphere 兜底——痕迹碰撞体小，不用像素级瞄准）
+    // 距离按"离痕迹最近的可见点"算（链式痕迹取链上最近点），长链不再靠盒心抢吸附
     private TraceClickable NearestTrace(Vector3 at, float radius)
     {
         var cols = Physics.OverlapSphere(at, radius, traceMask);
@@ -149,7 +151,7 @@ public class TraceInput : MonoBehaviour
         {
             var tc = c.GetComponentInParent<TraceClickable>();
             if (tc == null) continue;
-            float d = (tc.focusPoint - at).sqrMagnitude;
+            float d = (tc.NearestFocus(at) - at).sqrMagnitude;
             if (d < bestD) { bestD = d; best = tc; }
         }
         return best;

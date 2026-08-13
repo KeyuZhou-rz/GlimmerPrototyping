@@ -91,6 +91,8 @@ public class WorldTraceBinder : MonoBehaviour
         public readonly List<Renderer> renderers = new();
         // 本痕迹贡献的压痕点（世界 XZ + 半径 + 基础强度，随龄再衰减）
         public readonly List<Vector4> trampleContribs = new();
+        // 链式痕迹（小径）：沿路实际铺下的色片位置，点击聚焦取链上最近点用
+        public Vector3[] chainPoints;
         public float spawnRealTime;   // 展示层淡入用（真实秒）
     }
 
@@ -953,6 +955,7 @@ public class WorldTraceBinder : MonoBehaviour
         t.seed = seed;
         var rng = new System.Random(seed);
         t.root = NewRoot($"VoleTrail_{seed:X8}", pts[0]);
+        var placed = new List<Vector3>();
 
         for (int i = 0; i < pts.Count - 1; i++)
         {
@@ -969,8 +972,12 @@ public class WorldTraceBinder : MonoBehaviour
                 AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p + Vector3.up * 0.015f,
                         Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
                         Vector3.one * Mathf.Lerp(1.3f, 1.7f, (float)rng.NextDouble()));
+                placed.Add(p);
             }
         }
+        // 点击聚焦取"链上离点击处最近的那段"（FinishTrace 转给 TraceClickable.focusChain），
+        // 不再飞到整条链的盒心——点河岸哪一段，就看哪一段。
+        if (placed.Count > 0) t.chainPoints = placed.ToArray();
     }
 
     // 小径土堆键 → 世界坐标：解析 "mound|vole|{date}|{from}->{to}|{trigger}[#n]"，
@@ -1075,6 +1082,7 @@ public class WorldTraceBinder : MonoBehaviour
         col.size = Vector3.Max(b.size, new Vector3(1.2f, 0.8f, 1.2f));
         var click = t.root.AddComponent<TraceClickable>();
         click.focusPoint = b.center;
+        if (t.chainPoints != null) click.focusChain = t.chainPoints;   // 链式痕迹：聚焦取链上最近点
         click.traceType = TypeKey(t.type);
         click.traceKey = t.key;
 
