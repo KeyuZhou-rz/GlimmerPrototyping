@@ -40,7 +40,9 @@
       "Bash(git merge *)",
       "Bash(git commit -m 'chore: update local settings *)",
       "Bash(cd \"C:/Users/Z2005/.claude/projects/c--Users-Z2005-Glimmer-Prototyping/memory\" && grep -n \"sky-san-rockart\" MEMORY.md)",
-      "Read(//c/Users/Z2005/.claude/projects/c--Users-Z2005-Glimmer-Prototyping/memory/**)"
+      "Read(//c/Users/Z2005/.claude/projects/c--Users-Z2005-Glimmer-Prototyping/memory/**)",
+      "Bash(cp \"C:/Users/Z2005/Glimmer_Prototyping/Assets/Screenshots/claude_maincam.png\" \"C:/Users/Z2005/Glimmer_Prototyping/Assets/Screenshots/claude_maincam_before.png\")",
+      "Bash(cp \"C:/Users/Z2005/Glimmer_Prototyping/Assets/Screenshots/claude_overview.png\" \"C:/Users/Z2005/Glimmer_Prototyping/Assets/Screenshots/claude_overview_before.png\")"
     ]
   }
 }

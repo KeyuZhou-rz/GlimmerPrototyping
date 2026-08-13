@@ -37,11 +37,9 @@ public static class DemoUIBootstrap
         // ③ 常驻提示行
         CreateHint();
 
-#if UNITY_EDITOR
-        // ⑤ 调试：推进一天按钮（仅编辑器，可反复按，不进发布构建——
+        // ⑤ "推进一天"按钮（2026-08-13 拍板：进发布包，给朋友测试用——
         //    与 GlimmerDiary/Debug/Fast Forward 1 Day 同口径）
         CreateTickButton();
-#endif
     }
 
     private static void CreateHint()
@@ -71,9 +69,9 @@ public static class DemoUIBootstrap
         rt.sizeDelta = new Vector2(480f, 26f);
     }
 
-#if UNITY_EDITOR
-    // 调试按钮：右下角"推进一天"，可反复按。非 catch-up 逐日模拟（世界志保留，
+    // "推进一天"按钮：右下角，可反复按。非 catch-up 逐日模拟（世界志保留，
     // 演示要看信逐封抵达）+ 落盘锚定——与 DebugFastForward.FF(1) 同口径。
+    // 2026-08-13 拍板进发布包：给朋友测试用（单向快进，非时间旅行/重置）。
     // GraphicRaycaster 必需：① uGUI Button 没它不接收点击；② TraceInput 闸门①
     // 靠它认出"点在按钮上"，不会顺手把相机也推出去。
     private static void CreateTickButton()
@@ -125,5 +123,4 @@ public static class DemoUIBootstrap
         GlimmerDiary.Utils.SaveSystem.SaveWorldState(world.WorldSave);   // 落盘锚定 now
         Debug.Log($"[DebugTick] +1 天 → {world.WorldSave.gameTime.ToDisplayString()}");
     }
-#endif
 }
