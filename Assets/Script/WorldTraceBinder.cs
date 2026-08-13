@@ -82,8 +82,8 @@ public class WorldTraceBinder : MonoBehaviour
     [Header("田鼠灯（小径附属造物：镇成形即有灯，镇散灯灭杆留；昼夜驱动在 VoleLampDriver）")]
     public Color lampLightColor   = new(1.00f, 0.58f, 0.25f);   // 照明暖色（过 toon 色阶后在草上读作琥珀台阶）
     public Color lampBeadEmission = new(1.00f, 0.62f, 0.28f);   // 灯珠发光基色（driver 乘 HDR 强度吃 Bloom）
-    public float lampBeadHdr      = 2.5f;    // 发光 HDR 倍率（GlimmerPostFX Bloom 阈值 1.0，须推过才泛光）
-    public float lampIntensity    = 1.5f;
+    public float lampBeadHdr      = 4.0f;    // 发光 HDR 倍率（GlimmerPostFX Bloom 阈值 1.0，须推过才泛光）
+    public float lampIntensity    = 3.0f;
     public float lampRange        = 4f;      // 只照亮灯周一圈草——"一盏一盏"的点描感，不连成光带
     public float lampSpacing      = 8f;      // ≥ 2×range：任一点最多 1-2 盏在范围内（URP 每物体附加光上限 4）
     public int   maxLampsPerTrail = 12;
@@ -92,8 +92,8 @@ public class WorldTraceBinder : MonoBehaviour
     [Header("原在灯（2026-08-13：镇成形之前就在的 3-4 盏——比镇老，不知谁立的。更冷更暗更慢：新火暖，旧火冷）")]
     public Color elderLightColor   = new(0.62f, 0.72f, 1.00f);   // 冷月白（与镇灯暖琥珀一眼可辨）
     public Color elderBeadEmission = new(0.60f, 0.72f, 1.00f);
-    public float elderBeadHdr      = 1.6f;    // 更暗：仍过 Bloom 阈值 1.0，但弱一截
-    public float elderIntensity    = 0.7f;
+    public float elderBeadHdr      = 2.6f;    // 更暗：仍过 Bloom 阈值 1.0，但弱一截
+    public float elderIntensity    = 1.4f;
     public float elderRange        = 3f;
     public float elderBreathAmp    = 0.14f;   // 呼吸更深——像风里的老火
     public float elderBreathSpeed  = 0.6f;    // 更慢（周期 ~10s，镇灯 ~4s）
