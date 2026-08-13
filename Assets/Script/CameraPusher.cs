@@ -16,7 +16,7 @@ public class CameraPusher : MonoBehaviour
 
     [Header("聚焦中滚轮俯仰（2026-08-13 拍板）")]
     [Tooltip("每格滚轮的俯仰步进（度）")]
-    public float pitchPerNotchDeg = 10f;
+    public float pitchPerNotchDeg = 40f;
     [Tooltip("俯仰下限：平行（0°=与聚焦点同高平视），不允许低于平行")]
     public float pitchMinDeg = 0f;
     [Tooltip("俯仰上限：正俯视 90°")]

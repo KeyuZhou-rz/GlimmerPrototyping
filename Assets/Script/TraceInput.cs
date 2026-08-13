@@ -90,10 +90,12 @@ public class TraceInput : MonoBehaviour
         }
 
         // ① 点中痕迹（单击即可）→ 聚焦 + 观察语；再点一次同一件＝再读一遍它的说法
+        // 就近参照优先用地形落点 hitPoint：大命中盒的顶面先截住射线，h.point 可能落在
+        // 盒顶任何一处；hitPoint 才是玩家手指真正指的那个地面位置。
         if (tc != null)
         {
             _pendingReturn = -1f;
-            FocusTrace(tc, traceHitPoint);
+            FocusTrace(tc, hitAnything ? hitPoint : traceHitPoint);
             return;
         }
 

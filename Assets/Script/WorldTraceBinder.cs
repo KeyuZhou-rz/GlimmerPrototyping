@@ -64,6 +64,11 @@ public class WorldTraceBinder : MonoBehaviour
     public int sproutLifespan = 15;   // 苗可见总天数（矩阵未定寿命——默认限期；永久苗属设计拍板）
     public Color sproutTint   = new(0.82f, 0.84f, 0.70f);   // 绒白偏青，与枯金草丛拉开
 
+    [Header("深层遗物（V1 D9：认出-only 四件，出露前完全不可见，出露后恒久在地）")]
+    public Color deepStoneTint = new(0.50f, 0.47f, 0.42f);   // 风化的石头本色
+    public Color ochreTint     = new(0.62f, 0.30f, 0.16f);   // 赭石——岩棚画点描（借天空岩画色板）
+    public Color boneTint      = new(0.86f, 0.82f, 0.70f);   // 骨白——岩棚画点描
+
     [Header("年龄着色")]
     public Color dirtFresh   = new(0.30f, 0.22f, 0.16f);   // 湿的新土
     public Color dirtDry     = new(0.45f, 0.36f, 0.27f);
@@ -79,7 +84,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
     private static readonly int TramplePointsId = Shader.PropertyToID("_TramplePoints");
 
-    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail, Relic, ExposedRelic, StrangerMarks, DepartureMarks, PasserbyChain }
+    private enum TraceType { Mound, CollapsedBurrow, Trail, Feathers, ScentMarks, RestPatch, RangeHalt, EarthCrack, Sprout, VoleTrail, Relic, ExposedRelic, StrangerMarks, DepartureMarks, PasserbyChain, DeepRelic }
 
     /// <summary>一条派生痕迹：键=源记录哈希（身份），场景表现挂在 root 下。</summary>
     private class TraceInstance
@@ -93,6 +98,8 @@ public class WorldTraceBinder : MonoBehaviour
         public readonly List<Vector4> trampleContribs = new();
         // 链式痕迹（小径）：沿路实际铺下的色片位置，点击聚焦取链上最近点用
         public Vector3[] chainPoints;
+        // 本痕迹全部 prop 的落点（AddProp 逐件记录）——长条/散布痕迹的"就近聚焦"素材
+        public readonly List<Vector3> propPositions = new();
         public float spawnRealTime;   // 展示层淡入用（真实秒）
     }
 
@@ -1082,7 +1089,11 @@ public class WorldTraceBinder : MonoBehaviour
         col.size = Vector3.Max(b.size, new Vector3(1.2f, 0.8f, 1.2f));
         var click = t.root.AddComponent<TraceClickable>();
         click.focusPoint = b.center;
-        if (t.chainPoints != null) click.focusChain = t.chainPoints;   // 链式痕迹：聚焦取链上最近点
+        // 链式痕迹（小径显式带链）；其余"长条/散布"痕迹（脚印串、过路客链、气味标记…，
+        // XZ 跨度 > 4m）一律按链处理——聚焦/吸附取离点击处最近的点，不再飞整条的盒心。
+        if (t.chainPoints != null) click.focusChain = t.chainPoints;
+        else if (t.propPositions.Count > 1 && Mathf.Max(b.size.x, b.size.z) > 4f)
+            click.focusChain = t.propPositions.ToArray();
         click.traceType = TypeKey(t.type);
         click.traceKey = t.key;
 
@@ -1165,6 +1176,7 @@ public class WorldTraceBinder : MonoBehaviour
         _mpb.SetColor("_BaseColor", tint);
         mr.SetPropertyBlock(_mpb);
         t.renderers.Add(mr);
+        t.propPositions.Add(pos);
     }
 
     private static Material _fallback;
