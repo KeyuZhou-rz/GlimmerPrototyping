@@ -69,6 +69,9 @@ public class WorldTraceBinder : MonoBehaviour
     public Color ochreTint     = new(0.62f, 0.30f, 0.16f);   // 赭石——岩棚画点描（借天空岩画色板）
     public Color boneTint      = new(0.86f, 0.82f, 0.70f);   // 骨白——岩棚画点描
 
+    [Header("出露翻土晕（2026-08-13 修订：翻出必带一圈新土，淡完即散——出露不能干干净净地出现）")]
+    public int exposureHaloDays = 10;   // 翻土晕可见总天数（新土色 → 地表色逐日淡去）
+
     [Header("年龄着色")]
     public Color dirtFresh   = new(0.30f, 0.22f, 0.16f);   // 湿的新土
     public Color dirtDry     = new(0.45f, 0.36f, 0.27f);
@@ -82,19 +85,20 @@ public class WorldTraceBinder : MonoBehaviour
     [Header("田鼠灯（小径附属造物：镇成形即有灯，镇散灯灭杆留；昼夜驱动在 VoleLampDriver）")]
     public Color lampLightColor   = new(1.00f, 0.58f, 0.25f);   // 照明暖色（过 toon 色阶后在草上读作琥珀台阶）
     public Color lampBeadEmission = new(1.00f, 0.62f, 0.28f);   // 灯珠发光基色（driver 乘 HDR 强度吃 Bloom）
-    public float lampBeadHdr      = 4.0f;    // 发光 HDR 倍率（GlimmerPostFX Bloom 阈值 1.0，须推过才泛光）
-    public float lampIntensity    = 3.0f;
-    public float lampRange        = 4f;      // 只照亮灯周一圈草——"一盏一盏"的点描感，不连成光带
-    public float lampSpacing      = 8f;      // ≥ 2×range：任一点最多 1-2 盏在范围内（URP 每物体附加光上限 4）
+    public float lampBeadHdr      = 6.0f;    // 发光 HDR 倍率（GlimmerPostFX Bloom 阈值 1.0，须推过才泛光）
+    public float lampIntensity    = 6.0f;
+    public float lampRange        = 6.5f;    // 照亮灯周一圈草地的光池（2026-08-13 提亮：明显光晕+照草）
+    public float lampSpacing      = 8f;      // 任一点最多 2 盏在范围内（URP 每物体附加光上限 4，余量充足）
     public int   maxLampsPerTrail = 12;
     public Color lampPostTint     = new(0.25f, 0.18f, 0.12f);   // 熄灭的造物色：白天读作小杆，不是光点
+    public float lampBeadScale    = 1.8f;    // 灯珠放大：远处超过 Bloom 阈值的像素成簇，光晕才聚得起来
 
     [Header("原在灯（2026-08-13：镇成形之前就在的 3-4 盏——比镇老，不知谁立的。更冷更暗更慢：新火暖，旧火冷）")]
     public Color elderLightColor   = new(0.62f, 0.72f, 1.00f);   // 冷月白（与镇灯暖琥珀一眼可辨）
     public Color elderBeadEmission = new(0.60f, 0.72f, 1.00f);
-    public float elderBeadHdr      = 2.6f;    // 更暗：仍过 Bloom 阈值 1.0，但弱一截
-    public float elderIntensity    = 1.4f;
-    public float elderRange        = 3f;
+    public float elderBeadHdr      = 4.0f;    // 更暗：仍过 Bloom 阈值 1.0，但弱一截
+    public float elderIntensity    = 2.4f;
+    public float elderRange        = 5f;
     public float elderBreathAmp    = 0.14f;   // 呼吸更深——像风里的老火
     public float elderBreathSpeed  = 0.6f;    // 更慢（周期 ~10s，镇灯 ~4s）
 
@@ -499,7 +503,7 @@ public class WorldTraceBinder : MonoBehaviour
                 {
                     if (!s.exposed) continue;   // 未出露：完全不可见，也不占每区地层预算
                     var relic = s;   // 闭包捕获
-                    desired[relic.sourceKey] = t => SpawnDeepRelic(t, relic);
+                    desired[relic.sourceKey] = t => SpawnDeepRelic(t, relic, today);
                     if (today - ToDays(ParseKeyDate(relic.exposedDateKey)) <= freshAgeThreshold)
                         fresh.Add(relic.sourceKey);   // 重见天日当日指一下
                     continue;
@@ -512,7 +516,7 @@ public class WorldTraceBinder : MonoBehaviour
                     zoneBudget[s.zone] = zn + 1;
                 }
                 var rec = s;   // 闭包捕获
-                desired[rec.sourceKey] = t => SpawnStratum(t, rec);
+                desired[rec.sourceKey] = t => SpawnStratum(t, rec, today);
                 if (!deep) nonClickable.Remove(rec.sourceKey); else nonClickable.Add(rec.sourceKey);
                 if (rec.exposed)
                 {
@@ -700,7 +704,22 @@ public class WorldTraceBinder : MonoBehaviour
     /// 位置连续性：mound 原地重解（原土堆坐标）；collapse/vtrail 用 源键种子+zone 采样——
     /// 与出生视觉同一个点，玩家看到的是"同一个东西沉下去了"，不是别处冒出来的新东西。
     /// </summary>
-    private void SpawnStratum(TraceInstance t, StratumRecord rec)
+    // 出露翻土晕（2026-08-13 修订）：被翻出来的东西必带一圈新土——
+    // 从新土色逐日淡回地表色，淡完即散。出露不能"干干净净地出现"（无痕不成环）：
+    // 晕是翻土这个物理动作留在场景里的证据，也是"这里刚变了"的远景信号。
+    private void AddExposureHalo(TraceInstance t, Vector3 p, int daysSince)
+    {
+        if (daysSince > exposureHaloDays) return;
+        float k = Mathf.Clamp01(daysSince / (float)exposureHaloDays);
+        Color c = Color.Lerp(dirtFresh, dirtSettled, k);
+        float r = Mathf.Lerp(1.6f, 1.1f, k);
+        AddProp(t, TraceKit.PressedOval, dirtMaterial, c,
+                p + Vector3.up * 0.005f,
+                Quaternion.Euler(0f, (float)(t.seed % 360), 0f),
+                new Vector3(r, 1f, r));
+    }
+
+    private void SpawnStratum(TraceInstance t, StratumRecord rec, int today)
     {
         int seed = Fnv1a(rec.sourceKey);
         t.seed = seed;
@@ -726,7 +745,8 @@ public class WorldTraceBinder : MonoBehaviour
 
         if (rec.exposed)
         {
-            // 出露档：半埋挺起——比遗存高、色略新
+            // 出露档：半埋挺起——比遗存高、色略新；翻出不久带一圈新土晕
+            AddExposureHalo(t, p, today - ToDays(ParseKeyDate(rec.exposedDateKey)));
             Color c = Color.Lerp(dirtSettled, dirtDry, 0.35f);
             switch (rec.kind)
             {
@@ -784,7 +804,7 @@ public class WorldTraceBinder : MonoBehaviour
     // 四件各一、认出-only：出露前完全不可见；出露后恒久在地、半埋静态。
     // 制造者不命名——视觉只回答"它长什么样"，不回答"谁做的"。
     // 岩棚画的赭石/骨白点描借天空岩画色板（同源语言，不写一行字解释）。
-    private void SpawnDeepRelic(TraceInstance t, StratumRecord rec)
+    private void SpawnDeepRelic(TraceInstance t, StratumRecord rec, int today)
     {
         int seed = Fnv1a(rec.sourceKey);
         t.seed = seed;
@@ -794,6 +814,9 @@ public class WorldTraceBinder : MonoBehaviour
         var rng = new System.Random(seed);
         float yawDeg = (float)rng.NextDouble() * 360f;
         t.root = NewRoot($"DeepRelic_{seed:X8}", p);
+
+        // 翻出不久带一圈新土晕（同 SpawnStratum 出露档口径）
+        AddExposureHalo(t, p, today - ToDays(ParseKeyDate(rec.exposedDateKey)));
 
         switch (rec.relicKind)
         {
@@ -1260,13 +1283,13 @@ public class WorldTraceBinder : MonoBehaviour
                     Vector3.one);
             Vector3 beadAt = at + yaw * TraceKit.VoleLampBeadAnchor;
             AddProp(t, TraceKit.VoleLampBead, VoleLampBeadMaterial(), Color.white,
-                    beadAt, yaw, Vector3.one);
+                    beadAt, yaw, Vector3.one * lampBeadScale);
 
             if (rec.lapsed) continue;   // 镇散灯灭：造物还在，只是再没人点了
 
             var lightGo = new GameObject("VoleLampLight");
             lightGo.transform.SetParent(t.root.transform, false);
-            lightGo.transform.position = beadAt;
+            lightGo.transform.position = beadAt + Vector3.up * 0.12f;   // 略高于珠：光池铺开，不被自己的杆根吃掉
             var li = lightGo.AddComponent<Light>();
             li.type = LightType.Point;
             li.color = lampLightColor;
@@ -1483,14 +1506,16 @@ public class WorldTraceBinder : MonoBehaviour
         // 杆比镇灯更沉（老物件），网格栅栏同款；珠挂弯头
         AddElderPart(lampGo.transform, "Post", TraceKit.VoleLampPost, dirtMaterial,
                      lampPostTint * 0.8f, at,
-                     yaw * Quaternion.Euler((float)rng.NextDouble() * 6f - 3f, 0f, 0f));
+                     yaw * Quaternion.Euler((float)rng.NextDouble() * 6f - 3f, 0f, 0f),
+                     Vector3.one);
         Vector3 beadAt = at + yaw * TraceKit.VoleLampBeadAnchor;
         var beadMr = AddElderPart(lampGo.transform, "Bead", TraceKit.VoleLampBead,
-                                  VoleLampBeadMaterial(), Color.white, beadAt, yaw);
+                                  VoleLampBeadMaterial(), Color.white, beadAt, yaw,
+                                  Vector3.one * lampBeadScale);
 
         var lightGo = new GameObject("Light");
         lightGo.transform.SetParent(lampGo.transform, false);
-        lightGo.transform.position = beadAt;
+        lightGo.transform.position = beadAt + Vector3.up * 0.12f;
         var li = lightGo.AddComponent<Light>();
         li.type = LightType.Point;
         li.color = elderLightColor;
@@ -1509,11 +1534,12 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     private MeshRenderer AddElderPart(Transform parent, string name, Mesh mesh, Material mat,
-                                      Color tint, Vector3 pos, Quaternion rot)
+                                      Color tint, Vector3 pos, Quaternion rot, Vector3 scale)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
         go.transform.SetPositionAndRotation(pos, rot);
+        go.transform.localScale = scale;
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         var mr = go.AddComponent<MeshRenderer>();
         mr.sharedMaterial = mat != null ? mat : FallbackMaterial();
