@@ -27,6 +27,8 @@ public static class TraceCaptionBank
             // 田鼠镇小径（V1 D3）——占位各 1 条，设计者并行线扩到 ≥3
             "土堆之间踩出了一条路。天天走，走着走着就成了路。",
             "这条路没有名字。使用它的那几位从不登记。",
+            // 田鼠灯（2026-08-13）：含灯不坐实——杆是谁立的、珠是什么，均不作说明
+            "路边立着几粒珠子。天黑了它们就亮。谁擦的，没人登记。",
         },
         // ── 新生地层（V1 D5/D6）：同一对象按玩家传记分两语域 ——
         // 记忆语气（见证过它的诞生：在线发生 ∨ 被已读信件点名）
@@ -50,6 +52,25 @@ public static class TraceCaptionBank
         {
             "它被翻出来了。{layer}埋下去的——那时候还没有你。",
         },
+        // ── 深层遗物（V1 D9，"韵而不案"）：恒考古语气，给推断不给答案——
+        // 制造者不命名、不描述形貌、不确认是否人形。占位各 1~2 条，设计者并行线扩写。
+        ["deep_painting"] = new[]
+        {
+            "石头上有画。赭石和骨白，点出来的。画的人没有留名。",
+            "这些点不是风吹出来的。{layer}就有人在这里，对着石头说话。",
+        },
+        ["deep_circle"] = new[]
+        {
+            "石头被摆成这样，不会是自己的意思。摆的人没留下别的。",
+        },
+        ["deep_tools"] = new[]
+        {
+            "这些石片的崩口太整齐了。整齐不是河水的习惯。",
+        },
+        ["deep_quern"] = new[]
+        {
+            "这块石头中间凹下去一块。磨过什么，磨的人自己知道。",
+        },
         // ── 侧翼路通道（V1 D8）：方向句占位各 1~2 条，设计者并行线扩写 ──
         ["stranger"] = new[]
         {
@@ -71,12 +92,12 @@ public static class TraceCaptionBank
         // 找不到就过去，信补后文。占位各 1~2 条，设计者并行线扩写。
         ["notice_mound"] = new[]
         {
-            "{place}有一堆新翻的土。谁翻的，没说。",
-            "今天{place}多了一小堆土。土还是湿的。",
+            "{place}新翻的土边露出一个洞口。谁挖的，没说。",
+            "今天{place}多了一个洞口。边上的土还是湿的。",
         },
         ["notice_collapse"] = new[]
         {
-            "{place}塌了一个洞。没有人申报。",
+            "{place}塌了一圈土，洞心还黑着。没有人申报。",
         },
         ["notice_trail"] = new[]
         {
@@ -90,6 +111,24 @@ public static class TraceCaptionBank
         {
             "{place}的草倒了一小片。昨夜有谁歇过脚。",
         },
+        ["notice_marks"] = new[]
+        {
+            "裂脸石朝草原的一面多了几道擦痕。巡察者没有留名。",
+        },
+        ["notice_rangehalt"] = new[]
+        {
+            "东边山口下的脚印走到裂脸石就停了。",
+        },
+        ["notice_cracks"] = new[]
+        {
+            "{place}的浅色裸土裂开了。水什么时候回来，没有日程表。",
+        },
+        ["notice_vtrail"] = new[]
+        {
+            // 路+灯双线（2026-08-13 田鼠灯）：白天给路的方向，入夜的光让玩家自己看见
+            "{place}几处洞口之间，草被踩成了一条路。入夜路边有灯亮着。",
+            "{place}踩出了一条新路。天黑了，那边会亮起一点光。",
+        },
         ["notice_sprout"] = new[]
         {
             "{place}冒了新苗。风把种子送到，就没有了下文。",
@@ -97,6 +136,10 @@ public static class TraceCaptionBank
         ["notice_exposed"] = new[]
         {
             "{place}有什么被翻出来了。埋下去有些年头了。",
+        },
+        ["notice_deeprelic"] = new[]
+        {
+            "{place}翻出了什么。很老，比这里的谁都老。",
         },
         // 侧翼三类自带方向（西来/东去），不套 {place}
         ["notice_stranger"] = new[]
@@ -155,15 +198,22 @@ public static class TraceCaptionBank
 
     private const string Fallback = "这里发生过一点事情。详情不明。";
 
-    // 区名 → 地名式方向（留意句用："石头那边"而非坐标，天然是区域不是位置）
+    // 区名 → 地名式方向。stone_area 已有稳定裂脸石地标，不再说不可判定的“石头那边”。
     public static string PlacePhrase(string zoneId) => zoneId switch
     {
         "riverbank"     => "河边",
         "lowland"       => "低洼的草里",
         "center"        => "台地中央",
-        "stone_area"    => "石头那边",
+        "stone_area"    => "裂脸石一带",
         "highland_east" => "东边的高地",
         _               => "不远处",
+    };
+
+    private static string CrackPlacePhrase(string zoneId) => zoneId switch
+    {
+        "lowland" => "低洼地的白泥滩",
+        "center"  => "台地中央的浅色土斑",
+        _         => PlacePhrase(zoneId),
     };
 
     /// <summary>留意句选句（日记边缘）：notice_{traceType} 组，缺失回退通用 notice 组；
@@ -171,7 +221,7 @@ public static class TraceCaptionBank
     /// 同一条痕迹（同 traceKey）每次浮出同一句话。</summary>
     public static string PickNotice(string traceType, string traceKey, string zoneId)
     {
-        string place = PlacePhrase(zoneId);
+        string place = traceType == "cracks" ? CrackPlacePhrase(zoneId) : PlacePhrase(zoneId);
         if (!string.IsNullOrEmpty(traceType)
             && Bank.TryGetValue("notice_" + traceType, out var lines) && lines.Length > 0)
             return lines[StableIndex(traceKey, lines.Length)].Replace("{place}", place);
@@ -191,6 +241,19 @@ public static class TraceCaptionBank
         // 记忆双读：relic/exposed 按见证标记选语域
         if (type == "relic" || type == "exposed")
             type += witnessed ? "_mem" : "_arch";
+        // 深层遗物（V1 D9）：按 relicKind 选组（traceKey = deeprelic|{relicKind}），
+        // 恒考古语气——无 _mem 语域，它们比你早，这是设定不是缺陷
+        if (type == "deeprelic" && traceKey != null && traceKey.StartsWith("deeprelic|"))
+        {
+            type = traceKey.Substring("deeprelic|".Length) switch
+            {
+                "painting"     => "deep_painting",
+                "stone_circle" => "deep_circle",
+                "tool_scatter" => "deep_tools",
+                "quern"        => "deep_quern",
+                _              => "deep_tools",
+            };
+        }
         if (!string.IsNullOrEmpty(type) && Bank.TryGetValue(type, out var lines) && lines.Length > 0)
         {
             int idx = StableIndex(traceKey, lines.Length);

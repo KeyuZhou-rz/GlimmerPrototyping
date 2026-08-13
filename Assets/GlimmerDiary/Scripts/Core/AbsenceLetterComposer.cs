@@ -98,6 +98,7 @@ namespace GlimmerDiary.Core
                 case "baobab_branch_broken":
                 case "vole_burrow_abandoned":
                 case "event_TreeBranchBroke":
+                case "event_DeepRelicSurfaced":   // D9 深层遗物出露：永久事件档，信必提
                     return 3;
 
                 case "vole_relocate_flood":

@@ -37,6 +37,41 @@ namespace GlimmerDiary.Core
         {
             _save = save;
             _save.strata ??= new List<StratumRecord>();   // 旧档零迁移
+            EnsureDeepRelics();
+        }
+
+        // ── 深层遗物（V1 D9，"韵而不案" 2026-08-13 拍板）────────────────
+        // 四件各一：岩棚画/石环/石器散布/磨盘石。属于"更早的居住者/过客"——
+        // 不命名、不描述形貌；田鼠不是制造者，是无意识的考古学家（挖出它们的可能是田鼠）。
+        // 世界创建即长眠于此（沉底档、恒考古语气：witnessed 恒 false——它们比你早，这是设定）。
+        // 旧档同样补播：它们"一直在那里"，只是此前无人翻出。
+        private static readonly (string relicKind, string zone)[] DeepRelicSeeds =
+        {
+            ("painting",     "stone_area"),      // 岩棚画：石头区的石壁上
+            ("stone_circle", "highland_east"),   // 石环：东边高地的缓坡
+            ("tool_scatter", "center"),          // 石器散布：台地中央一侧
+            ("quern",        "riverbank"),       // 磨盘石：河边（磨过什么是河边的事）
+        };
+
+        private void EnsureDeepRelics()
+        {
+            foreach (var (relicKind, zone) in DeepRelicSeeds)
+            {
+                string key = $"deeprelic|{relicKind}";
+                if (FindStratum(key) != null) continue;
+                _save.strata.Add(new StratumRecord
+                {
+                    sourceKey       = key,
+                    kind            = "deeprelic",
+                    relicKind       = relicKind,
+                    zone            = zone,
+                    buriedDateKey   = "Y1-M9-D1",   // 世界起源日——先于一切章节
+                    chapterOrdinal  = 0,
+                    chapterAtBurial = EraSystem.WildYears,
+                    depth           = StratumRecord.RelicMaxDepth,   // 出生即沉底档
+                    witnessed       = false                          // 恒考古（无 witnessed 通道）
+                });
+            }
         }
 
         public void Tick(GameDateTime time, WorldEnvironmentState env, EmotionVector eEnv)
@@ -48,6 +83,11 @@ namespace GlimmerDiary.Core
             Sediment(env);
             Expose(time, today, todayKey, eEnv);
         }
+
+        // 预跑挂起（同 EraSystem.Suspended 口径）：新世界 30 天中性预跑期间不掷深层遗物
+        // 的出露签——它们的长眠不该结束在玩家到达之前。catch-up（真实缺席）不在此列：
+        // 你不在的日子里它们照样可能被翻出来，信会告诉你。
+        public bool Suspended;
 
         // ── ① 入土 ───────────────────────────────────────────────
 
@@ -155,19 +195,60 @@ namespace GlimmerDiary.Core
             foreach (var s in _save.strata)
             {
                 if (s.exposed || s.depth < StratumRecord.RelicMaxDepth) continue;
+                if (Suspended && s.kind == "deeprelic") continue;   // 预跑不掷深层遗物（它们的长眠不结束在玩家到达前）
                 if (stormNight && Roll(s.sourceKey, todayKey, "storm", StormExposeChance))
-                { ExposeOne(s, todayKey, "storm"); continue; }
+                { ExposeOne(s, time, "storm"); continue; }
                 if (dugZones.Contains(s.zone) && Roll(s.sourceKey, todayKey, "vole_dig", VoleDigExposeChance))
-                    ExposeOne(s, todayKey, "vole_dig");
+                    ExposeOne(s, time, "vole_dig");
             }
         }
 
-        private void ExposeOne(StratumRecord s, string todayKey, string by)
+        private void ExposeOne(StratumRecord s, GameDateTime time, string by)
         {
+            string todayKey    = time.ToKeyString();
             s.exposed        = true;
             s.exposedDateKey = todayKey;
             s.exposedBy      = by;
             Debug.Log($"[Stratum] 出露 @{todayKey}（{(by == "storm" ? "风暴剥蚀" : "田鼠翻土")}）{s.sourceKey}");
+
+            // 深层遗物（V1 D9）：出露是永久事件——进 worldEvents（append-only）+ 编年史，
+            // 缺席信按 salience 3 必提。编年史句给推断不给答案（恒考古语气，认出-only）。
+            if (s.kind == "deeprelic")
+            {
+                _save.worldEvents.Add(new WorldEvent
+                {
+                    type     = WorldEventType.DeepRelicSurfaced,
+                    targetId = s.zone,
+                    gameDate = todayKey,
+                    payload  = s.relicKind
+                });
+                _save.pendingChronicles.Add(new WorldChronicleEntry
+                {
+                    entryId      = System.Guid.NewGuid().ToString(),
+                    gameDate     = time.ToDisplayString(),
+                    eventId      = "event_DeepRelicSurfaced",
+                    text         = $"{time.ToDisplayString()} {DeepRelicChronicleLine(s.relicKind, by)}",
+                    hasBeenShown = false
+                });
+            }
+        }
+
+        // 出露编年史句：只说"翻出来了什么、谁翻的"，制造者留白（占位各一，设计者并行线扩写）
+        private static string DeepRelicChronicleLine(string relicKind, string by)
+        {
+            bool storm = by == "storm";
+            return relicKind switch
+            {
+                "painting"     => storm ? "那场风过后，石头那边露出一块有画的石板。赭石的点，骨白的线。画它的人没有留名。"
+                                        : "田鼠打洞带出一角石板——上面有画。赭石的点，骨白的线。画它的人没有留名。",
+                "stone_circle" => storm ? "那场风过后，东边高地上露出几块立着的石头，围成一个缺口的圆。摆的人没留下别的。"
+                                        : "田鼠打洞碰到硬东西——东边高地上露出几块立着的石头，围成一个缺口的圆。摆的人没留下别的。",
+                "tool_scatter" => storm ? "那场风过后，台地中央散出一小簇石片。崩口太整齐了，整齐不是河水的习惯。"
+                                        : "田鼠打洞带出一小簇石片。崩口太整齐了，整齐不是河水的习惯。",
+                "quern"        => storm ? "那场风过后，河边卧出一块扁石头，中间凹下去一块。磨过什么，磨的人自己知道。"
+                                        : "田鼠打洞碰到一块扁石头——中间凹下去一块。磨过什么，磨的人自己知道。",
+                _              => "有什么被翻出来了。很老，比这里的谁都老。"
+            };
         }
 
         // 确定性掷签：同档同日同钩子结果一致（回放/重启可复现）
@@ -202,6 +283,7 @@ namespace GlimmerDiary.Core
         public static string LayerPhrase(StratumRecord s)
         {
             if (s == null) return "很久以前";
+            if (s.kind == "deeprelic") return "世界诞生之初";   // D9：深层遗物恒最古层（chapterOrdinal=0，先于一切章节）
             return s.chapterAtBurial switch
             {
                 EraSystem.WildYears  => "世界还是荒年的时候",

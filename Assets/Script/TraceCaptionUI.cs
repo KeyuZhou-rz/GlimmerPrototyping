@@ -38,7 +38,9 @@ public class TraceCaptionUI : MonoBehaviour
         string who = wm != null ? wm.GetVoleAppellation() : "田鼠";
         bool witnessed = false;
         string layer = null;
-        if ((traceType == "relic" || traceType == "exposed") && wm != null)
+        // relic/exposed 走记忆双读；deeprelic 恒考古（ witnessed 恒 false ），
+        // 只取断代句——{layer} 恒为"世界诞生之初"
+        if ((traceType == "relic" || traceType == "exposed" || traceType == "deeprelic") && wm != null)
             wm.TryGetStratumContext(traceKey, out witnessed, out layer);
         _instance.ShowInternal(TraceCaptionBank.Pick(traceType, traceKey, who, witnessed, layer));
     }

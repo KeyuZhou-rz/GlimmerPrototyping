@@ -134,8 +134,10 @@ public class WorldManager : MonoBehaviour
             // 预跑不是"缺席"——玩家还没到达，不产生缺席信；
             // 预跑也不翻纪元——章节叙事从玩家到达起算，ChapterTurned 锚必有信对应（宪法⑤）
             _eraSystem.Suspended = true;
+            _stratumSystem.Suspended = true;   // D9：预跑不掷深层遗物出露签——长眠不结束在玩家到达前
             WorldTick(NewWorldPreRunDays, isCatchUp: true, writeAbsenceLetter: false);
             _eraSystem.Suspended = false;
+            _stratumSystem.Suspended = false;
             SaveSystem.SaveWorldState(_saveData);   // 锚定到现在，避免紧接的墙钟 catch-up 重跑同一天
         }
 

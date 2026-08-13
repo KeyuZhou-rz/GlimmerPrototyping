@@ -132,6 +132,9 @@ namespace GlimmerDiary.Data
         // 纪元翻页（V1 D2）：sourceId=旧章节 targetId=新章节。兼作新生地层的封闭层数据锚（§4.5）。
         // BehaviorNarrator 对它无模板（静默跳过）；编年史信由 EraSystem 自己发。
         public const string ChapterTurned        = "ChapterTurned";
+        // 深层遗物出露（V1 D9）：payload=relicKind（painting/stone_circle/tool_scatter/quern），
+        // targetId=所在区。编年史句由 StratumSystem 自发（给推断不给答案，恒考古语气）。
+        public const string DeepRelicSurfaced    = "DeepRelicSurfaced";
     }
 
     [Serializable]

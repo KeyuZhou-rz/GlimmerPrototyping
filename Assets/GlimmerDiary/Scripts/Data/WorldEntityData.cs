@@ -142,8 +142,9 @@ namespace GlimmerDiary.Data
     [Serializable]
     public class StratumRecord
     {
-        public string sourceKey;      // 源痕迹键（mound|… / vtrail|… / collapse|…，TraceKeyUtil 口径）
-        public string kind;           // "mound" / "vtrail" / "collapse"
+        public string sourceKey;      // 源痕迹键（mound|… / vtrail|… / collapse|… / deeprelic|…，TraceKeyUtil 口径）
+        public string kind;           // "mound" / "vtrail" / "collapse" / "deeprelic"（V1 D9 深层遗物）
+        public string relicKind;      // 仅 deeprelic："painting" / "stone_circle" / "tool_scatter" / "quern"（旧档 null，兼容）
         public string zone;           // 所在区（lowland/center/…）
         public string buriedDateKey;  // 入土日（ToKeyString）
         public int    chapterOrdinal; // 封闭层断代：入土时已发生的 ChapterTurned 次数

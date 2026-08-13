@@ -79,6 +79,16 @@ public class WorldTraceBinder : MonoBehaviour
     public Color markFresh   = new(0.28f, 0.22f, 0.18f);
     public Color pressedTint = new(0.55f, 0.48f, 0.33f);   // 压伏草垫：比金色草海明显暗的秸秆棕（远机位可辨）
 
+    [Header("田鼠灯（小径附属造物：镇成形即有灯，镇散灯灭杆留；昼夜驱动在 VoleLampDriver）")]
+    public Color lampLightColor   = new(1.00f, 0.58f, 0.25f);   // 照明暖色（过 toon 色阶后在草上读作琥珀台阶）
+    public Color lampBeadEmission = new(1.00f, 0.62f, 0.28f);   // 灯珠发光基色（driver 乘 HDR 强度吃 Bloom）
+    public float lampBeadHdr      = 2.5f;    // 发光 HDR 倍率（GlimmerPostFX Bloom 阈值 1.0，须推过才泛光）
+    public float lampIntensity    = 1.5f;
+    public float lampRange        = 4f;      // 只照亮灯周一圈草——"一盏一盏"的点描感，不连成光带
+    public float lampSpacing      = 8f;      // ≥ 2×range：任一点最多 1-2 盏在范围内（URP 每物体附加光上限 4）
+    public int   maxLampsPerTrail = 12;
+    public Color lampPostTint     = new(0.25f, 0.18f, 0.12f);   // 熄灭的造物色：白天读作小杆，不是光点
+
     // 与 GlimmerGrass.shader 的 _TramplePoints[16] 数组长度耦合——两侧同改
     private const int TRAMPLE_MAX = 16;
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
@@ -114,11 +124,28 @@ public class WorldTraceBinder : MonoBehaviour
 
     private readonly Dictionary<string, TraceInstance> _traces = new();
     private readonly List<NoticeInfo> _notices = new();   // 每次 Rebuild 随 fresh 集合重算
+
+    /// <summary>一盏田鼠灯的运行时句柄（L3 纯派生，不落档）。灯挂在 vtrail trace root 下，
+    /// 随痕迹销毁即灭；lapsed 的镇不注册（镇散灯灭——杆和珠作为暗色造物还在，只是再没人点了）。</summary>
+    public sealed class VoleLamp
+    {
+        public Light light;             // Point Light（shadows=None：豁免 LightManager 的 LampPreset 染色，恒暖人造火色）
+        public Renderer bead;           // 灯珠（driver 每帧 MPB 推 _EmissionColor/_BaseColor）
+        public float phase;             // 呼吸相位（按种子错开，不齐闪）
+        public float spawnRealTime;     // 展示层淡入（与痕迹同口径：新灯 2 秒爬升，不跳变）
+    }
+
+    /// <summary>当前活跃田鼠灯（VoleLampDriver 每帧只读）。Rebuild 整体销毁重建痕迹，
+    /// 故本列表在 Rebuild 开头清空、随 SpawnVoleTrail 重新注册——无悬挂引用。</summary>
+    public readonly List<VoleLamp> ActiveVoleLamps = new();
     private readonly HashSet<string> _floodDamaged = new();   // T1 水毁锁存（不可逆原则③：一旦泡透不再复原）
     private readonly Vector4[] _trampleArray = new Vector4[TRAMPLE_MAX];
     private readonly List<Vector4> _trampleGather = new();
     private Transform _propRoot;
+    private Transform _landmarkRoot;
     private MaterialPropertyBlock _mpb;
+    private Vector3 _splitFaceStonePosition;
+    private bool _splitFaceStoneReady;
     private long _lastSignature = long.MinValue;
 
     void Awake()
@@ -127,10 +154,16 @@ public class WorldTraceBinder : MonoBehaviour
         var rootGo = new GameObject("Props");
         rootGo.transform.SetParent(transform, false);
         _propRoot = rootGo.transform;
+        // 田鼠灯昼夜驱动与本组件同生共死（零场景布线：勿在场景里手挂 VoleLampDriver）
+        if (GetComponent<VoleLampDriver>() == null) gameObject.AddComponent<VoleLampDriver>();
     }
 
     void Update()
     {
+        // 稳定地标不依赖某条痕迹是否新鲜：先把“裂脸石”立在石区—高地边界，
+        // 让狐狸记号/鹿鼠停步的文字始终有同一个可指认对象。
+        EnsureTraceLandmarks();
+
         var wm = WorldManager.Instance;
         if (wm == null || wm.WorldSave == null || zoneMap == null) return;
         var save = wm.WorldSave;
@@ -247,6 +280,7 @@ public class WorldTraceBinder : MonoBehaviour
             ? 1f + env.Rainfall * rainTraceFactor + env.WindSpeed * windTraceFactor
             : 1f;
         _notices.Clear();   // 留意清单随本次重建重算
+        ActiveVoleLamps.Clear();   // 田鼠灯随痕迹整体销毁重建，重新注册（旧句柄随 root 已销毁）
         var desired = new Dictionary<string, System.Action<TraceInstance>>();
         var fresh = new HashSet<string>();   // 有效年龄 ≤ freshAgeThreshold 的痕迹键（留意句选材）
         var nonClickable = new HashSet<string>();   // 沉入地层档的痕迹：存在但不可点（几乎不可读，直到出露）
@@ -401,7 +435,7 @@ public class WorldTraceBinder : MonoBehaviour
         }
 
         // 旱痕（§5.5 阈值 2）：debt>0.6 → 干裂地表。状态驱动仿 T4：过线出现，回落即撤。
-        // 不进留意清单——裂缝会持续数周，留意句只说"新变化"。
+        // 只在本次运行里“刚出现”时进一次留意清单；持续数周不反复提醒。
         if ((env?.DroughtDebt ?? 0f) > droughtCrackThreshold && crackZones != null)
         {
             foreach (var zone in crackZones)
@@ -409,6 +443,7 @@ public class WorldTraceBinder : MonoBehaviour
                 if (string.IsNullOrEmpty(zone)) continue;
                 string ck = "cracks|" + zone;
                 desired[ck] = t => SpawnCracks(t, zone, Fnv1a(ck));
+                if (!_traces.ContainsKey(ck)) fresh.Add(ck);
             }
         }
 
@@ -433,6 +468,8 @@ public class WorldTraceBinder : MonoBehaviour
         //   遗存（depth < RelicMaxDepth）：塌矮、色沉、微陷，可点（旧迹语气）；
         //   地层（更深且未出露）：只剩一点土色异样，不可点——几乎不可读，直到出露；
         //   出露（风暴/田鼠翻出）：半埋挺回地表，可点（记忆/考古双语域），出露当日进留意清单。
+        // 深层遗物（V1 D9）例外：未出露时完全不可见（连土色异样都不给——它们在世界诞生之初
+        // 就长眠于此，出露即首次现身）；出露后恒久在地，认出-only。
         // 记录永不删；每区地层档只画最新 MaxPerZone 件（预算阀），更老的在档继续沉。
         if (save.strata != null && save.strata.Count > 0)
         {
@@ -441,6 +478,15 @@ public class WorldTraceBinder : MonoBehaviour
             sorted.Sort((a, b) => string.Compare(b.buriedDateKey, a.buriedDateKey, System.StringComparison.Ordinal));
             foreach (var s in sorted)
             {
+                if (s.kind == "deeprelic")
+                {
+                    if (!s.exposed) continue;   // 未出露：完全不可见，也不占每区地层预算
+                    var relic = s;   // 闭包捕获
+                    desired[relic.sourceKey] = t => SpawnDeepRelic(t, relic);
+                    if (today - ToDays(ParseKeyDate(relic.exposedDateKey)) <= freshAgeThreshold)
+                        fresh.Add(relic.sourceKey);   // 重见天日当日指一下
+                    continue;
+                }
                 bool deep = !s.exposed && s.depth >= StratumRecord.RelicMaxDepth;
                 if (deep)
                 {
@@ -545,12 +591,31 @@ public class WorldTraceBinder : MonoBehaviour
 
         t.root = NewRoot($"Mound_{seed:X8}", p);
         var rng = new System.Random(seed);
+        float yaw = (float)rng.NextDouble() * 360f;
+
+        // 先铺一圈被扒开草后露出的土：远景先读到“这里有一小圈新土”，
+        // 靠近后才读到低矮土堆与洞口，不靠发光标记。
+        AddProp(t, TraceKit.PressedOval, dirtMaterial, Color.Lerp(c, dirtDry, 0.18f),
+                p + Vector3.up * 0.008f, Quaternion.Euler(0f, yaw + 17f, 0f),
+                new Vector3(0.92f, 1f, 0.78f));
         AddProp(t, TraceKit.Mound, dirtMaterial, c, p + Vector3.up * 0.01f,
-                Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                Quaternion.Euler(0f, yaw, 0f),
                 scale);
+
+        if (!damaged)
+        {
+            // 洞口永远朝固定舞台可见的一侧；黑色小椭圆贴在土堆侧面，
+            // 让“新翻土”明确读成“新窝”，但不加灯、不闪烁。
+            Vector3 face = StageFacingDirection(p, yaw);
+            Quaternion openingRot = Quaternion.FromToRotation(Vector3.up, face)
+                                  * Quaternion.Euler(0f, 8f, 0f);
+            AddProp(t, TraceKit.Mark, markMaterial, markFresh * 0.55f,
+                    p + face * 0.31f + Vector3.up * 0.13f, openingRot,
+                    new Vector3(1.28f, 1f, 1.18f));
+        }
         // 新土周围草被扒开：小半径弱压痕，随龄衰减（水毁后湿泥与草已交融，无压痕）
         if (age <= 12 && !damaged)
-            t.trampleContribs.Add(new Vector4(p.x, p.z, 0.7f, 0.55f * (1f - age / 12f)));
+            t.trampleContribs.Add(new Vector4(p.x, p.z, 1.15f, 0.62f * (1f - age / 12f)));
     }
 
     // 水毁判定（T1 第四老化态）：① zone 当前湿度越线 → 锁存（活体路径）；
@@ -596,9 +661,18 @@ public class WorldTraceBinder : MonoBehaviour
 
         t.root = NewRoot($"Collapse_{seed:X8}", p);
         var rng = new System.Random(seed);
+        float yaw = (float)rng.NextDouble() * 360f;
+        // 永久疤先给一圈沉暗裸土，再给更大的塌陷唇和黑色洞心；
+        // 舞台能先看到轮廓，推近后才读到中心已经陷下去。
+        AddProp(t, TraceKit.PressedOval, dirtMaterial, dirtSettled * 0.82f,
+                p + Vector3.up * 0.008f, Quaternion.Euler(0f, yaw + 23f, 0f),
+                new Vector3(1.18f, 1f, 0.96f));
         AddProp(t, TraceKit.MoundCollapsed, dirtMaterial, dirtSettled * 0.9f,
                 p + Vector3.up * 0.01f,
-                Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f), Vector3.one);
+                Quaternion.Euler(0f, yaw, 0f), Vector3.one * 1.45f);
+        AddProp(t, TraceKit.Mark, markMaterial, markFresh * 0.48f,
+                p + Vector3.up * 0.018f, Quaternion.Euler(0f, yaw + 11f, 0f),
+                Vector3.one * 1.75f);
     }
 
     /// <summary>
@@ -689,6 +763,92 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     // 地层记录查询（T2 兜底分支判"是否已入土"用；binder 不导入 Core，直接读存档）
+    // ── 深层遗物（V1 D9，"韵而不案"）─────────────────────────────
+    // 四件各一、认出-only：出露前完全不可见；出露后恒久在地、半埋静态。
+    // 制造者不命名——视觉只回答"它长什么样"，不回答"谁做的"。
+    // 岩棚画的赭石/骨白点描借天空岩画色板（同源语言，不写一行字解释）。
+    private void SpawnDeepRelic(TraceInstance t, StratumRecord rec)
+    {
+        int seed = Fnv1a(rec.sourceKey);
+        t.seed = seed;
+        t.type = TraceType.DeepRelic;
+        if (!zoneMap.TrySampleZone(rec.zone, seed, out Vector3 p)) return;
+
+        var rng = new System.Random(seed);
+        float yawDeg = (float)rng.NextDouble() * 360f;
+        t.root = NewRoot($"DeepRelic_{seed:X8}", p);
+
+        switch (rec.relicKind)
+        {
+            case "painting":
+            {
+                // 竖石板半埋微倾 + 板面赭石/骨白点描（点用 Mark 小碟贴在板面前侧）
+                var slabRot = Quaternion.Euler(-8f, yawDeg, 3f);
+                AddProp(t, TraceKit.Slab, dirtMaterial, deepStoneTint,
+                        p + Vector3.up * 0.10f, slabRot, Vector3.one);
+                // 点描纹样：两簇点（一簇赭石一簇骨白），位置确定性微扰——
+                // 只依赖 seed，重启复现同一张画
+                for (int i = 0; i < 9; i++)
+                {
+                    float dx = -0.16f + 0.32f * (float)rng.NextDouble();
+                    float dy = 0.28f + 0.38f * (float)rng.NextDouble();
+                    var local = new Vector3(dx, dy, 0.052f);   // 板前半厚之外一点点
+                    var wp = p + Vector3.up * 0.10f + slabRot * local;
+                    AddProp(t, TraceKit.Mark, markMaterial, i % 3 == 2 ? boneTint : ochreTint,
+                            wp, slabRot * Quaternion.Euler(-90f, 0f, 0f),
+                            Vector3.one * (0.16f + 0.10f * (float)rng.NextDouble()));
+                }
+                break;
+            }
+            case "stone_circle":
+            {
+                // 5~7 块立石围一个缺口的圆，半埋参差
+                int n = 5 + rng.Next(3);
+                int gap = rng.Next(n);   // 缺口位置
+                for (int i = 0; i < n; i++)
+                {
+                    if (i == gap) continue;
+                    float a = i * Mathf.PI * 2f / n + yawDeg * Mathf.Deg2Rad;
+                    float r = 1.1f + 0.25f * (float)rng.NextDouble();
+                    var sp = p + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+                    if (!zoneMap.TryGroundAt(sp.x, sp.z, out sp)) sp.y = p.y;
+                    AddProp(t, TraceKit.StandingStone, dirtMaterial,
+                            deepStoneTint * (0.9f + 0.2f * (float)rng.NextDouble()),
+                            sp + Vector3.up * (0.12f + 0.10f * (float)rng.NextDouble()),
+                            Quaternion.Euler((float)(rng.NextDouble() - 0.5) * 14f,
+                                             (float)rng.NextDouble() * 360f,
+                                             (float)(rng.NextDouble() - 0.5) * 14f),
+                            Vector3.one * (0.8f + 0.5f * (float)rng.NextDouble()));
+                }
+                break;
+            }
+            case "tool_scatter":
+            {
+                // 一小簇崩口石片，贴地半埋
+                int n = 6 + rng.Next(4);
+                for (int i = 0; i < n; i++)
+                {
+                    float a = (float)rng.NextDouble() * Mathf.PI * 2f;
+                    float r = 0.9f * Mathf.Sqrt((float)rng.NextDouble());
+                    var sp = p + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+                    if (!zoneMap.TryGroundAt(sp.x, sp.z, out sp)) sp.y = p.y;
+                    AddProp(t, TraceKit.StoneFlake, dirtMaterial,
+                            deepStoneTint * (0.85f + 0.3f * (float)rng.NextDouble()),
+                            sp + Vector3.up * 0.008f,
+                            Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                            Vector3.one * (0.7f + 0.7f * (float)rng.NextDouble()));
+                }
+                break;
+            }
+            default:   // "quern"：凹面扁石半埋，凹面朝上
+                AddProp(t, TraceKit.QuernStone, dirtMaterial, deepStoneTint,
+                        p + Vector3.up * 0.015f,
+                        Quaternion.Euler(0f, yawDeg, 0f),
+                        new Vector3(1.2f, 1f, 1.2f));
+                break;
+        }
+    }
+
     private static StratumRecord FindStratum(WorldSaveData save, string sourceKey)
     {
         if (save?.strata == null) return null;
@@ -863,15 +1023,39 @@ public class WorldTraceBinder : MonoBehaviour
         }
     }
 
-    /// <summary>T6 狐狸记号：巡逻边上 1-3 个暗斑，慢淡出。</summary>
+    /// <summary>T6 狐狸记号：固定留在裂脸石舞台侧的纵向擦痕，慢淡出。</summary>
     private void SpawnMarks(TraceInstance t, string from, string to, float age, int seed)
     {
         t.type = TraceType.ScentMarks; t.seed = seed;
         var rng = new System.Random(seed);
-        int count = 1 + rng.Next(3);
+        int count = 2 + rng.Next(2);
         float life = 1f - age / (float)markMaxAge;
         Color c = Color.Lerp(dirtSettled, markFresh, life);
 
+        if (TryGetSplitFaceStone(out Vector3 stone))
+        {
+            Vector3 face = StageFacingDirection(stone, seed);
+            Vector3 right = Vector3.Cross(Vector3.up, face).normalized;
+            Quaternion plane = Quaternion.FromToRotation(Vector3.up, face);
+            t.root = NewRoot($"Marks_{seed:X8}", stone);
+            for (int i = 0; i < count; i++)
+            {
+                float side = (i - (count - 1) * 0.5f) * 0.32f;
+                float height = 1.25f + i * 0.42f;
+                AddProp(t, TraceKit.Mark, markMaterial, c,
+                        stone + face * 0.48f + right * side + Vector3.up * height,
+                        plane * Quaternion.Euler(0f, (float)rng.NextDouble() * 16f - 8f, 0f),
+                        new Vector3(0.42f, 1f, 2.8f));
+            }
+            // 石脚下一处被反复踩乱的暗土，帮助舞台视角先找到石头，再读表面抓痕。
+            AddProp(t, TraceKit.PressedOval, pressedMaterial, c * 0.9f,
+                    stone + face * 0.9f + Vector3.up * 0.018f,
+                    Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                    new Vector3(1.35f, 1f, 1.0f));
+            return;
+        }
+
+        // 地标尚未就绪时保留旧路径兜底，避免视觉端失配导致整条痕迹消失。
         t.root = null;
         for (int i = 0; i < count; i++)
         {
@@ -918,22 +1102,51 @@ public class WorldTraceBinder : MonoBehaviour
         t.trampleContribs.Add(new Vector4(p1.x, p1.z, 5.5f, s));
     }
 
-    /// <summary>T4 鹿鼠退守（实时态）：高地→石头区一小串脚印，在边缘停住。</summary>
+    /// <summary>T4 鹿鼠退守（实时态）：从高地走向裂脸石，最后两步加深并在石脚停住。</summary>
     private void SpawnRangeHalt(TraceInstance t, int seed)
     {
         t.type = TraceType.RangeHalt; t.seed = seed;
-        var pts = new List<Vector3>();
-        if (zoneMap.SampleTrail("highland_east", "stone_area", seed, 4, pts, out Vector3 dir) == 0) return;
+        if (TryGetSplitFaceStone(out Vector3 stone)
+            && zoneMap.TryGetAnchorCenter("highland_east", out Vector3 highland, out _))
+        {
+            Vector3 dir = stone - highland; dir.y = 0f;
+            if (dir.sqrMagnitude < 1e-4f) return;
+            dir.Normalize();
+            Vector3 perp = Vector3.Cross(dir, Vector3.up);
+            Vector3 start = stone - dir * 6.2f;
+            t.root = NewRoot($"RangeHalt_{seed:X8}", start);
+            const int count = 5;
+            var placed = new List<Vector3>();
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 raw = Vector3.Lerp(start, stone - dir * 0.85f, i / (float)(count - 1))
+                            + perp * (i % 2 == 0 ? 0.11f : -0.11f);
+                if (!zoneMap.TryGroundAt(raw.x, raw.z, out Vector3 p)) continue;
+                float scale = i >= count - 2 ? 1.05f : 0.78f;
+                AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh,
+                        p + Vector3.up * 0.02f, Quaternion.LookRotation(dir, Vector3.up),
+                        Vector3.one * scale);
+                placed.Add(p);
+            }
+            if (zoneMap.TryGroundAt((stone - dir * 0.55f).x, (stone - dir * 0.55f).z, out Vector3 halt))
+                AddProp(t, TraceKit.PressedOval, pressedMaterial, pressedTint * 0.78f,
+                        halt + Vector3.up * 0.018f, Quaternion.LookRotation(dir, Vector3.up),
+                        new Vector3(1.25f, 1f, 0.72f));
+            if (placed.Count > 0) t.chainPoints = placed.ToArray();
+            return;
+        }
 
-        Quaternion yaw = Quaternion.LookRotation(dir, Vector3.up);
-        Vector3 perp = Vector3.Cross(dir, Vector3.up);
+        // 地标采样失败时保留旧脚印串兜底。
+        var pts = new List<Vector3>();
+        if (zoneMap.SampleTrail("highland_east", "stone_area", seed, 4, pts, out Vector3 fallbackDir) == 0) return;
+        Quaternion yaw = Quaternion.LookRotation(fallbackDir, Vector3.up);
+        Vector3 fallbackPerp = Vector3.Cross(fallbackDir, Vector3.up);
         t.root = NewRoot($"RangeHalt_{seed:X8}", pts[0]);
         for (int i = 0; i < pts.Count; i++)
         {
-            Vector3 p = pts[i] + perp * ((i % 2 == 0) ? 0.07f : -0.07f);
-            // 鹿鼠脚印比田鼠/狐狸的更小
-            AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh, p + Vector3.up * 0.02f, yaw,
-                    Vector3.one * 0.7f);
+            Vector3 p = pts[i] + fallbackPerp * (i % 2 == 0 ? 0.07f : -0.07f);
+            AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh,
+                    p + Vector3.up * 0.02f, yaw, Vector3.one * 0.7f);
         }
     }
 
@@ -968,23 +1181,90 @@ public class WorldTraceBinder : MonoBehaviour
         {
             Vector3 a = pts[i], b = pts[i + 1];
             float len = Vector3.Distance(a, b);
-            int steps = Mathf.Max(1, Mathf.RoundToInt(len / 2.2f));   // ~2.2m 一片
+            Vector3 dir = b - a; dir.y = 0f;
+            dir = dir.sqrMagnitude > 1e-4f ? dir.normalized : Vector3.forward;
+            int steps = Mathf.Max(1, Mathf.CeilToInt(len / 1.1f));   // 连续窄路：约 1.1m 一片，彼此轻叠
             for (int s = 0; s <= steps; s++)
             {
+                if (i > 0 && s == 0) continue;   // 相邻段共享端点，不叠两层
                 Vector3 p = Vector3.Lerp(a, b, s / (float)steps);
-                // 沿路微 jitter（种子固定 → 每次重建位置复现）
-                p.x += ((float)rng.NextDouble() - 0.5f) * 0.8f;
-                p.z += ((float)rng.NextDouble() - 0.5f) * 0.8f;
+                // 微幅侧摆保留“踩出来”的手工感，但不再随机转向成一串散斑。
+                Vector3 side = Vector3.Cross(dir, Vector3.up);
+                p += side * ((float)rng.NextDouble() - 0.5f) * 0.28f;
                 if (zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) p = g;
+                float size = Mathf.Lerp(0.92f, 1.08f, (float)rng.NextDouble());
                 AddProp(t, TraceKit.PressedOval, pressedMaterial, c, p + Vector3.up * 0.015f,
-                        Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
-                        Vector3.one * Mathf.Lerp(1.3f, 1.7f, (float)rng.NextDouble()));
+                        Quaternion.LookRotation(dir, Vector3.up),
+                        new Vector3(0.86f * size, 1f, 1.55f * size));
                 placed.Add(p);
             }
         }
         // 点击聚焦取"链上离点击处最近的那段"（FinishTrace 转给 TraceClickable.focusChain），
         // 不再飞到整条链的盒心——点河岸哪一段，就看哪一段。
         if (placed.Count > 0) t.chainPoints = placed.ToArray();
+
+        SpawnVoleLamps(t, rec, placed);
+    }
+
+    /// <summary>
+    /// 田鼠灯（2026-08-13）：小径附属造物——路边插着的细杆，杆顶一粒珠。
+    /// 活跃镇：杆+珠+Point Light，注册进 ActiveVoleLamps 由 VoleLampDriver 昼夜驱动；
+    /// lapsed 镇：杆珠照插但不再注册——镇散了没人点灯，造物随小径一起淡回草里。
+    /// 布点确定性：种子 Fnv1a($"vlamp|{formedDateKey}") 与链几何，读档/重建逐点复现。
+    /// 间距 ≥ lampSpacing（2×range）：地面任一点最多 1-2 盏在范围内，稳在 URP 每物体 4 盏上限内。
+    /// </summary>
+    private void SpawnVoleLamps(TraceInstance t, VoleTrailRecord rec, List<Vector3> placed)
+    {
+        if (placed == null || placed.Count < 2) return;
+
+        var rng = new System.Random(Fnv1a($"vlamp|{rec.formedDateKey}"));
+        float spacingSqr = lampSpacing * lampSpacing;
+        Vector3 last = placed[0] - Vector3.right * lampSpacing;   // 首点即有机会中灯
+        int count = 0;
+
+        for (int i = 1; i < placed.Count - 1 && count < maxLampsPerTrail; i++)
+        {
+            Vector3 p = placed[i];
+            Vector2 d = new(p.x - last.x, p.z - last.z);
+            if (d.sqrMagnitude < spacingSqr) continue;
+            last = p;
+            count++;
+
+            // 灯在路边，不挡路：垂直链方向让出半步，方向随种子定（确定性）
+            Vector3 dir = placed[i + 1] - placed[i - 1]; dir.y = 0f;
+            dir = dir.sqrMagnitude > 1e-4f ? dir.normalized : Vector3.forward;
+            Vector3 side = Vector3.Cross(dir, Vector3.up) * (rng.NextDouble() < 0.5 ? 0.5f : -0.5f);
+            Vector3 at = p + side;
+            if (zoneMap.TryGroundAt(at.x, at.z, out Vector3 g)) at = g;
+
+            var yaw = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+            AddProp(t, TraceKit.VoleLampPost, dirtMaterial, lampPostTint,
+                    at, yaw * Quaternion.Euler((float)rng.NextDouble() * 6f - 3f, 0f, 0f),
+                    Vector3.one);
+            Vector3 beadAt = at + yaw * TraceKit.VoleLampBeadAnchor;
+            AddProp(t, TraceKit.VoleLampBead, VoleLampBeadMaterial(), Color.white,
+                    beadAt, yaw, Vector3.one);
+
+            if (rec.lapsed) continue;   // 镇散灯灭：造物还在，只是再没人点了
+
+            var lightGo = new GameObject("VoleLampLight");
+            lightGo.transform.SetParent(t.root.transform, false);
+            lightGo.transform.position = beadAt;
+            var li = lightGo.AddComponent<Light>();
+            li.type = LightType.Point;
+            li.color = lampLightColor;
+            li.range = lampRange;
+            li.intensity = 0f;                    // 点亮归 driver（爬不能跳）
+            li.shadows = LightShadows.None;       // 无影小灯：省阴影贴图，且豁免 LightManager 的 LampPreset 染色
+
+            ActiveVoleLamps.Add(new VoleLamp
+            {
+                light = li,
+                bead = t.renderers[t.renderers.Count - 1],
+                phase = (float)rng.NextDouble() * Mathf.PI * 2f,
+                spawnRealTime = t.spawnRealTime,
+            });
+        }
     }
 
     // 小径土堆键 → 世界坐标：解析 "mound|vole|{date}|{from}->{to}|{trigger}[#n]"，
@@ -1019,25 +1299,32 @@ public class WorldTraceBinder : MonoBehaviour
         return zoneMap.TrySampleZone(to, seed, out p);
     }
 
-    /// <summary>旱痕：debt 过线期间 zone 内 2-3 条地裂（状态驱动，回落即撤；同一网格 yaw/缩放打散）。</summary>
+    /// <summary>旱痕：浅色裸土斑上 4-5 条主裂缝；草海先露出“白泥滩”，靠近再读支缝。</summary>
     private void SpawnCracks(TraceInstance t, string zone, int seed)
     {
         t.type = TraceType.EarthCrack; t.seed = seed;
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
 
         var rng = new System.Random(seed);
-        int count = 2 + rng.Next(2);
+        int count = 4 + rng.Next(2);
         t.root = NewRoot($"Cracks_{seed:X8}", c0);
+        Color pan = Color.Lerp(dirtSettled, featherTint, 0.38f);
+        AddProp(t, TraceKit.PressedOval, dirtMaterial, pan,
+                c0 + Vector3.up * 0.008f,
+                Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                new Vector3(3.25f, 1f, 2.45f));
         for (int i = 0; i < count; i++)
         {
             float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
-            float r   = (float)rng.NextDouble() * 2.2f;
+            float r   = (float)rng.NextDouble() * 2.0f;
             if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
                 continue;
             AddProp(t, TraceKit.EarthCrack, dirtMaterial, crackColor, p + Vector3.up * 0.012f,
                     Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
-                    Vector3.one * Mathf.Lerp(0.9f, 1.6f, (float)rng.NextDouble()));
+                    Vector3.one * Mathf.Lerp(1.45f, 2.25f, (float)rng.NextDouble()));
         }
+        // 让浅色裸土真正露出草面；强度低于歇息压痕，读作干裂而非巨大空地。
+        t.trampleContribs.Add(new Vector4(c0.x, c0.z, 3.4f, 0.58f));
     }
 
     /// <summary>新绒苗：落种 zone 内一小丛 2-3 棵（限期内存在，过龄即撤="长进草里"）。</summary>
@@ -1062,6 +1349,77 @@ public class WorldTraceBinder : MonoBehaviour
     }
 
     // ── prop 组装 ────────────────────────────────────────────────
+
+    // ── 稳定地标：裂脸石 ───────────────────────────────────────
+
+    private void EnsureTraceLandmarks()
+    {
+        if (_splitFaceStoneReady || zoneMap == null || _mpb == null) return;
+        if (!zoneMap.TrySampleEdge("stone_area", "highland_east",
+                                   Fnv1a("landmark|split_face_stone"), out Vector3 p)) return;
+
+        _splitFaceStonePosition = p;
+        var rootGo = new GameObject("Landmark_SplitFaceStone");
+        rootGo.transform.SetParent(transform, false);
+        rootGo.transform.position = p;
+        _landmarkRoot = rootGo.transform;
+
+        Vector3 face = StageFacingDirection(p, Fnv1a("landmark|split_face_stone|face"));
+        Vector3 right = Vector3.Cross(Vector3.up, face).normalized;
+        Quaternion stand = Quaternion.LookRotation(face, Vector3.up) * Quaternion.Euler(90f, 0f, 0f);
+        Color stoneA = new(0.31f, 0.32f, 0.30f, 1f);
+        Color stoneB = new(0.25f, 0.27f, 0.26f, 1f);
+
+        // 两片相挨但不闭合的立面形成可远认的缺口；复用塌洞网格，不创建新美术资产。
+        AddLandmarkPart("SplitFace_Left", TraceKit.MoundCollapsed, dirtMaterial, stoneA,
+                        p - right * 0.72f + Vector3.up * 2.05f,
+                        stand * Quaternion.Euler(0f, -7f, -5f), new Vector3(3.2f, 2.0f, 5.0f));
+        AddLandmarkPart("SplitFace_Right", TraceKit.MoundCollapsed, dirtMaterial, stoneB,
+                        p + right * 0.70f + Vector3.up * 1.82f,
+                        stand * Quaternion.Euler(0f, 9f, 7f), new Vector3(2.8f, 1.8f, 4.4f));
+        AddLandmarkPart("SplitFace_Cleft", TraceKit.Mark, markMaterial, markFresh * 0.42f,
+                        p + face * 0.48f + Vector3.up * 2.0f,
+                        Quaternion.FromToRotation(Vector3.up, face), new Vector3(1.35f, 1f, 20.0f));
+
+        var col = rootGo.AddComponent<BoxCollider>();
+        col.center = new Vector3(0f, 2.0f, 0f);
+        col.size = new Vector3(3.6f, 4.4f, 2.2f);
+        _splitFaceStoneReady = true;
+    }
+
+    private bool TryGetSplitFaceStone(out Vector3 position)
+    {
+        EnsureTraceLandmarks();
+        position = _splitFaceStonePosition;
+        return _splitFaceStoneReady;
+    }
+
+    private void AddLandmarkPart(string name, Mesh mesh, Material mat, Color tint,
+                                 Vector3 pos, Quaternion rot, Vector3 scale)
+    {
+        if (_landmarkRoot == null) return;
+        var go = new GameObject(name);
+        go.transform.SetParent(_landmarkRoot, false);
+        go.transform.SetPositionAndRotation(pos, rot);
+        go.transform.localScale = scale;
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = mat != null ? mat : FallbackMaterial();
+        _mpb.Clear();
+        _mpb.SetColor("_BaseColor", tint);
+        mr.SetPropertyBlock(_mpb);
+    }
+
+    private static Vector3 StageFacingDirection(Vector3 at, float fallbackYaw)
+    {
+        var cam = Camera.main;
+        float fallbackRad = fallbackYaw * Mathf.Deg2Rad;
+        Vector3 face = cam != null
+            ? cam.transform.position - at
+            : new Vector3(Mathf.Sin(fallbackRad), 0f, Mathf.Cos(fallbackRad));
+        face.y = 0f;
+        return face.sqrMagnitude > 1e-4f ? face.normalized : Vector3.back;
+    }
 
     // 生成后收尾——挂可点击 collider（B 方案推近的命中体）；新鲜痕迹记入留意清单
     //（日记边缘语料的选材：类型+键+区，只给方向不给位置）。
@@ -1148,6 +1506,7 @@ public class WorldTraceBinder : MonoBehaviour
         TraceType.StrangerMarks  => "stranger",
         TraceType.DepartureMarks => "departure",
         TraceType.PasserbyChain  => "passerby",
+        TraceType.DeepRelic      => "deeprelic",
         _                        => "trace",
     };
 
@@ -1188,6 +1547,24 @@ public class WorldTraceBinder : MonoBehaviour
             _fallback = new Material(shader != null ? shader : Shader.Find("Universal Render Pipeline/Lit"));
         }
         return _fallback;
+    }
+
+    // 灯珠材质：URP/Lit 开 Emission（发光体不过 toon 色阶无碍——它夜里就是一粒亮珠）。
+    // 运行时创建而非 .mat 资产：零场景布线，与 FallbackMaterial 同口径；
+    // 昼夜明暗由 VoleLampDriver 每帧 MPB 推 _EmissionColor/_BaseColor（sharedMaterial 本身恒暗）。
+    private static Material _lampBead;
+    private static Material VoleLampBeadMaterial()
+    {
+        if (_lampBead == null)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            _lampBead = new Material(shader != null ? shader : Shader.Find("Standard")) { name = "VoleLampBead" };
+            _lampBead.EnableKeyword("_EMISSION");
+            _lampBead.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
+            _lampBead.SetColor("_BaseColor", new Color(0.25f, 0.18f, 0.12f));
+            _lampBead.SetColor("_EmissionColor", Color.black);
+        }
+        return _lampBead;
     }
 
     // ── 确定性工具 ───────────────────────────────────────────────

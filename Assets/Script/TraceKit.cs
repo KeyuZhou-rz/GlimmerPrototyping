@@ -9,6 +9,8 @@ using UnityEngine;
 public static class TraceKit
 {
     private static Mesh _mound, _moundCollapsed, _footprint, _feather, _mark, _pressedOval, _earthCrack, _sprout;
+    private static Mesh _slab, _standingStone, _stoneFlake, _quernStone;
+    private static Mesh _voleLampPost, _voleLampBead;
 
     /// <summary>新翻土堆：低矮八面锥丘，顶部略偏斜。</summary>
     public static Mesh Mound => _mound != null ? _mound
@@ -38,6 +40,27 @@ public static class TraceKit
 
     /// <summary>新绒苗：细茎（十字双卡片，双面）+ 顶点绒球（八面体）。蒲公英落种 N 日后冒出（§5.3）。</summary>
     public static Mesh Sprout => _sprout != null ? _sprout : _sprout = BuildSprout();
+
+    /// <summary>岩棚画石板（V1 D9）：竖立不规则五边形薄板，原点在下缘中央（摆放层半埋+微倾）。
+    /// 板面点描纹样由摆放层用 Mark 小碟点赭石/骨白——与月亮点描盘同源语言。</summary>
+    public static Mesh Slab => _slab != null ? _slab : _slab = BuildSlab();
+
+    /// <summary>立石（V1 D9 石环）：拉长双锥不规则立石，原点在中腹（摆放层半埋参差）。</summary>
+    public static Mesh StandingStone => _standingStone != null ? _standingStone : _standingStone = BuildStandingStone();
+
+    /// <summary>石片（V1 D9 石器散布）：三角薄碟——崩口整齐的打制石片。</summary>
+    public static Mesh StoneFlake => _stoneFlake != null ? _stoneFlake : _stoneFlake = BuildDisc("Trace_StoneFlake", segments: 3, rx: 0.13f, rz: 0.10f);
+
+    /// <summary>磨盘石（V1 D9）：宽扁碟带浅中心凹——"中间凹下去一块"。</summary>
+    public static Mesh QuernStone => _quernStone != null ? _quernStone : _quernStone = BuildMound("Trace_QuernStone", height: 0.07f, radius: 0.48f, dimple: -0.05f);
+
+    /// <summary>田鼠灯杆：细高双锥立杆（同 StandingStone 微缩拉长），原点在底端（摆放层直接插地）。
+    /// 顶端挑一点小弯——灯珠挂在弯头处，读作"插着的灯"而非又一块立石。</summary>
+    public static Mesh VoleLampPost => _voleLampPost != null ? _voleLampPost : _voleLampPost = BuildVoleLampPost();
+
+    /// <summary>田鼠灯珠：杆顶小多面体（八面体半径微扰），原点在珠心。
+    /// 夜里由 VoleLampDriver 用 MPB 推 HDR 暖色吃 Bloom；白天压暗褐读作小造物。</summary>
+    public static Mesh VoleLampBead => _voleLampBead != null ? _voleLampBead : _voleLampBead = BuildVoleLampBead();
 
     // ── 网格构造 ─────────────────────────────────────────────────
 
@@ -202,6 +225,120 @@ public static class TraceKit
     }
 
     private static Vector3 Flat(Vector2 v) => new(v.x, 0f, v.y);
+
+    /// <summary>石板网格：竖立不规则五边形薄板（前后两面 + 四周侧棱），原点在下缘中央。
+    /// 顶点微扰打破几何感（确定性：只依赖索引），非共享顶点 → 平面着色。</summary>
+    private static Mesh BuildSlab()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        // 五边形轮廓（XY 平面，底边贴 y=0）：左下→右下→右肩→顶→左肩
+        var outline = new Vector2[]
+        {
+            new(-0.34f, 0.00f), new(0.32f, 0.02f), new(0.36f, 0.52f),
+            new(0.04f, 0.78f),  new(-0.30f, 0.60f),
+        };
+        const float HALF_T = 0.045f;   // 半厚
+
+        // 前/后扇面（绕序相反）
+        for (int i = 1; i < outline.Length - 1; i++)
+        {
+            var a = outline[0]; var b = outline[i]; var c = outline[i + 1];
+            AddTri(verts, tris, new Vector3(a.x, a.y,  HALF_T), new Vector3(b.x, b.y,  HALF_T), new Vector3(c.x, c.y,  HALF_T));
+            AddTri(verts, tris, new Vector3(a.x, a.y, -HALF_T), new Vector3(c.x, c.y, -HALF_T), new Vector3(b.x, b.y, -HALF_T));
+        }
+        // 侧棱条带
+        for (int i = 0; i < outline.Length; i++)
+        {
+            var p = outline[i]; var q = outline[(i + 1) % outline.Length];
+            var pf = new Vector3(p.x, p.y,  HALF_T); var pb = new Vector3(p.x, p.y, -HALF_T);
+            var qf = new Vector3(q.x, q.y,  HALF_T); var qb = new Vector3(q.x, q.y, -HALF_T);
+            AddTri(verts, tris, pf, pb, qb);
+            AddTri(verts, tris, pf, qb, qf);
+        }
+        return Bake("Trace_Slab", verts, tris);
+    }
+
+    /// <summary>立石网格：拉长双锥（顶/底 + 赤道 5 点，半径与高度微扰），原点在中腹。</summary>
+    private static Mesh BuildStandingStone()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        var top = new Vector3(0.03f, 0.42f, -0.02f);
+        var bot = new Vector3(-0.02f, -0.30f, 0.03f);
+        const int EQ = 5;
+        var eq = new Vector3[EQ];
+        for (int i = 0; i < EQ; i++)
+        {
+            float a = i * Mathf.PI * 2f / EQ + 0.5f;
+            float r = 0.17f * (0.85f + 0.15f * Mathf.Sin(i * 2.3f));
+            eq[i] = new Vector3(Mathf.Cos(a) * r, 0.04f * Mathf.Sin(i * 1.9f), Mathf.Sin(a) * r);
+        }
+        for (int i = 0; i < EQ; i++)
+        {
+            int n = (i + 1) % EQ;
+            AddTri(verts, tris, eq[i], eq[n], top);   // 上半
+            AddTri(verts, tris, eq[n], eq[i], bot);   // 下半（反绕）
+        }
+        return Bake("Trace_StandingStone", verts, tris);
+    }
+
+    /// <summary>灯珠挂点（灯杆局部坐标）：弯头尖端，摆放层把 VoleLampBead 放这里。</summary>
+    public static readonly Vector3 VoleLampBeadAnchor = new(0.075f, 0.52f, 0.02f);
+
+    /// <summary>灯杆网格：细高双锥（底尖在 y=0，赤道细环，顶端向 +x 挑出小弯），原点在底端。</summary>
+    private static Mesh BuildVoleLampPost()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        var bot = new Vector3(0f, 0f, 0f);
+        var top = VoleLampBeadAnchor;                       // 顶即弯头，珠挂这里
+        const int EQ = 5;
+        const float R = 0.016f;                             // 细杆：远景读作一根线
+        var eq = new Vector3[EQ];
+        for (int i = 0; i < EQ; i++)
+        {
+            float a = i * Mathf.PI * 2f / EQ + 0.3f;
+            float r = R * (0.85f + 0.15f * Mathf.Sin(i * 2.3f));
+            // 杆身随高度轻微向弯头方向斜（0→0.03），直杆太像标尺
+            eq[i] = new Vector3(Mathf.Cos(a) * r + 0.015f, 0.26f, Mathf.Sin(a) * r + 0.01f);
+        }
+        for (int i = 0; i < EQ; i++)
+        {
+            int n = (i + 1) % EQ;
+            AddTri(verts, tris, eq[i], eq[n], top);   // 上半
+            AddTri(verts, tris, eq[n], eq[i], bot);   // 下半（反绕）
+        }
+        return Bake("Trace_VoleLampPost", verts, tris);
+    }
+
+    /// <summary>灯珠网格：小八面体（半径微扰破对称，同 Sprout 绒球手法），原点在珠心。</summary>
+    private static Mesh BuildVoleLampBead()
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        var tris  = new System.Collections.Generic.List<int>();
+
+        const float R = 0.045f;
+        var top = new Vector3(0.004f, R, 0f);
+        var bot = new Vector3(-0.003f, -R * 0.7f, 0.002f);
+        var eq = new Vector3[4];
+        for (int i = 0; i < 4; i++)
+        {
+            float a = i * Mathf.PI * 0.5f + 0.6f;
+            float r = R * (0.85f + 0.15f * Mathf.Sin(i * 2.3f));
+            eq[i] = new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            int n = (i + 1) % 4;
+            AddTri(verts, tris, eq[i], eq[n], top);
+            AddTri(verts, tris, eq[n], eq[i], bot);
+        }
+        return Bake("Trace_VoleLampBead", verts, tris);
+    }
 
     // 非共享顶点逐三角形追加 → RecalculateNormals 得到平面着色
     private static void AddTri(System.Collections.Generic.List<Vector3> verts,
