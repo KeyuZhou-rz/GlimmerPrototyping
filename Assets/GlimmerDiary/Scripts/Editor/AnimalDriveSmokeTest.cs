@@ -1385,6 +1385,22 @@ namespace GlimmerDiary.Editor
                            && crackNotice.Contains("白泥滩") && roadNotice.Contains("洞口")
                            && roadNotice.Contains("路");
             Debug.Log($"[{(relational ? "PASS" : "FAIL")}] 第一批留意句均含唯一地标或明确关系");
+
+            // ⑦ 第二批辨形语法：六类薄弱痕迹各自说出场地信号或运动方式，
+            // 不再只报一个区名让玩家在草海里猜。
+            string trailNotice = TraceCaptionBank.PickNotice("trail", "t2", "riverbank");
+            string featherNotice = TraceCaptionBank.PickNotice("feathers", "f2", "lowland");
+            string sproutNotice = TraceCaptionBank.PickNotice("sprout", "s2", "center");
+            string strangerNotice = TraceCaptionBank.PickNotice("stranger", "x2", "riverbank");
+            string departNotice = TraceCaptionBank.PickNotice("departure", "d2", "highland_east");
+            string passerNotice = TraceCaptionBank.PickNotice("passerby", "p2", "center");
+            bool secondBatch = trailNotice.Contains("交替脚印")
+                            && featherNotice.Contains("倒草") && featherNotice.Contains("羽毛")
+                            && sproutNotice.Contains("种壳") && sproutNotice.Contains("新苗")
+                            && strangerNotice.Contains("横宽") && strangerNotice.Contains("每天")
+                            && departNotice.Contains("一枚比一枚浅")
+                            && passerNotice.Contains("从西到东") && passerNotice.Contains("没有停顿");
+            Debug.Log($"[{(secondBatch ? "PASS" : "FAIL")}] 第二批六类留意句均写出辨形或运动关系");
         }
 
         // ── V1 D9：深层遗物×4（韵而不案：认出-only，恒考古语气，出露共用 D6 两钩子）──
@@ -1477,6 +1493,33 @@ namespace GlimmerDiary.Editor
             string notice = TraceCaptionBank.PickNotice("deeprelic", "deeprelic|quern", "riverbank");
             bool noticeOk = notice.Contains("河边") && !notice.Contains("{");
             Debug.Log($"[{(stableCap && noticeOk ? "PASS" : "FAIL")}] 同键稳定选句 + 留意句带地名");
+
+            // ⑧ 物理钩子（2026-08-13 修订）：大雨夜剥蚀岩棚画、上游来水抵达日翻出磨盘——
+            //    各配各的物理，不依赖情绪日记（stone_area/riverbank 本无田鼠打洞，风暴又锁日记）。
+            //    独立第二条管线，不污染上面的风暴断言。
+            var p2 = BuildPipeline();
+            var save2 = p2.save;
+            var painting2 = save2.strata.Find(s => s.relicKind == "painting");
+            string hrDate = FindHookHitDate(painting2.sourceKey, "heavy_rain",
+                StratumSystem.HeavyRainExposeChance, save2.gameTime, 2000);
+            AdvanceTo(save2, hrDate);
+            p2.env.State.Rainfall = 0.85f;   // 大雨夜（过 HeavyRainThreshold）
+            p2.stratumSys.Tick(save2.gameTime, p2.env.State, save2.currentEEnv);
+            bool hrOk = hrDate != null && painting2.exposed && painting2.exposedBy == "heavy_rain"
+                     && save2.pendingChronicles.Exists(c => c.text.Contains("大雨"));
+            Debug.Log($"[{(hrOk ? "PASS" : "FAIL")}] 大雨夜剥蚀岩棚画（exposedBy=heavy_rain，不依赖情绪日记）");
+
+            var quern2 = save2.strata.Find(s => s.relicKind == "quern");
+            string rrDate = FindHookHitDate(quern2.sourceKey, "river_rise",
+                StratumSystem.RiverRiseExposeChance, save2.gameTime, 2000);
+            AdvanceTo(save2, rrDate);
+            p2.env.State.Rainfall = 0f;   // 只留河通道一个活钩子
+            save2.wings.upstreamRains.Add(new UpstreamRainRecord
+                { fellDateKey = rrDate, arriveDateKey = rrDate, amount = 1f });
+            p2.stratumSys.Tick(save2.gameTime, p2.env.State, save2.currentEEnv);
+            bool rrOk = rrDate != null && quern2.exposed && quern2.exposedBy == "river_rise"
+                     && save2.pendingChronicles.Exists(c => c.text.Contains("河水涨落"));
+            Debug.Log($"[{(rrOk ? "PASS" : "FAIL")}] 上游来水抵达日翻出磨盘（exposedBy=river_rise，接河通道）");
         }
 
         // 找一枚深层遗物风暴签必中的日期（自算哈希，同 Exposure 手法；键前缀 deeprelic| 与
@@ -1484,6 +1527,11 @@ namespace GlimmerDiary.Editor
         // miss 非空时要求同拍这些键都不中——防止同表同概率的邻居在目标拍被顺手翻出。
         private static string FindStormHitDate(string sourceKey, GameDateTime from, int maxDays,
                                                params string[] miss)
+            => FindHookHitDate(sourceKey, "storm", StratumSystem.StormExposeChance, from, maxDays, miss);
+
+        // 通用版：sourceKey 在 tag 钩子下必中的日期（heavy_rain/river_rise 等物理钩子同法）
+        private static string FindHookHitDate(string sourceKey, string tag, float chance,
+                                              GameDateTime from, int maxDays, params string[] miss)
         {
             var d = new GameDateTime { year = from.year, month = from.month, day = from.day };
             d.Advance(1);
@@ -1491,8 +1539,7 @@ namespace GlimmerDiary.Editor
             {
                 string key = d.ToKeyString();
                 bool Hit(string k) =>
-                    (TraceKeyUtil.Fnv1a($"{k}|{key}|storm") & 0xFFFF) / 65536f
-                    < StratumSystem.StormExposeChance;
+                    (TraceKeyUtil.Fnv1a($"{k}|{key}|{tag}") & 0xFFFF) / 65536f < chance;
                 if (Hit(sourceKey))
                 {
                     bool anyMiss = false;

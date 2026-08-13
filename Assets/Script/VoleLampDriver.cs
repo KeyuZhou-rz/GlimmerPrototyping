@@ -19,9 +19,11 @@ public class VoleLampDriver : MonoBehaviour
     private WorldTraceBinder _binder;
     private LightManager _lightManager;
     private MaterialPropertyBlock _mpb;
+    private Camera _cam;
 
     private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
     private static readonly int BaseColorId     = Shader.PropertyToID("_BaseColor");
+    private static readonly int GlowColorId     = Shader.PropertyToID("_Color");
 
     void Awake()
     {
@@ -58,6 +60,8 @@ public class VoleLampDriver : MonoBehaviour
         float intensity   = lamp.elder ? _binder.elderIntensity   : _binder.lampIntensity;
         float beadHdr     = lamp.elder ? _binder.elderBeadHdr     : _binder.lampBeadHdr;
         Color emission    = lamp.elder ? _binder.elderBeadEmission : _binder.lampBeadEmission;
+        Color glowColor   = lamp.elder ? _binder.elderLightColor   : _binder.lampLightColor;
+        float glowHdr     = lamp.elder ? _binder.elderGlowHdr      : _binder.lampGlowHdr;
         float breathAmp   = lamp.elder ? _binder.elderBreathAmp   : 0.08f;
         float breathSpeed = lamp.elder ? _binder.elderBreathSpeed : 1.5f;
 
@@ -72,5 +76,17 @@ public class VoleLampDriver : MonoBehaviour
         _mpb.SetColor(EmissionColorId, emission * (beadHdr * level));
         _mpb.SetColor(BaseColorId, Color.Lerp(_binder.lampPostTint, emission, night * 0.35f));
         lamp.bead.SetPropertyBlock(_mpb);
+
+        // 光晕片：朝向相机（billboard）+ HDR 色。柔和晕染的主载体——参考图那种"化开"的
+        // 观感靠这片加色径向渐变，Bloom 只是再叠一层。level=0 时加色为零自然隐形。
+        if (lamp.glow != null)
+        {
+            if (_cam == null) _cam = Camera.main;
+            if (_cam != null)
+                lamp.glow.transform.rotation = Quaternion.LookRotation(_cam.transform.forward);
+            _mpb.Clear();
+            _mpb.SetColor(GlowColorId, glowColor * (glowHdr * level));
+            lamp.glow.SetPropertyBlock(_mpb);
+        }
     }
 }

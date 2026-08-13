@@ -91,7 +91,11 @@ public class WorldTraceBinder : MonoBehaviour
     public float lampSpacing      = 8f;      // 任一点最多 2 盏在范围内（URP 每物体附加光上限 4，余量充足）
     public int   maxLampsPerTrail = 12;
     public Color lampPostTint     = new(0.25f, 0.18f, 0.12f);   // 熄灭的造物色：白天读作小杆，不是光点
-    public float lampBeadScale    = 1.8f;    // 灯珠放大：远处超过 Bloom 阈值的像素成簇，光晕才聚得起来
+    public float lampBeadScale    = 1.2f;    // 灯珠（亮核）；光晕大小另由 lampGlowSize 管
+    [Tooltip("光晕片世界直径（米）：柔和晕染的主载体——参考图那种\"化开\"的观感靠它，不靠 Bloom")]
+    public float lampGlowSize     = 2.4f;
+    [Tooltip("光晕 HDR 倍率：>1 的部分再被 Bloom 拾取，晕外缘叠一层泛光")]
+    public float lampGlowHdr      = 2.0f;
 
     [Header("原在灯（2026-08-13：镇成形之前就在的 3-4 盏——比镇老，不知谁立的。更冷更暗更慢：新火暖，旧火冷）")]
     public Color elderLightColor   = new(0.62f, 0.72f, 1.00f);   // 冷月白（与镇灯暖琥珀一眼可辨）
@@ -101,6 +105,8 @@ public class WorldTraceBinder : MonoBehaviour
     public float elderRange        = 5f;
     public float elderBreathAmp    = 0.14f;   // 呼吸更深——像风里的老火
     public float elderBreathSpeed  = 0.6f;    // 更慢（周期 ~10s，镇灯 ~4s）
+    public float elderGlowSize     = 2.0f;    // 原在灯光晕：略小略弱，仍是同一套柔和晕染
+    public float elderGlowHdr      = 1.4f;
 
     // 与 GlimmerGrass.shader 的 _TramplePoints[16] 数组长度耦合——两侧同改
     private const int TRAMPLE_MAX = 16;
@@ -144,6 +150,7 @@ public class WorldTraceBinder : MonoBehaviour
     {
         public Light light;             // Point Light（shadows=None：豁免 LightManager 的 LampPreset 染色，恒暖人造火色）
         public Renderer bead;           // 灯珠（driver 每帧 MPB 推 _EmissionColor/_BaseColor）
+        public Renderer glow;           // 光晕片（加色径向渐变，driver 逐帧朝向相机 + MPB 推 HDR 色）
         public float phase;             // 呼吸相位（按种子错开，不齐闪）
         public float spawnRealTime;     // 展示层淡入（与痕迹同口径：新灯 2 秒爬升，不跳变）
         public bool elder;              // 原在灯：镇成形之前就在的老灯，driver 走更冷更暗更慢那套参数
@@ -902,7 +909,7 @@ public class WorldTraceBinder : MonoBehaviour
     private static readonly string[] WingPath = { "riverbank", "lowland", "center", "stone_area", "highland_east" };
 
     /// <summary>陌生脚印：西缘起每天更深一段（段数口径在 WingTraceRecord.StrangerSegments），
-    /// 12 日淡完。每段两枚相邻脚印，朝向下一段——"它们每天都更深一点"。</summary>
+    /// 12 日淡完。每段三枚横宽深印，和本地动物的窄椭圆脚型拉开。</summary>
     private void SpawnStrangerMarks(TraceInstance t, WingTraceRecord rec, int today)
     {
         t.type = TraceType.StrangerMarks; t.seed = Fnv1a(rec.id);
@@ -919,12 +926,17 @@ public class WorldTraceBinder : MonoBehaviour
             Vector3 dir = WingPathDirection(i);
             Quaternion yaw = Quaternion.LookRotation(dir, Vector3.up);
             Vector3 perp = Vector3.Cross(dir, Vector3.up);
-            for (int f = 0; f < 2; f++)
+            // 每个已推进的区先给一块很淡的扰草底，再叠横宽脚型：远处读成逐段深入，
+            // 近处才发现它不像本地任何一串窄脚印。
+            AddProp(t, TraceKit.PressedOval, pressedMaterial,
+                    Color.Lerp(dirtSettled, c, 0.35f), p + Vector3.up * 0.012f, yaw,
+                    new Vector3(0.72f, 1f, 1.15f));
+            for (int f = 0; f < 3; f++)
             {
-                Vector3 fp = p + dir * (f * 0.35f) + perp * (f == 0 ? 0.09f : -0.09f);
+                Vector3 fp = p + dir * (f * 0.42f) + perp * (f % 2 == 0 ? 0.14f : -0.14f);
                 if (zoneMap.TryGroundAt(fp.x, fp.z, out Vector3 g)) fp = g;
                 AddProp(t, TraceKit.Footprint, dirtMaterial, c, fp + Vector3.up * 0.02f, yaw,
-                        Vector3.one * 0.95f);
+                        new Vector3(1.55f, 1f, 0.88f));
             }
         }
     }
@@ -942,12 +954,16 @@ public class WorldTraceBinder : MonoBehaviour
         t.root = NewRoot($"Depart_{t.seed:X8}", c0);
         Quaternion yaw = Quaternion.LookRotation(east, Vector3.up);
         Vector3 perp = Vector3.Cross(east, Vector3.up);
-        for (int i = 0; i < 4; i++)
+        const int count = 7;
+        for (int i = 0; i < count; i++)
         {
-            Vector3 p = c0 + east * (radius * 0.6f + i * 0.7f) + perp * (i % 2 == 0 ? 0.09f : -0.09f);
+            Vector3 p = c0 + east * (radius * 0.42f + i * 0.72f) + perp * (i % 2 == 0 ? 0.10f : -0.10f);
             if (!zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) break;   // 走出地形就不画了
-            AddProp(t, TraceKit.Footprint, dirtMaterial, c, g + Vector3.up * 0.02f, yaw,
-                    Vector3.one * 0.95f);
+            float vanish = i / (float)(count - 1);
+            Color stepColor = Color.Lerp(c, printFaded, vanish * 0.78f);
+            float stepScale = Mathf.Lerp(1.18f, 0.55f, vanish);
+            AddProp(t, TraceKit.Footprint, dirtMaterial, stepColor, g + Vector3.up * 0.02f, yaw,
+                    Vector3.one * stepScale);
         }
     }
 
@@ -963,8 +979,9 @@ public class WorldTraceBinder : MonoBehaviour
             if (zoneMap.TryGetAnchorCenter(z, out Vector3 ac, out _)) anchors.Add(ac);
         if (anchors.Count < 2) return;
 
-        const int N = 9;
-        int visible = Mathf.Max(2, Mathf.CeilToInt(progress * (N - 1)) + 1);
+        // 9 枚横跨整片世界时在舞台机位只剩孤立像素；30 枚才读得成一条不停步的线。
+        const int N = 30;
+        int visible = Mathf.Max(4, Mathf.CeilToInt(progress * (N - 1)) + 1);
         var rng = new System.Random(t.seed);
         t.root = NewRoot($"Passer_{t.seed:X8}", anchors[0]);
         for (int i = 0; i < visible; i++)
@@ -975,11 +992,16 @@ public class WorldTraceBinder : MonoBehaviour
             dir = dir.sqrMagnitude > 1e-4f ? dir.normalized : Vector3.forward;
             Vector3 perp = Vector3.Cross(dir, Vector3.up);
             Vector3 p = Vector3.Lerp(anchors[seg], anchors[seg + 1], segF - seg)
-                      + perp * ((float)(rng.NextDouble() - 0.5) * 0.5f)   // 不是阅兵直线
-                      + dir * (i % 2 == 0 ? 0.09f : -0.09f);
+                      + perp * ((i % 2 == 0 ? 0.18f : -0.18f)
+                                + (float)(rng.NextDouble() - 0.5) * 0.18f)   // 连续但不是阅兵直线
+                      + dir * (i % 3 == 0 ? 0.08f : -0.04f);
             if (!zoneMap.TryGroundAt(p.x, p.z, out Vector3 g)) continue;
             AddProp(t, TraceKit.Footprint, dirtMaterial, printFresh, g + Vector3.up * 0.02f,
-                    Quaternion.LookRotation(dir, Vector3.up), Vector3.one * 0.95f);
+                    Quaternion.LookRotation(dir, Vector3.up), Vector3.one * 1.12f);
+            if (i % 3 == 1)
+                AddProp(t, TraceKit.PressedOval, pressedMaterial,
+                        Color.Lerp(dirtSettled, pressedTint, 0.32f), g + Vector3.up * 0.012f,
+                        Quaternion.LookRotation(dir, Vector3.up), new Vector3(0.62f, 1f, 1.18f));
         }
     }
 
@@ -1008,12 +1030,12 @@ public class WorldTraceBinder : MonoBehaviour
         return Vector3.right;
     }
 
-    /// <summary>T3 脚印串：沿 from→to 边 4-6 片小椭圆，左右交替，随龄缩小褪色。</summary>
+    /// <summary>T3 脚印串：沿 from→to 边 7-9 枚交替脚印，脚下带断续扰草，随龄缩小褪色。</summary>
     private void SpawnTrail(TraceInstance t, string from, string to, float age, int seed)
     {
         t.type = TraceType.Trail; t.seed = seed;
         var rng = new System.Random(seed);
-        int count = 4 + rng.Next(3);
+        int count = 7 + rng.Next(3);
         var pts = new List<Vector3>();
         if (zoneMap.SampleTrail(from, to, seed, count, pts, out Vector3 dir) == 0) return;
 
@@ -1028,26 +1050,35 @@ public class WorldTraceBinder : MonoBehaviour
         for (int i = 0; i < pts.Count; i++)
         {
             Vector3 p = pts[i] + perp * ((i % 2 == 0) ? 0.09f : -0.09f);   // 左右脚交替
+            if (life > 0.28f && i % 2 == 0)
+                AddProp(t, TraceKit.PressedOval, pressedMaterial,
+                        Color.Lerp(dirtSettled, pressedTint, 0.24f * life),
+                        p + Vector3.up * 0.012f, yaw, new Vector3(0.58f, 1f, 1.05f));
             AddProp(t, TraceKit.Footprint, dirtMaterial, c, p + Vector3.up * 0.02f, yaw,
-                    Vector3.one * scale);
+                    Vector3.one * (scale * 1.12f));
             if (trampleLife > 0f)
                 t.trampleContribs.Add(new Vector4(p.x, p.z, 1.1f, 0.9f * trampleLife));
         }
     }
 
-    /// <summary>T5 羽毛：离境 zone 内 2-3 片，随龄压平褪色。</summary>
+    /// <summary>T5 羽毛：浅色倒草斑上聚成一小簇，随龄压平褪色。</summary>
     private void SpawnFeathers(TraceInstance t, string zone, float age, int seed)
     {
         t.type = TraceType.Feathers; t.seed = seed;
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
 
         var rng = new System.Random(seed);
-        int count = 3 + rng.Next(3);
+        int count = 5 + rng.Next(3);
         float life = 1f - age / (float)featherMaxAge;
         Color fresh = Color.Lerp(featherTint, Color.white, 0.35f);
         Color c = Color.Lerp(featherTint * 0.86f, fresh, life);
 
         t.root = NewRoot($"Feathers_{seed:X8}", c0);
+        AddProp(t, TraceKit.PressedOval, pressedMaterial,
+                Color.Lerp(dirtSettled, featherTint, 0.30f + 0.18f * life),
+                c0 + Vector3.up * 0.012f,
+                Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                new Vector3(1.55f, 1f, 1.18f));
         for (int i = 0; i < count; i++)
         {
             float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
@@ -1055,12 +1086,13 @@ public class WorldTraceBinder : MonoBehaviour
             if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
                 continue;
             // 随龄压平：新落的羽毛翘一点，久了贴平
-            float tilt = Mathf.Lerp(4f, 22f, life);
-            float scale = Mathf.Lerp(1.1f, 1.35f, (float)rng.NextDouble());
+            float tilt = i == 0 ? Mathf.Lerp(18f, 52f, life) : Mathf.Lerp(4f, 24f, life);
+            float scale = Mathf.Lerp(1.35f, 1.75f, (float)rng.NextDouble());
             var rot = Quaternion.Euler(tilt, (float)rng.NextDouble() * 360f, 0f);
             AddProp(t, TraceKit.Feather, featherMaterial, c, p + Vector3.up * 0.025f, rot,
                     Vector3.one * scale);
         }
+        t.trampleContribs.Add(new Vector4(c0.x, c0.z, 2.2f, 0.34f * Mathf.Clamp01(life)));
     }
 
     /// <summary>T6 狐狸记号：固定留在裂脸石舞台侧的纵向擦痕，慢淡出。</summary>
@@ -1301,6 +1333,7 @@ public class WorldTraceBinder : MonoBehaviour
             {
                 light = li,
                 bead = t.renderers[t.renderers.Count - 1],
+                glow = AddGlowQuad(t.root.transform, beadAt, lampGlowSize),
                 phase = (float)rng.NextDouble() * Mathf.PI * 2f,
                 spawnRealTime = t.spawnRealTime,
             });
@@ -1367,15 +1400,19 @@ public class WorldTraceBinder : MonoBehaviour
         t.trampleContribs.Add(new Vector4(c0.x, c0.z, 3.4f, 0.58f));
     }
 
-    /// <summary>新绒苗：落种 zone 内一小丛 2-3 棵（限期内存在，过龄即撤="长进草里"）。</summary>
+    /// <summary>新绒苗：湿土小圈里 6-8 棵，外缘散着浅色种壳（限期内存在，过龄即撤）。</summary>
     private void SpawnSprout(TraceInstance t, string zone, int seed)
     {
         t.type = TraceType.Sprout; t.seed = seed;
         if (!zoneMap.TrySampleZone(zone, seed, out Vector3 c0)) return;
 
         var rng = new System.Random(seed);
-        int count = 2 + rng.Next(2);
+        int count = 6 + rng.Next(3);
         t.root = NewRoot($"Sprout_{seed:X8}", c0);
+        AddProp(t, TraceKit.PressedOval, dirtMaterial,
+                Color.Lerp(dirtSettled, dirtDry, 0.28f), c0 + Vector3.up * 0.009f,
+                Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
+                new Vector3(1.65f, 1f, 1.28f));
         for (int i = 0; i < count; i++)
         {
             float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
@@ -1384,8 +1421,20 @@ public class WorldTraceBinder : MonoBehaviour
                 continue;
             AddProp(t, TraceKit.Sprout, featherMaterial, sproutTint, p + Vector3.up * 0.01f,
                     Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f),
-                    Vector3.one * Mathf.Lerp(0.8f, 1.3f, (float)rng.NextDouble()));
+                    Vector3.one * Mathf.Lerp(1.25f, 1.75f, (float)rng.NextDouble()));
         }
+        // 蒲公英落种后的浅色种壳 / 绒屑：不是灯，不发光，只在湿土圈边缘给近看识别层。
+        for (int i = 0; i < 4; i++)
+        {
+            float ang = i * Mathf.PI * 0.5f + (float)rng.NextDouble() * 0.35f;
+            float r = 1.05f + (float)rng.NextDouble() * 0.45f;
+            if (!zoneMap.TryGroundAt(c0.x + Mathf.Cos(ang) * r, c0.z + Mathf.Sin(ang) * r, out Vector3 p))
+                continue;
+            AddProp(t, TraceKit.Mark, featherMaterial, featherTint * 0.94f,
+                    p + Vector3.up * 0.014f, Quaternion.Euler(0f, ang * Mathf.Rad2Deg, 0f),
+                    Vector3.one * Mathf.Lerp(0.30f, 0.45f, (float)rng.NextDouble()));
+        }
+        t.trampleContribs.Add(new Vector4(c0.x, c0.z, 2.0f, 0.30f));
     }
 
     // ── prop 组装 ────────────────────────────────────────────────
@@ -1527,10 +1576,90 @@ public class WorldTraceBinder : MonoBehaviour
         {
             light = li,
             bead = beadMr,
+            glow = AddGlowQuad(lampGo.transform, beadAt, elderGlowSize),
             phase = (float)rng.NextDouble() * Mathf.PI * 2f,
             spawnRealTime = Time.time,
             elder = true,
         });
+    }
+
+    /// <summary>光晕片：1×1 面向 +Z 的四边形，Glimmer/LampGlow 加色径向渐变——
+    /// 柔和晕染的主载体（参考图那种"化开"的观感）。朝向与颜色归 VoleLampDriver 每帧驱动；
+    /// 白天 level=0 加色为零，自然隐形，无需开关。</summary>
+    private Renderer AddGlowQuad(Transform parent, Vector3 at, float size)
+    {
+        var go = new GameObject("Glow");
+        go.transform.SetParent(parent, false);
+        go.transform.position = at;
+        go.transform.localScale = Vector3.one * size;
+        go.AddComponent<MeshFilter>().sharedMesh = GlowQuadMesh();
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = VoleLampGlowMaterial();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        return mr;
+    }
+
+    private static Mesh _glowQuad;
+    private static Mesh GlowQuadMesh()
+    {
+        if (_glowQuad == null)
+        {
+            _glowQuad = new Mesh { name = "VoleLampGlowQuad" };
+            _glowQuad.SetVertices(new System.Collections.Generic.List<Vector3>
+            {
+                new(-0.5f, -0.5f, 0f), new(0.5f, -0.5f, 0f),
+                new(0.5f,  0.5f, 0f),  new(-0.5f, 0.5f, 0f),
+            });
+            _glowQuad.SetUVs(0, new System.Collections.Generic.List<Vector2>
+            {
+                new(0f, 0f), new(1f, 0f), new(1f, 1f), new(0f, 1f),
+            });
+            _glowQuad.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0);   // 面向 +Z（driver 用相机 forward 对齐）
+            _glowQuad.RecalculateNormals();
+            _glowQuad.RecalculateBounds();
+        }
+        return _glowQuad;
+    }
+
+    private static Material _glowMat;
+    private static Material VoleLampGlowMaterial()
+    {
+        if (_glowMat == null)
+        {
+            _glowMat = new Material(Shader.Find("Glimmer/LampGlow")) { name = "VoleLampGlow" };
+            _glowMat.SetTexture("_MainTex", GlowTexture());
+            _glowMat.SetColor("_Color", Color.black);   // 初值黑=不发光，点亮归 driver
+        }
+        return _glowMat;
+    }
+
+    // 径向渐变贴图（运行时生成，零资产）：中心 1 向边缘 smoothstep 衰减——
+    // 衰减曲线即"晕染"的柔软度，pow 2.6 让晕芯亮、外缘化开无硬边。
+    private static Texture2D _glowTex;
+    private static Texture2D GlowTexture()
+    {
+        if (_glowTex == null)
+        {
+            const int N = 128;
+            _glowTex = new Texture2D(N, N, TextureFormat.RGBA32, false)
+            {
+                name = "VoleLampGlowTex",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+            var px = new Color[N * N];
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                {
+                    float dx = (x + 0.5f) / N - 0.5f, dy = (y + 0.5f) / N - 0.5f;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy) * 2f;              // 0 中心 → 1 边缘
+                    float a = Mathf.Pow(Mathf.Clamp01(1f - d), 2.6f);
+                    px[y * N + x] = new Color(1f, 1f, 1f, a);
+                }
+            _glowTex.SetPixels(px);
+            _glowTex.Apply(false, false);
+        }
+        return _glowTex;
     }
 
     private MeshRenderer AddElderPart(Transform parent, string name, Mesh mesh, Material mat,

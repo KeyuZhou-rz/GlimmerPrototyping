@@ -26,10 +26,14 @@ namespace GlimmerDiary.Core
         public const float RainFactor     = 0.8f;    // 雨多泥盖快
         public const float GrassFactor    = 0.6f;    // 草盛根缠快
 
-        // ── 出露（§4.5 出露两法）────────────────────────────────
+        // ── 出露（§4.5 出露两法 + 2026-08-13 物理钩子修订）──────────────
         public const float StormArousalThreshold = 0.7f;   // 风暴夜（E_env 唤醒过阈）
         public const float StormExposeChance     = 0.08f;  // 每件地层对象/风暴夜
         public const float VoleDigExposeChance   = 0.15f;  // 每件地层对象/同区新洞
+        // 物理钩子（不依赖情绪日记——遗物各配各的物理）：
+        public const float HeavyRainThreshold    = 0.7f;   // 大雨夜（Rainfall 过阈）剥蚀岩棚画
+        public const float HeavyRainExposeChance = 0.10f;  // 岩棚画/大雨夜
+        public const float RiverRiseExposeChance = 0.12f;  // 磨盘/上游来水抵达日
 
         private readonly WorldSaveData _save;
 
@@ -81,7 +85,7 @@ namespace GlimmerDiary.Core
 
             Intake(time, today);
             Sediment(env);
-            Expose(time, today, todayKey, eEnv);
+            Expose(time, today, todayKey, eEnv, env);
         }
 
         // 预跑挂起（同 EraSystem.Suspended 口径）：新世界 30 天中性预跑期间不掷深层遗物
@@ -177,7 +181,7 @@ namespace GlimmerDiary.Core
 
         // ── ③ 出露（确定性掷签；只有沉入地层档的才够格被"翻出"）────────
 
-        private void Expose(GameDateTime time, int today, string todayKey, EmotionVector eEnv)
+        private void Expose(GameDateTime time, int today, string todayKey, EmotionVector eEnv, WorldEnvironmentState env)
         {
             // 法一：风暴剥蚀——高唤醒风暴夜后，每件沉底旧物掷签
             bool stormNight = eEnv != null && eEnv.A > StormArousalThreshold;
@@ -190,7 +194,17 @@ namespace GlimmerDiary.Core
                 if (m.birthDay == today && !dugZones.Contains(m.zone))
                     dugZones.Add(m.zone);
 
-            if (!stormNight && dugZones.Count == 0) return;
+            // 物理钩子（2026-08-13 修订，遗物各配各的物理，不依赖情绪日记）：
+            //   大雨夜冲刷 → 剥蚀岩棚画（stone_area 无田鼠打洞，风暴又锁情绪日记——
+            //   画皮是冲出来的，不是吹出来的）；
+            //   上游来水抵达日（河通道已有事件）→ 河水涨落翻出河边磨盘。
+            bool heavyRain = (env?.Rainfall ?? 0f) >= HeavyRainThreshold;
+            bool riverRise = false;
+            if (_save.wings?.upstreamRains != null)
+                foreach (var r in _save.wings.upstreamRains)
+                    if (r.arriveDateKey == todayKey) { riverRise = true; break; }
+
+            if (!stormNight && dugZones.Count == 0 && !heavyRain && !riverRise) return;
 
             foreach (var s in _save.strata)
             {
@@ -199,7 +213,13 @@ namespace GlimmerDiary.Core
                 if (stormNight && Roll(s.sourceKey, todayKey, "storm", StormExposeChance))
                 { ExposeOne(s, time, "storm"); continue; }
                 if (dugZones.Contains(s.zone) && Roll(s.sourceKey, todayKey, "vole_dig", VoleDigExposeChance))
-                    ExposeOne(s, time, "vole_dig");
+                { ExposeOne(s, time, "vole_dig"); continue; }
+                if (s.kind == "deeprelic" && s.relicKind == "painting" && heavyRain
+                    && Roll(s.sourceKey, todayKey, "heavy_rain", HeavyRainExposeChance))
+                { ExposeOne(s, time, "heavy_rain"); continue; }
+                if (s.kind == "deeprelic" && s.relicKind == "quern" && riverRise
+                    && Roll(s.sourceKey, todayKey, "river_rise", RiverRiseExposeChance))
+                    ExposeOne(s, time, "river_rise");
             }
         }
 
@@ -209,7 +229,7 @@ namespace GlimmerDiary.Core
             s.exposed        = true;
             s.exposedDateKey = todayKey;
             s.exposedBy      = by;
-            Debug.Log($"[Stratum] 出露 @{todayKey}（{(by == "storm" ? "风暴剥蚀" : "田鼠翻土")}）{s.sourceKey}");
+            Debug.Log($"[Stratum] 出露 @{todayKey}（{ByLabel(by)}）{s.sourceKey}");
 
             // 深层遗物（V1 D9）：出露是永久事件——进 worldEvents（append-only）+ 编年史，
             // 缺席信按 salience 3 必提。编年史句给推断不给答案（恒考古语气，认出-only）。
@@ -233,20 +253,32 @@ namespace GlimmerDiary.Core
             }
         }
 
+        private static string ByLabel(string by) => by switch
+        {
+            "storm"      => "风暴剥蚀",
+            "heavy_rain" => "大雨冲刷",
+            "river_rise" => "河水涨落",
+            _            => "田鼠翻土"
+        };
+
         // 出露编年史句：只说"翻出来了什么、谁翻的"，制造者留白（占位各一，设计者并行线扩写）
         private static string DeepRelicChronicleLine(string relicKind, string by)
         {
             bool storm = by == "storm";
             return relicKind switch
             {
-                "painting"     => storm ? "那场风过后，石头那边露出一块有画的石板。赭石的点，骨白的线。画它的人没有留名。"
-                                        : "田鼠打洞带出一角石板——上面有画。赭石的点，骨白的线。画它的人没有留名。",
+                "painting"     => by == "heavy_rain"
+                                        ? "那场大雨过后，石头那边被冲出一块有画的石板。赭石的点，骨白的线。画它的人没有留名。"
+                                        : storm ? "那场风过后，石头那边露出一块有画的石板。赭石的点，骨白的线。画它的人没有留名。"
+                                                : "田鼠打洞带出一角石板——上面有画。赭石的点，骨白的线。画它的人没有留名。",
                 "stone_circle" => storm ? "那场风过后，东边高地上露出几块立着的石头，围成一个缺口的圆。摆的人没留下别的。"
                                         : "田鼠打洞碰到硬东西——东边高地上露出几块立着的石头，围成一个缺口的圆。摆的人没留下别的。",
                 "tool_scatter" => storm ? "那场风过后，台地中央散出一小簇石片。崩口太整齐了，整齐不是河水的习惯。"
                                         : "田鼠打洞带出一小簇石片。崩口太整齐了，整齐不是河水的习惯。",
-                "quern"        => storm ? "那场风过后，河边卧出一块扁石头，中间凹下去一块。磨过什么，磨的人自己知道。"
-                                        : "田鼠打洞碰到一块扁石头——中间凹下去一块。磨过什么，磨的人自己知道。",
+                "quern"        => by == "river_rise"
+                                        ? "河水涨落一回，河边卧出一块扁石头，中间凹下去一块。磨过什么，磨的人自己知道。"
+                                        : storm ? "那场风过后，河边卧出一块扁石头，中间凹下去一块。磨过什么，磨的人自己知道。"
+                                                : "田鼠打洞碰到一块扁石头——中间凹下去一块。磨过什么，磨的人自己知道。",
                 _              => "有什么被翻出来了。很老，比这里的谁都老。"
             };
         }

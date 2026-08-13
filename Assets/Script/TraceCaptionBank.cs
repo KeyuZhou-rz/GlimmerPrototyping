@@ -101,11 +101,11 @@ public static class TraceCaptionBank
         },
         ["notice_trail"] = new[]
         {
-            "有脚印从{place}经过。目的地不明。",
+            "{place}边缘有一串交替脚印，越过草地去了。",
         },
         ["notice_feathers"] = new[]
         {
-            "{place}落了几根羽毛。飞走的那位没有告别。",
+            "{place}一小片倒草上压着几根浅色羽毛。飞走的那位没有告别。",
         },
         ["notice_rest"] = new[]
         {
@@ -131,7 +131,7 @@ public static class TraceCaptionBank
         },
         ["notice_sprout"] = new[]
         {
-            "{place}冒了新苗。风把种子送到，就没有了下文。",
+            "{place}一圈浅色种壳中间冒了新苗。风把种子送到，就没有了下文。",
         },
         ["notice_exposed"] = new[]
         {
@@ -144,15 +144,15 @@ public static class TraceCaptionBank
         // 侧翼三类自带方向（西来/东去），不套 {place}
         ["notice_stranger"] = new[]
         {
-            "西边的草里有串脚印。你没见过那种脚型。",
+            "西边的草里多了几枚横宽的深脚印，每天往里多一段。",
         },
         ["notice_departure"] = new[]
         {
-            "东边有一串往山里去的印子。是谁走了。",
+            "东边高地靠舞台外缘，脚印一枚比一枚浅，往山外去了。",
         },
         ["notice_passerby"] = new[]
         {
-            "有一串脚印正连夜横穿这片土地，不停留。",
+            "一条新鲜脚印正从西到东横穿整片草地，路上没有停顿。",
         },
         // 未覆盖类型的通用回退（仍在语料体系内，不走 Fallback——留意句必须带地名）
         ["notice"] = new[]
