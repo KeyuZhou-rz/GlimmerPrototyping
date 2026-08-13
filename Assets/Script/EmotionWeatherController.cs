@@ -209,6 +209,25 @@ public class EmotionWeatherController : MonoBehaviour
     }
 
 
+    void Awake()
+    {
+        // 开局打雷根因（2026-08-13）：场景里雷声源勾着 PlayOnAwake 且 m_Resource 直接挂了
+        // 雷片段（雨声源同款挂着雨循环）——场景加载即炸一声雷，与天气完全无关。
+        // Start 再摘旗为时已晚（音频在场景加载期已起播）。这里 Awake 即停即摘旗做双保险：
+        // 此后雷声只由 UpdateThunder→ThunderPlay 按 thunderIntensity 触发，
+        // 雨声由 UpdateRain 按雨量 Play/Stop（雨天回归时音量从 0 爬入，反而更自然）。
+        if (thunderAudioSource != null)
+        {
+            thunderAudioSource.playOnAwake = false;
+            if (thunderAudioSource.isPlaying) thunderAudioSource.Stop();
+        }
+        if (rainAudioSource != null)
+        {
+            rainAudioSource.playOnAwake = false;
+            if (rainAudioSource.isPlaying) rainAudioSource.Stop();
+        }
+    }
+
     void Start()
     {
         if (lightingLight != null)
