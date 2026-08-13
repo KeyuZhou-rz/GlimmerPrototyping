@@ -1017,25 +1017,28 @@ namespace GlimmerDiary.Editor
                 });
                 p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
             }
-            bool buried1 = save.strata.Count == 1 && save.strata[0].kind == "mound";
+            bool buried1 = save.strata.FindAll(s => s.kind != "deeprelic").Count == 1
+                        && save.strata.Exists(s => s.kind == "mound");
             Debug.Log($"[{(buried1 ? "PASS" : "FAIL")}] 第 7 堆出生 → 最老土堆出窗入土（strata={save.strata.Count}）");
 
             // 阶段 2：深度只增不减（沉降是积分，不是状态切换）
-            float d0 = save.strata[0].depth;
+            //（D9 起档内恒有四件深层遗物预播种——按 kind 取被测土堆，不拿 strata[0]）
+            var moundRec = save.strata.Find(s => s.kind == "mound");
+            float d0 = moundRec.depth;
             for (int d = 0; d < 10; d++)
             {
                 save.gameTime.Advance(1);
                 p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
             }
-            bool grew = save.strata[0].depth > d0 + 0.3f;   // 10 天中性天气 ≈ +0.4 起
-            Debug.Log($"[{(grew ? "PASS" : "FAIL")}] 沉降 10 天深度累计（{d0:F2} → {save.strata[0].depth:F2}）");
+            bool grew = moundRec.depth > d0 + 0.3f;   // 10 天中性天气 ≈ +0.4 起
+            Debug.Log($"[{(grew ? "PASS" : "FAIL")}] 沉降 10 天深度累计（{d0:F2} → {moundRec.depth:F2}）");
 
             // 阶段 3：跨过 RelicMaxDepth → 地层档（不可点由 binder 读 depth 判定，这里验数据侧过阈）
-            save.strata[0].depth = StratumRecord.RelicMaxDepth - 0.01f;
+            moundRec.depth = StratumRecord.RelicMaxDepth - 0.01f;
             save.gameTime.Advance(1);
             p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
-            bool crossed = save.strata[0].depth >= StratumRecord.RelicMaxDepth && !save.strata[0].exposed;
-            Debug.Log($"[{(crossed ? "PASS" : "FAIL")}] 深度沉过遗存档上限 → 进入地层档（depth={save.strata[0].depth:F2}）");
+            bool crossed = moundRec.depth >= StratumRecord.RelicMaxDepth && !moundRec.exposed;
+            Debug.Log($"[{(crossed ? "PASS" : "FAIL")}] 深度沉过遗存档上限 → 进入地层档（depth={moundRec.depth:F2}）");
 
             // 阶段 4：塌洞出生即入土（方案 A）——键格式与 binder T2 口径一致，断代锚=荒年
             var center = save.locations.Find(l => l.locationId == "center");
@@ -1334,28 +1337,29 @@ namespace GlimmerDiary.Editor
         {
             Debug.Log("=== NoticingCaptions (EditMode) ===");
 
-            // ① 主要新鲜类型都有专属留意语，且无 {place} 残留
+            // ① 可主动留意的主要类型都有专属留意语，且无 {place} 残留
             string[] types = { "mound", "collapse", "trail", "feathers", "rest", "sprout",
-                               "exposed", "stranger", "departure", "passerby" };
+                               "exposed", "stranger", "departure", "passerby",
+                               "marks", "rangehalt", "cracks", "vtrail" };
             bool allTyped = true;
             foreach (var t in types)
             {
                 string s = TraceCaptionBank.PickNotice(t, "k1", "stone_area");
                 if (string.IsNullOrEmpty(s) || s.Contains("{")) allTyped = false;
             }
-            Debug.Log($"[{(allTyped ? "PASS" : "FAIL")}] 十类新鲜痕迹留意语齐备且无占位残留");
+            Debug.Log($"[{(allTyped ? "PASS" : "FAIL")}] 十四类可主动留意痕迹语料齐备且无占位残留");
 
             // ② 地名注入：同类型同键，区名不同句不同（只给方向不给位置）
             string a = TraceCaptionBank.PickNotice("mound", "k1", "stone_area");
             string b = TraceCaptionBank.PickNotice("mound", "k1", "riverbank");
-            bool placeWorks = a.Contains("石头那边") && b.Contains("河边") && !a.Contains("河");
-            Debug.Log($"[{(placeWorks ? "PASS" : "FAIL")}] 地名式方向注入（石头那边/河边）");
+            bool placeWorks = a.Contains("裂脸石") && b.Contains("河边") && !a.Contains("河");
+            Debug.Log($"[{(placeWorks ? "PASS" : "FAIL")}] 地标式方向注入（裂脸石/河边）");
 
             // ③ PlacePhrase 五区名覆盖 + 未知/null 回退（不出占位符）
             bool places = TraceCaptionBank.PlacePhrase("riverbank")     == "河边"
                        && TraceCaptionBank.PlacePhrase("lowland")       == "低洼的草里"
                        && TraceCaptionBank.PlacePhrase("center")        == "台地中央"
-                       && TraceCaptionBank.PlacePhrase("stone_area")    == "石头那边"
+                       && TraceCaptionBank.PlacePhrase("stone_area")    == "裂脸石一带"
                        && TraceCaptionBank.PlacePhrase("highland_east") == "东边的高地"
                        && TraceCaptionBank.PlacePhrase("nowhere")       == "不远处"
                        && TraceCaptionBank.PlacePhrase(null)            == "不远处";
@@ -1367,9 +1371,143 @@ namespace GlimmerDiary.Editor
             Debug.Log($"[{(stable ? "PASS" : "FAIL")}] 同一条痕迹每次浮出同一句话（稳定选句）");
 
             // ⑤ 未覆盖类型回退通用留意句（仍带地名，不走无地名的 Fallback）
-            string g = TraceCaptionBank.PickNotice("rangehalt", "k9", "lowland");
+            string g = TraceCaptionBank.PickNotice("unknown_trace", "k9", "lowland");
             bool generic = g.Contains("低洼的草里") && !g.Contains("{");
             Debug.Log($"[{(generic ? "PASS" : "FAIL")}] 未覆盖类型回退通用留意句（仍带地名）");
+
+            // ⑥ 第一批可发现性语法：边界痕迹必须点名唯一裂脸石；旱痕必须点名裸土/白泥滩；
+            // 田鼠小径必须说清是洞口之间形成的路。
+            string markNotice  = TraceCaptionBank.PickNotice("marks", "mk", "stone_area");
+            string haltNotice  = TraceCaptionBank.PickNotice("rangehalt", "hk", "highland_east");
+            string crackNotice = TraceCaptionBank.PickNotice("cracks", "ck", "lowland");
+            string roadNotice  = TraceCaptionBank.PickNotice("vtrail", "vk", "center");
+            bool relational = markNotice.Contains("裂脸石") && haltNotice.Contains("裂脸石")
+                           && crackNotice.Contains("白泥滩") && roadNotice.Contains("洞口")
+                           && roadNotice.Contains("路");
+            Debug.Log($"[{(relational ? "PASS" : "FAIL")}] 第一批留意句均含唯一地标或明确关系");
+        }
+
+        // ── V1 D9：深层遗物×4（韵而不案：认出-only，恒考古语气，出露共用 D6 两钩子）──
+        [MenuItem("GlimmerDiary/Test Deep Relics")]
+        public static void RunDeepRelics()
+        {
+            var p = BuildPipeline();
+            var save = p.save;
+
+            Debug.Log("=== DeepRelics (EditMode, V1 D9) ===");
+
+            // ① 预播种：新档即有四件，沉底/未出露/恒考古/先于一切章节（StratumSystem 构造即播）
+            var relics = save.strata.FindAll(s => s.kind == "deeprelic");
+            bool seeded = relics.Count == 4
+                       && relics.Exists(s => s.relicKind == "painting"     && s.zone == "stone_area")
+                       && relics.Exists(s => s.relicKind == "stone_circle" && s.zone == "highland_east")
+                       && relics.Exists(s => s.relicKind == "tool_scatter" && s.zone == "center")
+                       && relics.Exists(s => s.relicKind == "quern"        && s.zone == "riverbank")
+                       && relics.TrueForAll(s => !s.exposed && !s.witnessed
+                                              && s.depth >= StratumRecord.RelicMaxDepth
+                                              && s.chapterOrdinal == 0);
+            Debug.Log($"[{(seeded ? "PASS" : "FAIL")}] 新档预播种四件（沉底/未出露/恒考古/第 0 层）");
+
+            // ② 幂等：重建系统不重复播种（旧档补播同路径）
+            var again = new StratumSystem(save);
+            bool idem = save.strata.FindAll(s => s.kind == "deeprelic").Count == 4;
+            Debug.Log($"[{(idem ? "PASS" : "FAIL")}] 播种幂等（重建不重复）");
+
+            // ③ 断代句恒最古层
+            bool layer = relics.TrueForAll(s => StratumSystem.LayerPhrase(s) == "世界诞生之初");
+            Debug.Log($"[{(layer ? "PASS" : "FAIL")}] 断代句恒\"世界诞生之初\"");
+
+            // ④ 预跑挂起：Suspended 期间必中签也不出露（长眠不结束在玩家到达前）；
+            //    解挂后同一拍同一签即出露——挂起的是掷签，不是概率。
+            //    日期须"quern 必中且其余三件同拍不中"——否则⑤的 painting 会在本拍被顺手翻出，
+            //    后面的 exposedDateKey 断言就拿错了对象（同 WingTraces 身份键教训）
+            var quern = relics.Find(s => s.relicKind == "quern");
+            string qDate = FindStormHitDate(quern.sourceKey, save.gameTime, 800,
+                relics.Find(s => s.relicKind == "painting").sourceKey,
+                relics.Find(s => s.relicKind == "stone_circle").sourceKey,
+                relics.Find(s => s.relicKind == "tool_scatter").sourceKey);
+            AdvanceTo(save, qDate);
+            var storm = new EmotionVector { V = 0f, A = 0.9f, T = 1f, S = 0f, C = 0.5f };
+            p.stratumSys.Suspended = true;
+            p.stratumSys.Tick(save.gameTime, p.env.State, storm);
+            bool held = !quern.exposed;
+            p.stratumSys.Suspended = false;
+            p.stratumSys.Tick(save.gameTime, p.env.State, storm);
+            bool released = quern.exposed && quern.exposedBy == "storm";
+            Debug.Log($"[{(held && released ? "PASS" : "FAIL")}] 预跑挂起不掷签，解挂同一拍即出露");
+
+            // ⑤ 风暴夜出露 → 永久事件 + 编年史（salience 3 必进缺席信）
+            var painting = relics.Find(s => s.relicKind == "painting");
+            string pDate = FindStormHitDate(painting.sourceKey, save.gameTime, 800);
+            AdvanceTo(save, pDate);
+            p.stratumSys.Tick(save.gameTime, p.env.State, storm);
+            bool exp = painting.exposed && painting.exposedBy == "storm"
+                    && painting.exposedDateKey == pDate;
+            bool evt = save.worldEvents.Exists(e => e.type == WorldEventType.DeepRelicSurfaced
+                                                 && e.payload == "painting" && e.targetId == "stone_area");
+            bool chr = save.pendingChronicles.Exists(c => c.eventId == "event_DeepRelicSurfaced"
+                                                       && c.text.Contains("没有留名"));
+            bool sal = AbsenceLetterComposer.Salience("event_DeepRelicSurfaced") == 3;
+            Debug.Log($"[{(exp ? "PASS" : "FAIL")}] 风暴夜必中签出露（exposedBy=storm）");
+            Debug.Log($"[{(evt ? "PASS" : "FAIL")}] 出露发 DeepRelicSurfaced 永久事件（payload=relicKind）");
+            Debug.Log($"[{(chr && sal ? "PASS" : "FAIL")}] 编年史句给推断不给答案 + salience 3 必进信");
+
+            // ⑥ 出露后恒久：深度冻结、记录不删、witnessed 恒 false（认出-only，无见证通道）
+            float dq = painting.depth;
+            for (int d = 0; d < 5; d++)
+            {
+                save.gameTime.Advance(1);
+                p.stratumSys.Tick(save.gameTime, p.env.State, save.currentEEnv);
+            }
+            bool stays = painting.exposed && Mathf.Approximately(painting.depth, dq)
+                      && !painting.witnessed && save.strata.Contains(painting);
+            Debug.Log($"[{(stays ? "PASS" : "FAIL")}] 出露后恒久在地（深度冻结/记录保留/恒考古）");
+
+            // ⑦ 语料：四组各带推断句式、无占位残留；断代注入；同键稳定；留意句带地名
+            string capP = TraceCaptionBank.Pick("deeprelic", "deeprelic|painting", layerPhrase: "世界诞生之初");
+            string capC = TraceCaptionBank.Pick("deeprelic", "deeprelic|stone_circle");
+            string capT = TraceCaptionBank.Pick("deeprelic", "deeprelic|tool_scatter");
+            string capQ = TraceCaptionBank.Pick("deeprelic", "deeprelic|quern");
+            bool caps = !capP.Contains("{") && !capC.Contains("{") && !capT.Contains("{") && !capQ.Contains("{")
+                     && capP != capC && capP != capT && capP != capQ
+                     && (capP.Contains("没有留名") || capP.Contains("世界诞生之初"))
+                     && capC.Contains("摆") && capT.Contains("整齐") && capQ.Contains("磨");
+            Debug.Log($"[{(caps ? "PASS" : "FAIL")}] 四组考古语料（推断句式/无占位/组间各异）");
+            bool stableCap = TraceCaptionBank.Pick("deeprelic", "deeprelic|painting", layerPhrase: "世界诞生之初") == capP;
+            string notice = TraceCaptionBank.PickNotice("deeprelic", "deeprelic|quern", "riverbank");
+            bool noticeOk = notice.Contains("河边") && !notice.Contains("{");
+            Debug.Log($"[{(stableCap && noticeOk ? "PASS" : "FAIL")}] 同键稳定选句 + 留意句带地名");
+        }
+
+        // 找一枚深层遗物风暴签必中的日期（自算哈希，同 Exposure 手法；键前缀 deeprelic| 与
+        // 既有地层记录不互相抢签）。from 次日起扫——多阶段测试时钟已推进时扫出的必须仍是未来。
+        // miss 非空时要求同拍这些键都不中——防止同表同概率的邻居在目标拍被顺手翻出。
+        private static string FindStormHitDate(string sourceKey, GameDateTime from, int maxDays,
+                                               params string[] miss)
+        {
+            var d = new GameDateTime { year = from.year, month = from.month, day = from.day };
+            d.Advance(1);
+            for (int i = 0; i < maxDays; i++)
+            {
+                string key = d.ToKeyString();
+                bool Hit(string k) =>
+                    (TraceKeyUtil.Fnv1a($"{k}|{key}|storm") & 0xFFFF) / 65536f
+                    < StratumSystem.StormExposeChance;
+                if (Hit(sourceKey))
+                {
+                    bool anyMiss = false;
+                    if (miss != null) foreach (var m in miss) if (Hit(m)) { anyMiss = true; break; }
+                    if (!anyMiss) return key;
+                }
+                d.Advance(1);
+            }
+            return null;
+        }
+
+        private static void AdvanceTo(GlimmerDiary.Data.WorldSaveData save, string dateKey)
+        {
+            int walk = GameDateTime.ParseKey(dateKey).ToAbsoluteDays() - save.gameTime.ToAbsoluteDays();
+            if (walk > 0) save.gameTime.Advance(walk);
         }
 
         // 找一枚必中掷签的日期键（自算哈希，同批次三 Exposure 手法）：
