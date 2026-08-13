@@ -6,10 +6,11 @@ using UnityEngine;
 /// 激烈天气的夜里灯光会被压暗（与星星被风暴藏起同逻辑）。
 ///
 /// 纪律：
-///   只读 —— WorldTraceBinder.ActiveVoleLamps（灯句柄）+ LightManager.CurrentSunlight01/weatherDim。
+///   只读 —— WorldTraceBinder.ActiveVoleLamps/ElderLamps（灯句柄）+ LightManager.CurrentSunlight01/weatherDim。
 ///   只写 —— 每盏灯的 Light.intensity 与灯珠 MPB；不碰任何世界状态，不落档。
-///   爬不能跳 —— 点亮/熄灭是日照的连续函数（SmoothStep），呼吸 ±8% 慢起伏；
-///              不做萤火虫式飞舞/断闪——灯是镇的造物不是活物（无痕原则⑤）。
+///   爬不能跳 —— 点亮/熄灭是日照的连续函数（SmoothStep），呼吸慢起伏；
+///              不做萤火虫式飞舞/断闪——灯是造物不是活物（无痕原则⑤）。
+///   两种灯 —— 镇灯（暖琥珀，呼吸 ±8%/周期~4s）与原在灯 elder（冷月白、更暗、呼吸 ±14%/周期~10s）。
 /// 布线：由 WorldTraceBinder.Awake 自动挂同 GameObject，场景里无需（也不要）手挂。
 /// </summary>
 [RequireComponent(typeof(WorldTraceBinder))]
@@ -30,7 +31,9 @@ public class VoleLampDriver : MonoBehaviour
 
     void LateUpdate()
     {
-        if (_binder == null || _binder.ActiveVoleLamps.Count == 0) return;
+        if (_binder == null) return;
+        int total = _binder.ActiveVoleLamps.Count + _binder.ElderLamps.Count;
+        if (total == 0) return;
         if (_lightManager == null)
         {
             _lightManager = FindFirstObjectByType<LightManager>();
@@ -43,21 +46,31 @@ public class VoleLampDriver : MonoBehaviour
         float weather = 1f - _lightManager.weatherDim * 0.7f;
         float baseLevel = night * weather;
 
-        foreach (var lamp in _binder.ActiveVoleLamps)
-        {
-            if (lamp.light == null || lamp.bead == null) continue;   // 痕迹已销毁的残句柄（正常不发生，防御）
+        foreach (var lamp in _binder.ActiveVoleLamps) Drive(lamp, night, baseLevel);
+        foreach (var lamp in _binder.ElderLamps) Drive(lamp, night, baseLevel);
+    }
 
-            // 新灯 2 秒淡入（与痕迹展示层淡入同口径）；呼吸 ±8%、周期 ~4s，相位按种子错开不齐闪
-            float fadeIn = Mathf.Clamp01((Time.time - lamp.spawnRealTime) / 2f);
-            float breath = 1f + 0.08f * Mathf.Sin(Time.time * 1.5f + lamp.phase);
-            float level = baseLevel * fadeIn * breath;
+    private void Drive(WorldTraceBinder.VoleLamp lamp, float night, float baseLevel)
+    {
+        if (lamp.light == null || lamp.bead == null) return;   // 痕迹已销毁的残句柄（正常不发生，防御）
 
-            lamp.light.intensity = _binder.lampIntensity * level;
+        // 原在灯（elder）：更冷更暗更慢——颜色在建灯时已定（冷月白），这里走另一套强度/呼吸参数
+        float intensity   = lamp.elder ? _binder.elderIntensity   : _binder.lampIntensity;
+        float beadHdr     = lamp.elder ? _binder.elderBeadHdr     : _binder.lampBeadHdr;
+        Color emission    = lamp.elder ? _binder.elderBeadEmission : _binder.lampBeadEmission;
+        float breathAmp   = lamp.elder ? _binder.elderBreathAmp   : 0.08f;
+        float breathSpeed = lamp.elder ? _binder.elderBreathSpeed : 1.5f;
 
-            // 灯珠：夜里 HDR 暖色吃 Bloom（阈值 1.0）；白天压暗褐，读作熄灭的小造物而非光点
-            _mpb.SetColor(EmissionColorId, _binder.lampBeadEmission * (_binder.lampBeadHdr * level));
-            _mpb.SetColor(BaseColorId, Color.Lerp(_binder.lampPostTint, _binder.lampBeadEmission, night * 0.35f));
-            lamp.bead.SetPropertyBlock(_mpb);
-        }
+        // 新灯 2 秒淡入（与痕迹展示层淡入同口径）；呼吸相位按种子错开不齐闪
+        float fadeIn = Mathf.Clamp01((Time.time - lamp.spawnRealTime) / 2f);
+        float breath = 1f + breathAmp * Mathf.Sin(Time.time * breathSpeed + lamp.phase);
+        float level = baseLevel * fadeIn * breath;
+
+        lamp.light.intensity = intensity * level;
+
+        // 灯珠：夜里 HDR 吃 Bloom（阈值 1.0）；白天压暗褐，读作熄灭的小造物而非光点
+        _mpb.SetColor(EmissionColorId, emission * (beadHdr * level));
+        _mpb.SetColor(BaseColorId, Color.Lerp(_binder.lampPostTint, emission, night * 0.35f));
+        lamp.bead.SetPropertyBlock(_mpb);
     }
 }

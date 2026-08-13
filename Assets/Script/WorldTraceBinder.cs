@@ -89,6 +89,15 @@ public class WorldTraceBinder : MonoBehaviour
     public int   maxLampsPerTrail = 12;
     public Color lampPostTint     = new(0.25f, 0.18f, 0.12f);   // 熄灭的造物色：白天读作小杆，不是光点
 
+    [Header("原在灯（2026-08-13：镇成形之前就在的 3-4 盏——比镇老，不知谁立的。更冷更暗更慢：新火暖，旧火冷）")]
+    public Color elderLightColor   = new(0.62f, 0.72f, 1.00f);   // 冷月白（与镇灯暖琥珀一眼可辨）
+    public Color elderBeadEmission = new(0.60f, 0.72f, 1.00f);
+    public float elderBeadHdr      = 1.6f;    // 更暗：仍过 Bloom 阈值 1.0，但弱一截
+    public float elderIntensity    = 0.7f;
+    public float elderRange        = 3f;
+    public float elderBreathAmp    = 0.14f;   // 呼吸更深——像风里的老火
+    public float elderBreathSpeed  = 0.6f;    // 更慢（周期 ~10s，镇灯 ~4s）
+
     // 与 GlimmerGrass.shader 的 _TramplePoints[16] 数组长度耦合——两侧同改
     private const int TRAMPLE_MAX = 16;
     private static readonly int TrampleCountId  = Shader.PropertyToID("_TrampleCount");
@@ -133,11 +142,18 @@ public class WorldTraceBinder : MonoBehaviour
         public Renderer bead;           // 灯珠（driver 每帧 MPB 推 _EmissionColor/_BaseColor）
         public float phase;             // 呼吸相位（按种子错开，不齐闪）
         public float spawnRealTime;     // 展示层淡入（与痕迹同口径：新灯 2 秒爬升，不跳变）
+        public bool elder;              // 原在灯：镇成形之前就在的老灯，driver 走更冷更暗更慢那套参数
     }
 
     /// <summary>当前活跃田鼠灯（VoleLampDriver 每帧只读）。Rebuild 整体销毁重建痕迹，
     /// 故本列表在 Rebuild 开头清空、随 SpawnVoleTrail 重新注册——无悬挂引用。</summary>
     public readonly List<VoleLamp> ActiveVoleLamps = new();
+
+    /// <summary>原在灯（拴在既有地标上，与镇无关、与存档无关——运行时确定性地物，同裂脸石口径）。
+    /// 一次性生成，不经 Rebuild 清场；driver 同样每帧只读。</summary>
+    public readonly List<VoleLamp> ElderLamps = new();
+    private readonly HashSet<string> _elderPlaced = new();
+    private Transform _elderRoot;
     private readonly HashSet<string> _floodDamaged = new();   // T1 水毁锁存（不可逆原则③：一旦泡透不再复原）
     private readonly Vector4[] _trampleArray = new Vector4[TRAMPLE_MAX];
     private readonly List<Vector4> _trampleGather = new();
@@ -163,6 +179,7 @@ public class WorldTraceBinder : MonoBehaviour
         // 稳定地标不依赖某条痕迹是否新鲜：先把“裂脸石”立在石区—高地边界，
         // 让狐狸记号/鹿鼠停步的文字始终有同一个可指认对象。
         EnsureTraceLandmarks();
+        EnsureElderLamps();
 
         var wm = WorldManager.Instance;
         if (wm == null || wm.WorldSave == null || zoneMap == null) return;
@@ -1408,6 +1425,103 @@ public class WorldTraceBinder : MonoBehaviour
         _mpb.Clear();
         _mpb.SetColor("_BaseColor", tint);
         mr.SetPropertyBlock(_mpb);
+    }
+
+    // ── 原在灯（2026-08-13）：镇成形之前就在的老灯 ──────────────
+    // 拴在既有地标上（裂脸石旁/河边/台地中央/东边高地口），与镇无关、与存档无关——
+    // 运行时确定性地物，同裂脸石口径；世界诞生之初它们就在，镇散它们也不灭。
+    // 位置零随机全局态：种子 Fnv1a("elderlamp|{key}")，重启/读档逐点复现。
+
+    private void EnsureElderLamps()
+    {
+        if (zoneMap == null || _mpb == null) return;
+        if (_elderRoot == null)
+        {
+            var rootGo = new GameObject("ElderLamps");
+            rootGo.transform.SetParent(transform, false);
+            _elderRoot = rootGo.transform;
+        }
+
+        // 裂脸石旁一盏（地标未就绪时下帧再试）
+        if (!_elderPlaced.Contains("splitstone") && TryGetSplitFaceStone(out Vector3 stone))
+        {
+            Vector3 face = StageFacingDirection(stone, Fnv1a("landmark|split_face_stone|face"));
+            Vector3 side = Vector3.Cross(Vector3.up, face).normalized;
+            Vector3 at = stone + face * 1.6f + side * 0.9f;
+            if (zoneMap.TryGroundAt(at.x, at.z, out Vector3 g)) at = g;
+            BuildElderLamp("splitstone", at);
+        }
+
+        // 三个 zone 锚点各一盏：锚心旁确定性环上取点
+        TryPlaceElderLampAtZone("riverbank");
+        TryPlaceElderLampAtZone("center");
+        TryPlaceElderLampAtZone("highland_east");
+    }
+
+    private void TryPlaceElderLampAtZone(string zone)
+    {
+        if (_elderPlaced.Contains(zone)) return;
+        if (!zoneMap.TryGetAnchorCenter(zone, out Vector3 anchor, out _)) return;
+        var rng = new System.Random(Fnv1a($"elderlamp|{zone}"));
+        float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
+        float r = 1.6f + (float)rng.NextDouble() * 1.2f;
+        if (!zoneMap.TryGroundAt(anchor.x + Mathf.Cos(ang) * r,
+                                 anchor.z + Mathf.Sin(ang) * r, out Vector3 at)) return;
+        BuildElderLamp(zone, at);
+    }
+
+    private void BuildElderLamp(string key, Vector3 at)
+    {
+        _elderPlaced.Add(key);
+        var rng = new System.Random(Fnv1a($"elderlamp|{key}|pose"));
+        var yaw = Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f);
+
+        var lampGo = new GameObject($"ElderLamp_{key}");
+        lampGo.transform.SetParent(_elderRoot, false);
+        lampGo.transform.position = at;
+
+        // 杆比镇灯更沉（老物件），网格栅栏同款；珠挂弯头
+        AddElderPart(lampGo.transform, "Post", TraceKit.VoleLampPost, dirtMaterial,
+                     lampPostTint * 0.8f, at,
+                     yaw * Quaternion.Euler((float)rng.NextDouble() * 6f - 3f, 0f, 0f));
+        Vector3 beadAt = at + yaw * TraceKit.VoleLampBeadAnchor;
+        var beadMr = AddElderPart(lampGo.transform, "Bead", TraceKit.VoleLampBead,
+                                  VoleLampBeadMaterial(), Color.white, beadAt, yaw);
+
+        var lightGo = new GameObject("Light");
+        lightGo.transform.SetParent(lampGo.transform, false);
+        lightGo.transform.position = beadAt;
+        var li = lightGo.AddComponent<Light>();
+        li.type = LightType.Point;
+        li.color = elderLightColor;
+        li.range = elderRange;
+        li.intensity = 0f;                    // 点亮归 driver（爬不能跳）
+        li.shadows = LightShadows.None;       // 同镇灯：豁免 LampPreset 染色
+
+        ElderLamps.Add(new VoleLamp
+        {
+            light = li,
+            bead = beadMr,
+            phase = (float)rng.NextDouble() * Mathf.PI * 2f,
+            spawnRealTime = Time.time,
+            elder = true,
+        });
+    }
+
+    private MeshRenderer AddElderPart(Transform parent, string name, Mesh mesh, Material mat,
+                                      Color tint, Vector3 pos, Quaternion rot)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.SetPositionAndRotation(pos, rot);
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = mat != null ? mat : FallbackMaterial();
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        _mpb.Clear();
+        _mpb.SetColor("_BaseColor", tint);
+        mr.SetPropertyBlock(_mpb);
+        return mr;
     }
 
     private static Vector3 StageFacingDirection(Vector3 at, float fallbackYaw)
